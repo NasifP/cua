@@ -22,7 +22,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from egx_advisor.egx_cua_agent import AgentConfig, EgxCuaAgent  # noqa: E402
 from egx_advisor.execution.thndr import ThndrUiMap  # noqa: E402
-from egx_advisor.marketdata import JsonFileMarketData  # noqa: E402
+from egx_advisor.marketdata import JsonFileMarketData, YahooMarketData  # noqa: E402
 from egx_advisor.safety.demo_guard import DemoGuard  # noqa: E402
 
 
@@ -40,7 +40,11 @@ def parse_args() -> argparse.Namespace:
         "order submission is refused without it",
     )
     parser.add_argument("--bus", default=os.environ.get("EGX_BUS_PATH", "state/egx_bus.db"))
-    parser.add_argument("--market-data", default="state/market.json")
+    parser.add_argument(
+        "--market-data",
+        default="yahoo",
+        help="'yahoo' for the live provider, or a path to a JSON snapshot file",
+    )
     parser.add_argument("--interval", type=float, default=300.0)
     parser.add_argument("--verbose", action="store_true")
     return parser.parse_args()
@@ -88,14 +92,18 @@ async def main() -> None:
             ui=ThndrUiMap(calibration_complete=args.calibrated),
         ),
         computer=computer,
-        market_data=JsonFileMarketData(Path(args.market_data)),
+        market_data=(
+            YahooMarketData()
+            if args.market_data == "yahoo"
+            else JsonFileMarketData(Path(args.market_data))
+        ),
         agent_factory=agent_factory,
         demo_guard=DemoGuard.default(),
     )
     agent.install_signal_handlers()
 
     print(
-        f"agent starting (bus={args.bus}, "
+        f"agent starting (bus={args.bus}, data={args.market_data}, "
         f"{'DRY RUN' if args.dry_run else 'EXECUTION ARMED'}, "
         f"{'calibrated' if args.calibrated else 'UNCALIBRATED -- orders refused'})\n"
         f"the bot is HALTED until you arm it from the dashboard"

@@ -1,15 +1,9 @@
-"""Market data seam.
+"""JSON-file market data, for development, backtests and the smoke run.
 
-Prices are deliberately *not* read off the trading screen. Screen-scraped prices
-are the worst input available for sizing: they are low precision, they arrive at
-whatever moment the screenshot happened, and an OCR error on a decimal point
-silently multiplies an order by ten. So the strategy layer takes its prices from
-an explicit provider, and `MarketDataProvider` is the seam where a real feed goes.
-
-`JsonFileMarketData` is included for development, backtests, and the smoke run: it
-reads a file, which makes the whole pipeline reproducible without a subscription.
-Point production at a proper EGX feed and keep the staleness checks -- a provider
-that returns yesterday's close during a devaluation is worse than no provider.
+Reads a file, which makes the whole pipeline reproducible without a
+subscription. Point production at a real feed and keep the staleness checks:
+a provider returning yesterday's close during a devaluation is worse than no
+provider at all.
 """
 
 from __future__ import annotations
@@ -19,19 +13,10 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from pathlib import Path
-from typing import Mapping, Protocol, Sequence
+from typing import Mapping, Sequence
 
-from .types import Instrument, MarketSnapshot, Quote, Tradability
-
-
-class MarketDataProvider(Protocol):
-    """Supplies a priced snapshot for the universe."""
-
-    async def snapshot(self, universe: Sequence[Instrument]) -> MarketSnapshot: ...
-
-
-class MarketDataError(RuntimeError):
-    """No usable snapshot. The caller must not fall back to stale prices."""
+from ..types import Instrument, MarketSnapshot, Quote, Tradability
+from .base import MarketDataError
 
 
 @dataclass

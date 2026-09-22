@@ -372,7 +372,7 @@ cd samples/python/egx_robo_advisor
 pip install -e '.[agent,ocr,dashboard,test]'
 cp .env.example .env    # then fill it in
 
-python -m pytest              # 172 tests, no network or broker needed
+python -m pytest              # 194 tests, no network or broker needed
 ```
 
 **Terminal 1 — dashboard:**
@@ -436,6 +436,48 @@ that looks authoritative and clicks the wrong button.
 
 ---
 
+## Market data
+
+```bash
+pip install -e '.[marketdata]'
+python verify_market_data.py              # check the feed before trusting it
+python verify_market_data.py --history 1825
+```
+
+`MarketDataProvider` is the seam. Prices are the denominator of every weight and
+the multiplier on every order size, so a bad feed does not produce a slightly
+worse trade — it produces an order off by a factor. Providers therefore
+**validate what they fetched and raise rather than degrade**, the same posture as
+the demo guard.
+
+`YahooMarketData` is the live path. Yahoo quotes EGX with the same `.CA` suffix
+this codebase already uses, needs no key, and is delayed and unofficial — good
+enough to develop and backtest against, to be verified before it sizes a live
+order.
+
+Blocking findings (the snapshot is refused):
+
+| Code | Why it can misprice an order |
+|---|---|
+| `CURRENCY_MISMATCH` | a USD figure read as EGP scales orders ~50× |
+| `IMPLAUSIBLE_MOVE` | beyond EGX's ±10% band is usually an unadjusted split; sizing against the pre-split price buys 5× the shares |
+| `MISSING_SYMBOL` | a universe member with no data is an unknown weight, not a zero one — it inflates every other weight |
+| `STALE_BAR` | yesterday's close during a devaluation is not a price |
+| `NON_POSITIVE`, `INVERTED_RANGE`, `CLOSE_OUTSIDE_RANGE` | the row is not what it claims |
+
+`ZERO_VOLUME` and `THIN_VOLUME` are warnings only. **Halts are never inferred
+from price data**: Yahoo cannot distinguish a suspension from a holiday or a
+gap, so `Tradability.HALTED` is left to EGX disclosures via the regime layer.
+Claiming otherwise would be worse than admitting the gap.
+
+A missing USD/EGP series leaves the policy at baseline — it can fail to *detect*
+a devaluation, never trigger one.
+
+> **`verify_market_data.py` cannot tell you the prices are correct.** It catches
+> faults self-evident from the data. A feed quietly wrong by 2% passes every
+> check. Compare the printed closes against egx.com.eg for a few sessions
+> yourself; the script ends with the four manual checks that matter.
+
 ## Backtesting
 
 ```bash
@@ -487,9 +529,6 @@ duty rate in particular has changed repeatedly and must be confirmed.
 ## What is deliberately not here
 
 - **No live-account support.** Not a missing feature, a design boundary.
-- **No price data source.** `MarketDataProvider` is the seam; screen-scraped
-  prices are the worst possible input for sizing orders, so the strategy layer
-  refuses to take them.
 - **No holiday calendar.** EGX holidays follow the Hijri calendar and are
   published annually. An empty set is honest about knowing nothing.
 - **No backtester.** The strategy layer is pure and deterministic, so one is
@@ -506,7 +545,11 @@ egx_advisor/
   types.py            frozen value types shared by every layer
   clock.py            EGX calendar: Sun–Thu, Cairo time, T+2
   bus.py              the agent ↔ dashboard channel
-  marketdata.py       price provider seam
+  marketdata/
+    base.py           provider protocol, findings, blocking rule
+    quality.py        the checks and why each one blocks
+    yahoo.py          live provider (.CA tickers), halts never inferred
+    jsonfile.py       development and backtest path
   egx_cua_agent.py    the loop and the five gates
   safety/
     demo_guard.py     evidence rules and the three-way verdict
@@ -529,6 +572,7 @@ egx_advisor/
     data.py           CSV loader and a synthetic generator
 demo_dry_run.py       seven scenarios against a scripted screen
 run_backtest.py       three-way friction comparison
+verify_market_data.py check a feed before trusting it
 dashboard/
   app.py              FastAPI + SSE + control endpoints
   templates/index.html   self-contained: inline CSS, no CDN
