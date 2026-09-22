@@ -351,6 +351,13 @@ Mobile-first, one screen, no scrolling required for the things that matter.
 - **Live agent log** — SSE stream of every primitive the bot sends to the screen.
 - **KILL SWITCH** — fixed to the bottom of the viewport, always reachable.
 
+All CSS is inline: no CDN, no external font. This page is the remote stop button
+for something that places orders, and a stylesheet fetched from a third party is
+a dependency the kill switch does not need. On a blocked network, an offline
+phone, or during a CDN outage, a utility-class CDN would leave the page as
+unstyled HTML with the most important control reduced to a plain link below the
+fold. Self-contained means the button is always the big red one.
+
 **Asymmetric friction:** halting is one tap with no confirmation dialog — if
 someone is reaching for that button they want the bot stopped *now*, and a modal
 between them and that is a liability. Resuming requires typing an exact phrase.
@@ -470,7 +477,7 @@ egx_advisor/
 demo_dry_run.py       seven scenarios against a scripted screen
 dashboard/
   app.py              FastAPI + SSE + control endpoints
-  templates/index.html
+  templates/index.html   self-contained: inline CSS, no CDN
 docs/
   ARCHITECTURE.md     decision records
   NO_OVERFIT_CHARTER.md
