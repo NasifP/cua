@@ -109,7 +109,13 @@ class RegimeFilter:
     ) -> RegimeState:
         """Fold this poll's assessments into a RiskState."""
         now = now or datetime.now(timezone.utc)
-        drivers: list[str] = []
+        # Kept separate and concatenated market-first at the end. `drivers[0]` is
+        # what the dashboard headlines and what `_veto_reason` cites, so a
+        # market-wide halt must not be explained by whichever single-name block
+        # happened to be appended first -- that reads as though one halted ticker
+        # stopped all buying, which is both wrong and alarming.
+        market_drivers: list[str] = []
+        symbol_drivers: list[str] = []
 
         # A latched panic outranks everything the feeds have to say.
         if self._panic_until is not None and now < self._panic_until:
@@ -133,7 +139,7 @@ class RegimeFilter:
             if assessment.scope is Scope.TICKER and assessment.symbols:
                 for symbol in assessment.symbols:
                     self._blocked_until[symbol] = now + self.config.symbol_cooldown
-                    drivers.append(
+                    symbol_drivers.append(
                         f"{symbol} blocked: {assessment.headline.title[:110]}"
                     )
 
@@ -143,7 +149,7 @@ class RegimeFilter:
             self._risk_off_until = now + self.config.market_cooldown
             self._clean_polls = 0
             for assessment in market_events[:5]:
-                drivers.append(f"MARKET: {assessment.headline.title[:110]}")
+                market_drivers.append(f"MARKET: {assessment.headline.title[:110]}")
 
         # 3. A pile-up of merely elevated items also warrants standing down. One
         #    profit warning is noise; four at once is a pattern we do not want to
@@ -151,7 +157,7 @@ class RegimeFilter:
         elif len(elevated) >= self.config.elevated_items_for_halt:
             self._risk_off_until = now + self.config.market_cooldown
             self._clean_polls = 0
-            drivers.append(
+            market_drivers.append(
                 f"{len(elevated)} elevated items in one poll "
                 f"(threshold {self.config.elevated_items_for_halt})"
             )
@@ -164,15 +170,17 @@ class RegimeFilter:
         if in_session:
             if feed_age_seconds is None:
                 stale = True
-                drivers.append("no successful feed poll yet")
+                market_drivers.append("no successful feed poll yet")
             elif feed_age_seconds > self.config.max_feed_age.total_seconds():
                 stale = True
-                drivers.append(
+                market_drivers.append(
                     f"news feeds stale ({feed_age_seconds / 60:.0f} min old, limit "
                     f"{self.config.max_feed_age.total_seconds() / 60:.0f} min)"
                 )
             if sources_failed:
-                drivers.append(f"sources failing: {', '.join(sources_failed)}")
+                market_drivers.append(
+                    f"sources failing: {', '.join(sources_failed)}"
+                )
 
         # 5. Resolve. Note the direction of every branch: each one can only make
         #    the state more restrictive.
@@ -183,22 +191,23 @@ class RegimeFilter:
         if cooling:
             risk_state = RiskState.BUYS_HALTED
             remaining = (self._risk_off_until - now).total_seconds() / 3600  # type: ignore[operator]
-            drivers.append(f"risk-off cooldown active for another {remaining:.1f}h")
+            market_drivers.append(f"risk-off cooldown active for another {remaining:.1f}h")
         elif self._risk_off_until is not None and not recovered:
             risk_state = RiskState.BUYS_HALTED
-            drivers.append(
+            market_drivers.append(
                 f"cooldown elapsed but only {self._clean_polls}/"
                 f"{self.config.clean_polls_to_recover} clean polls so far"
             )
         elif self._risk_off_until is not None:
             self._risk_off_until = None
-            drivers.append("recovered: cooldown elapsed and feeds clean")
+            market_drivers.append("recovered: cooldown elapsed and feeds clean")
 
         if stale:
             risk_state = _max_restrictive(risk_state, RiskState.BUYS_HALTED)
 
         self._expire_symbol_blocks(now)
         blocked = frozenset(self._blocked_until)
+        drivers = market_drivers + symbol_drivers
         self._last_drivers = tuple(drivers)
 
         return RegimeState(

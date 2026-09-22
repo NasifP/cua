@@ -365,7 +365,7 @@ cd samples/python/egx_robo_advisor
 pip install -e '.[agent,ocr,dashboard,test]'
 cp .env.example .env    # then fill it in
 
-python -m pytest              # 142 tests, no network or broker needed
+python -m pytest              # 144 tests, no network or broker needed
 ```
 
 **Terminal 1 — dashboard:**
@@ -378,6 +378,20 @@ python dashboard/app.py
 
 The token is swapped for an HttpOnly cookie on first load, so it stops appearing
 in history and the phone's address bar.
+
+**Read the reasoning without a broker or a device:**
+
+```bash
+python demo_dry_run.py
+```
+
+`run_agent.py --dry-run` withholds orders but still reads the portfolio off a
+live screen, so it needs Cua credentials and a device. `demo_dry_run.py`
+substitutes a scripted screen and a fixture price file and runs everything else
+for real — the same fetcher, classifier, filter, planner, guard and bus — across
+seven scenarios: calm, devaluation, EGX frictions, catastrophic news, bullish
+news, feeds down, and the safety layer. Every number in it is an illustrative
+fixture, not market data.
 
 **Terminal 2 — agent (dry run first, always):**
 
@@ -453,6 +467,7 @@ egx_advisor/
     filter.py         circuit breaker + subtractive invariant
   execution/
     thndr.py          UI flows, GuardedComputer
+demo_dry_run.py       seven scenarios against a scripted screen
 dashboard/
   app.py              FastAPI + SSE + control endpoints
   templates/index.html

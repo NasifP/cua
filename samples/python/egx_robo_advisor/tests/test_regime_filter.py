@@ -358,3 +358,43 @@ def test_panic_can_be_cleared_explicitly() -> None:
     assert not regime_filter.panicking
     state = regime_filter.evaluate([], now=NOW, feed_age_seconds=60)
     assert state.risk_state is not RiskState.ALL_HALTED
+
+
+def test_market_wide_halt_cites_a_market_driver_not_a_symbol_block() -> None:
+    """The headline driver must explain the actual halt.
+
+    The dashboard headlines `drivers[0]` and `_veto_reason` cites it. If a
+    single-name block sorts first, a market-wide halt reads as though one halted
+    ticker stopped all buying -- wrong, and alarming to whoever is reading it.
+    """
+    classifier = KeywordClassifier()
+    regime_filter = RegimeFilter()
+    assessments = classifier.classify([
+        headline("EGX halts trading in EAST.CA pending disclosure"),
+        headline("Central bank devalues the Egyptian pound by 20%"),
+    ])
+    regime = regime_filter.evaluate(assessments, now=NOW, feed_age_seconds=60)
+
+    assert regime.risk_state is RiskState.BUYS_HALTED
+    assert regime.drivers[0].startswith("MARKET:"), regime.drivers
+    assert "EAST.CA" in regime.blocked_symbols
+
+    _, suppressed = regime_filter.apply(orders(), regime)
+    buy_reasons = [r for o, r in suppressed if o.side is Side.BUY]
+    assert buy_reasons
+    for reason in buy_reasons:
+        assert "devalues" in reason, reason
+
+
+def test_stale_feeds_cite_staleness_as_the_driver() -> None:
+    regime_filter = RegimeFilter()
+    classifier = KeywordClassifier()
+    # A single-name block exists, but staleness is what halts buying.
+    regime_filter.evaluate(
+        classifier.classify([headline("EGX halts trading in EAST.CA")]),
+        now=NOW,
+        feed_age_seconds=60,
+    )
+    regime = regime_filter.evaluate([], now=NOW, feed_age_seconds=7200, in_session=True)
+    assert regime.risk_state is RiskState.BUYS_HALTED
+    assert not regime.drivers[0].startswith("EAST.CA"), regime.drivers
