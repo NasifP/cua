@@ -1,0 +1,22 @@
+[project]
+name = "egx-robo-advisor"
+version = "0.1.0"
+description = "Safety-gated EGX robo-advisor driving the Thndr simulator through Cua"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+dependencies = []
+
+[project.optional-dependencies]
+# The core package is stdlib-only on purpose: the demo-mode guard must be able
+# to load and run on a bare interpreter, or the bot cannot safely refuse to click.
+ocr = ["pytesseract>=0.3.10", "Pillow>=10.0.0"]
+test = ["pytest>=8.0.0", "pytest-asyncio>=0.23"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
