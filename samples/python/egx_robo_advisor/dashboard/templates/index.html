@@ -1,0 +1,372 @@
+<!DOCTYPE html>
+<html lang="en" class="h-full">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="light dark">
+<title>EGX Robo-Advisor</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<style>
+  :root { --safe-bottom: env(safe-area-inset-bottom, 0px); }
+  body { -webkit-tap-highlight-color: transparent; }
+  .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+  #log { scrollbar-width: thin; }
+  @keyframes pulse-ring { 0% { box-shadow: 0 0 0 0 rgba(239,68,68,.45); } 70% { box-shadow: 0 0 0 14px rgba(239,68,68,0); } 100% { box-shadow: 0 0 0 0 rgba(239,68,68,0); } }
+  .armed { animation: pulse-ring 2s infinite; }
+</style>
+</head>
+<body class="h-full bg-slate-100 text-slate-900 dark:bg-slate-950 dark:text-slate-100">
+<div class="mx-auto max-w-2xl px-4 pb-40 pt-4">
+
+  <!-- Header -->
+  <header class="mb-4 flex items-center justify-between gap-3">
+    <div>
+      <h1 class="text-lg font-semibold tracking-tight">EGX Robo-Advisor</h1>
+      <p class="text-xs text-slate-500 dark:text-slate-400">Thndr simulator &middot; paper trading</p>
+    </div>
+    <div class="flex items-center gap-2">
+      <span id="conn-dot" class="h-2.5 w-2.5 rounded-full bg-slate-400"></span>
+      <span id="conn-text" class="text-xs text-slate-500 dark:text-slate-400">connecting</span>
+    </div>
+  </header>
+
+  <!-- Bot state -->
+  <section id="control-card" class="mb-3 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-900">
+    <div class="flex items-start justify-between gap-3">
+      <div class="min-w-0">
+        <p class="text-[11px] font-medium uppercase tracking-wider text-slate-500 dark:text-slate-400">Bot state</p>
+        <p id="control-state" class="mt-0.5 text-2xl font-bold">&mdash;</p>
+        <p id="control-reason" class="mt-1 break-words text-xs text-slate-500 dark:text-slate-400"></p>
+      </div>
+      <div class="shrink-0 text-right">
+        <p class="text-[11px] font-medium uppercase tracking-wider text-slate-500 dark:text-slate-400">Phase</p>
+        <p id="phase" class="mono mt-0.5 text-sm font-semibold">idle</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- Safety + regime -->
+  <div class="mb-3 grid grid-cols-2 gap-3">
+    <section class="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-900">
+      <p class="text-[11px] font-medium uppercase tracking-wider text-slate-500 dark:text-slate-400">Risk regime</p>
+      <p id="risk-state" class="mt-1 text-lg font-bold">&mdash;</p>
+      <p id="risk-driver" class="mt-1 line-clamp-3 text-xs text-slate-500 dark:text-slate-400"></p>
+      <p id="feed-age" class="mono mt-2 text-[11px] text-slate-400"></p>
+    </section>
+    <section class="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-900">
+      <p class="text-[11px] font-medium uppercase tracking-wider text-slate-500 dark:text-slate-400">Account guard</p>
+      <p id="demo-state" class="mt-1 text-lg font-bold">&mdash;</p>
+      <p id="demo-detail" class="mt-1 line-clamp-3 text-xs text-slate-500 dark:text-slate-400"></p>
+      <p id="demo-sources" class="mono mt-2 text-[11px] text-slate-400"></p>
+    </section>
+  </div>
+
+  <!-- Blocked symbols -->
+  <section id="blocked-card" class="mb-3 hidden rounded-2xl border border-amber-300 bg-amber-50 p-3 dark:border-amber-900/60 dark:bg-amber-950/40">
+    <p class="text-[11px] font-medium uppercase tracking-wider text-amber-700 dark:text-amber-400">News-blocked symbols</p>
+    <div id="blocked-list" class="mt-1.5 flex flex-wrap gap-1.5"></div>
+  </section>
+
+  <!-- Holdings + drift -->
+  <section class="mb-3 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-900">
+    <div class="flex items-baseline justify-between">
+      <h2 class="text-sm font-semibold">Holdings &amp; drift</h2>
+      <span id="total-value" class="mono text-sm font-semibold"></span>
+    </div>
+    <p id="policy-state" class="mt-1 text-xs text-slate-500 dark:text-slate-400"></p>
+    <div id="holdings" class="mt-3 space-y-2.5"></div>
+    <p id="cash-line" class="mono mt-3 border-t border-slate-100 pt-2 text-xs text-slate-500 dark:border-slate-800 dark:text-slate-400"></p>
+  </section>
+
+  <!-- Plan -->
+  <section class="mb-3 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-900">
+    <h2 class="text-sm font-semibold">Current plan</h2>
+    <div id="orders" class="mt-2 space-y-2"></div>
+    <details id="suppressed-wrap" class="mt-3 hidden">
+      <summary class="cursor-pointer text-xs font-medium text-slate-500 dark:text-slate-400">Withheld orders</summary>
+      <div id="suppressed" class="mt-2 space-y-1.5"></div>
+    </details>
+  </section>
+
+  <!-- Live agent log -->
+  <section class="mb-3 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-900">
+    <div class="flex items-center justify-between">
+      <h2 class="text-sm font-semibold">Live agent log</h2>
+      <label class="flex items-center gap-1.5 text-xs text-slate-500 dark:text-slate-400">
+        <input id="follow" type="checkbox" checked class="h-3.5 w-3.5 rounded border-slate-300">
+        follow
+      </label>
+    </div>
+    <div id="log" class="mono mt-2 h-72 overflow-y-auto rounded-xl bg-slate-950 p-3 text-[11px] leading-relaxed text-slate-300"></div>
+  </section>
+
+</div>
+
+<!-- Kill switch: fixed, always reachable -->
+<div class="fixed inset-x-0 bottom-0 z-40 border-t border-slate-200 bg-white/95 backdrop-blur dark:border-slate-800 dark:bg-slate-900/95"
+     style="padding-bottom: calc(0.75rem + var(--safe-bottom));">
+  <div class="mx-auto max-w-2xl px-4 pt-3">
+    <button id="kill-btn"
+            class="armed w-full rounded-2xl bg-red-600 py-5 text-lg font-bold tracking-wide text-white shadow-lg active:scale-[0.99] disabled:opacity-40">
+      KILL SWITCH &mdash; STOP THE BOT
+    </button>
+    <div id="resume-wrap" class="mt-2 hidden">
+      <div class="flex gap-2">
+        <input id="resume-input" type="text" autocapitalize="characters" autocomplete="off"
+               placeholder="{{ resume_phrase }}"
+               class="mono min-w-0 flex-1 rounded-xl border border-slate-300 bg-white px-3 py-2.5 text-xs dark:border-slate-700 dark:bg-slate-950">
+        <button id="resume-btn" class="shrink-0 rounded-xl bg-emerald-600 px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-40">Arm</button>
+      </div>
+      <p class="mt-1.5 text-[11px] text-slate-500 dark:text-slate-400">
+        Type the phrase exactly to arm. Stopping is one tap; starting is not.
+      </p>
+    </div>
+    <p id="toast" class="mt-2 hidden text-center text-xs font-medium"></p>
+  </div>
+</div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const fmt = new Intl.NumberFormat('en-EG', { maximumFractionDigits: 0 });
+const pct = (x) => (x * 100).toFixed(1) + '%';
+
+let halted = true;
+
+function toast(message, ok = true) {
+  const el = $('toast');
+  el.textContent = message;
+  el.className = 'mt-2 text-center text-xs font-medium ' + (ok ? 'text-emerald-600' : 'text-red-600');
+  el.classList.remove('hidden');
+  setTimeout(() => el.classList.add('hidden'), 4000);
+}
+
+function setConn(ok, label) {
+  $('conn-dot').className = 'h-2.5 w-2.5 rounded-full ' + (ok ? 'bg-emerald-500' : 'bg-red-500');
+  $('conn-text').textContent = label;
+}
+
+function renderControl(control) {
+  halted = control.halted;
+  $('control-state').textContent = halted ? 'HALTED' : 'ARMED';
+  $('control-state').className = 'mt-0.5 text-2xl font-bold ' + (halted ? 'text-red-600' : 'text-emerald-600');
+  $('control-reason').textContent = (control.reason || '') + (control.actor ? ' — ' + control.actor : '');
+  $('control-card').className = 'mb-3 rounded-2xl border p-4 shadow-sm ' + (halted
+    ? 'border-red-300 bg-red-50 dark:border-red-900/60 dark:bg-red-950/40'
+    : 'border-emerald-300 bg-emerald-50 dark:border-emerald-900/60 dark:bg-emerald-950/30');
+  $('kill-btn').disabled = halted;
+  $('kill-btn').textContent = halted ? 'BOT IS HALTED' : 'KILL SWITCH — STOP THE BOT';
+  $('kill-btn').classList.toggle('armed', !halted);
+  $('resume-wrap').classList.toggle('hidden', !halted);
+}
+
+function renderRegime(regime) {
+  if (!regime) return;
+  const state = (regime.risk_state || '').toUpperCase();
+  const colour = state === 'RISK_ON' ? 'text-emerald-600'
+               : state === 'BUYS_HALTED' ? 'text-amber-600' : 'text-red-600';
+  $('risk-state').textContent = state === 'RISK_ON' ? 'RISK ON' : state.replace(/_/g, ' ');
+  $('risk-state').className = 'mt-1 text-lg font-bold ' + colour;
+  $('risk-driver').textContent = (regime.drivers || [])[0] || '';
+  const age = regime.feed_age_seconds;
+  $('feed-age').textContent = age == null ? 'feeds: never polled'
+    : `feeds ${Math.round(age / 60)}m old · ${regime.headline_count ?? 0} headlines`
+      + (regime.stale ? ' · STALE' : '');
+
+  const blocked = regime.blocked_symbols || [];
+  $('blocked-card').classList.toggle('hidden', blocked.length === 0);
+  $('blocked-list').innerHTML = blocked.map((s) =>
+    `<span class="mono rounded-md bg-amber-200 px-2 py-0.5 text-[11px] font-semibold text-amber-900 dark:bg-amber-900 dark:text-amber-100">${s}</span>`
+  ).join('');
+}
+
+function renderGuard(verdict) {
+  if (!verdict) return;
+  const state = verdict.state || 'unknown';
+  const good = state === 'confirmed_demo';
+  $('demo-state').textContent = good ? 'SIMULATOR' : state === 'confirmed_live' ? 'REAL MONEY' : 'UNCONFIRMED';
+  $('demo-state').className = 'mt-1 text-lg font-bold ' + (good ? 'text-emerald-600' : 'text-red-600');
+  $('demo-detail').textContent = verdict.detail || '';
+  $('demo-sources').textContent = `${verdict.effective_sources ?? 0} source(s) · ${verdict.age_seconds ?? '?'}s old`;
+}
+
+function renderPortfolio(portfolio, plan) {
+  if (!portfolio) return;
+  const total = Number(portfolio.total_value || 0);
+  $('total-value').textContent = fmt.format(total) + ' EGP';
+  if (plan) $('policy-state').textContent = plan.policy_state || '';
+
+  const targets = (plan && plan.target_weights) || {};
+  const current = (plan && plan.current_weights) || {};
+  const symbols = [...new Set([...Object.keys(targets), ...(portfolio.positions || []).map((p) => p.symbol)])].sort();
+
+  $('holdings').innerHTML = symbols.map((symbol) => {
+    const target = Number(targets[symbol] ?? 0);
+    const held = Number(current[symbol] ?? 0);
+    const drift = target - held;
+    const wide = Math.abs(drift) >= 0.03;
+    const barTarget = Math.min(100, target * 100 * 2.5);
+    const barHeld = Math.min(100, held * 100 * 2.5);
+    return `
+      <div>
+        <div class="flex items-baseline justify-between text-xs">
+          <span class="mono font-semibold">${symbol}</span>
+          <span class="mono ${wide ? 'font-semibold text-amber-600' : 'text-slate-500 dark:text-slate-400'}">
+            ${pct(held)} &rarr; ${pct(target)} <span class="${drift >= 0 ? 'text-emerald-600' : 'text-red-600'}">(${drift >= 0 ? '+' : ''}${pct(drift)})</span>
+          </span>
+        </div>
+        <div class="mt-1 h-1.5 w-full overflow-hidden rounded-full bg-slate-200 dark:bg-slate-800">
+          <div class="relative h-full">
+            <div class="absolute inset-y-0 left-0 rounded-full bg-slate-400/70" style="width:${barTarget}%"></div>
+            <div class="absolute inset-y-0 left-0 rounded-full ${wide ? 'bg-amber-500' : 'bg-sky-500'}" style="width:${barHeld}%"></div>
+          </div>
+        </div>
+      </div>`;
+  }).join('') || '<p class="text-xs text-slate-500">no holdings read yet</p>';
+
+  const cash = Number(portfolio.cash_egp || 0);
+  const unsettled = Number(portfolio.unsettled_cash_egp || 0);
+  $('cash-line').textContent = `cash ${fmt.format(cash)} EGP`
+    + (unsettled > 0 ? ` · ${fmt.format(unsettled)} unsettled (T+2)` : '')
+    + ` · read ${portfolio.demo_confirmed ? 'on simulator' : 'UNVERIFIED'}`;
+}
+
+function renderPlan(plan) {
+  if (!plan) return;
+  const orders = plan.orders || [];
+  $('orders').innerHTML = orders.length ? orders.map((o) => `
+    <div class="rounded-xl border border-slate-200 p-2.5 dark:border-slate-800">
+      <div class="flex items-center justify-between text-xs">
+        <span class="mono font-semibold">
+          <span class="${o.side === 'buy' ? 'text-emerald-600' : 'text-red-600'}">${o.side.toUpperCase()}</span>
+          ${o.symbol}
+        </span>
+        <span class="mono text-slate-500 dark:text-slate-400">${o.quantity} @ ${o.limit_price}</span>
+      </div>
+      <p class="mt-1 text-[11px] text-slate-500 dark:text-slate-400">${o.rationale || ''}</p>
+    </div>`).join('')
+    : '<p class="text-xs text-slate-500 dark:text-slate-400">No orders: portfolio is inside its drift bands, or buying is withheld.</p>';
+
+  const withheld = [...(plan.suppressed || []), ...(plan.skipped || [])];
+  $('suppressed-wrap').classList.toggle('hidden', withheld.length === 0);
+  $('suppressed').innerHTML = withheld.map((s) =>
+    `<p class="mono text-[11px] text-slate-500 dark:text-slate-400">
+       <span class="font-semibold">${(s.side || '').toUpperCase()} ${s.symbol}</span> &mdash; ${s.reason}
+     </p>`).join('');
+}
+
+const KIND_COLOUR = {
+  ui_action: 'text-sky-300', guard: 'text-amber-300', regime: 'text-violet-300',
+  plan: 'text-slate-300', order: 'text-emerald-300', control: 'text-red-300',
+  error: 'text-red-400', lifecycle: 'text-slate-500',
+};
+
+function appendEvent(event) {
+  const log = $('log');
+  const time = new Date(event.ts).toLocaleTimeString('en-GB', { hour12: false });
+  const line = document.createElement('div');
+  line.className = 'whitespace-pre-wrap break-words';
+  line.innerHTML = `<span class="text-slate-600">${time}</span> `
+    + `<span class="${KIND_COLOUR[event.kind] || 'text-slate-300'}">${event.kind}</span> `
+    + `<span>${escapeHtml(event.message)}</span>`;
+  log.appendChild(line);
+  while (log.childElementCount > 500) log.removeChild(log.firstChild);
+  if ($('follow').checked) log.scrollTop = log.scrollHeight;
+}
+
+function escapeHtml(text) {
+  const div = document.createElement('div');
+  div.textContent = text ?? '';
+  return div.innerHTML;
+}
+
+async function post(path, payload) {
+  const response = await fetch(path, {
+    method: 'POST',
+    headers: payload ? { 'Content-Type': 'application/json' } : {},
+    body: payload ? JSON.stringify(payload) : undefined,
+  });
+  if (!response.ok) {
+    const detail = await response.json().catch(() => ({}));
+    throw new Error(detail.detail || response.statusText);
+  }
+  return response.json();
+}
+
+$('kill-btn').addEventListener('click', async () => {
+  $('kill-btn').disabled = true;
+  try {
+    renderControl((await post('/api/control/halt')).control);
+    toast('Bot halted.', true);
+    if (navigator.vibrate) navigator.vibrate(120);
+  } catch (err) {
+    toast('Halt failed: ' + err.message, false);
+    $('kill-btn').disabled = false;
+  }
+});
+
+$('resume-btn').addEventListener('click', async () => {
+  const phrase = $('resume-input').value;
+  $('resume-btn').disabled = true;
+  try {
+    renderControl((await post('/api/control/resume', { confirm: phrase })).control);
+    $('resume-input').value = '';
+    toast('Bot armed.', true);
+  } catch (err) {
+    toast(err.message, false);
+  } finally {
+    $('resume-btn').disabled = false;
+  }
+});
+
+let cursor = 0;
+
+async function loadState() {
+  const response = await fetch('/api/state');
+  if (!response.ok) { setConn(false, 'unauthorised'); return; }
+  const state = await response.json();
+  renderControl(state.control);
+  renderRegime(state.regime);
+  renderGuard(state.demo_verdict);
+  renderPortfolio(state.portfolio, state.plan);
+  renderPlan(state.plan);
+  $('phase').textContent = (state.status && state.status.phase) || 'idle';
+  $('log').innerHTML = '';
+  (state.events || []).forEach(appendEvent);
+  cursor = state.latest_seq || 0;
+}
+
+function connectStream() {
+  const stream = new EventSource(`/api/events/stream?after=${cursor}`);
+  stream.addEventListener('open', () => setConn(true, 'live'));
+  stream.addEventListener('agent', (message) => {
+    const event = JSON.parse(message.data);
+    cursor = Math.max(cursor, event.seq);
+    appendEvent(event);
+    // Anything that changes state warrants a refresh of the panels.
+    if (['plan', 'regime', 'guard', 'order', 'control'].includes(event.kind)) refreshPanels();
+  });
+  stream.addEventListener('control', (message) => renderControl(JSON.parse(message.data)));
+  stream.addEventListener('error', () => setConn(false, 'reconnecting'));
+}
+
+let refreshTimer = null;
+function refreshPanels() {
+  clearTimeout(refreshTimer);
+  refreshTimer = setTimeout(async () => {
+    const response = await fetch('/api/state');
+    if (!response.ok) return;
+    const state = await response.json();
+    renderRegime(state.regime);
+    renderGuard(state.demo_verdict);
+    renderPortfolio(state.portfolio, state.plan);
+    renderPlan(state.plan);
+    $('phase').textContent = (state.status && state.status.phase) || 'idle';
+  }, 400);
+}
+
+loadState().then(connectStream);
+// Belt and braces: if SSE is blocked by a proxy, the panels still refresh.
+setInterval(refreshPanels, 20000);
+</script>
+</body>
+</html>
