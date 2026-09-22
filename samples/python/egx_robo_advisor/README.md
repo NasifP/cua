@@ -1,11 +1,12 @@
-# EGX Robo-Advisor — foundation and safety layer
+# EGX Robo-Advisor — safety, strategy and the news circuit breaker
 
-Part 1 of a safety-gated rebalancing bot for the Egyptian Exchange that drives
+Parts 1–2 of a safety-gated rebalancing bot for the Egyptian Exchange that drives
 the **Thndr simulator** (paper trading) through [Cua](https://github.com/trycua/cua).
 
-This slice contains the machinery that decides whether the bot is allowed to
-touch the screen at all. The strategy, the agent loop, the dashboard, the market
-data and the backtester arrive in later parts; nothing here trades on its own.
+These slices contain the machinery that decides whether the bot may touch the
+screen, what it would buy if allowed, and when news should stop it. The agent
+loop, the dashboard, the market data and the backtester arrive in later parts;
+nothing here trades on its own.
 
 > **Status: simulator only.** Nothing in this package is investment advice.
 
@@ -19,6 +20,8 @@ data and the backtester arrive in later parts; nothing here trades on its own.
 | `clock.py` | EGX calendar: Sunday–Thursday, Cairo time, T+2 settlement |
 | `bus.py` | the agent ↔ dashboard channel, and the kill switch |
 | `safety/` | the demo-mode guard and the only sanctioned path to the screen |
+| `strategy/` | allocation policy and drift-band rebalancing — pure, no I/O |
+| `regime/` | news fetching, classification, and the circuit breaker |
 
 ---
 
@@ -130,12 +133,102 @@ nothing.
 
 ---
 
+## The EGX strategy
+
+`plan_rebalance()` is a pure function — state in, plan out, no clock, no network,
+no screen. That is what makes it backtestable against replayed history and
+testable without a broker.
+
+**Allocation is deliberately dumb:**
+
+- **Equal weight inside each sleeve.** No optimiser, no covariance estimate, no
+  expected returns. Equal weighting has exactly one parameter — the membership
+  list — and is the hardest allocation rule in existence to overfit.
+- **Two macro states, one threshold.** Trailing EGP depreciation has either
+  breached the devaluation trigger or it has not.
+
+  | State | Equity | Gold hedge | Cash |
+  |---|---|---|---|
+  | Baseline | 60% | 30% | 10% |
+  | Devaluation stress (≥15% trailing EGP depreciation) | 45% | 45% | 10% |
+
+- **Drift bands, not schedules.** We trade when the portfolio has actually
+  drifted, which is when rebalancing is worth its cost.
+- **Parameters drawn from a sanctioned discrete set**, enforced at runtime:
+
+  ```python
+  >>> PolicyParameters(sleeve_drift_band=Decimal("0.0437"))
+  ValueError: sleeve_drift_band=0.0437 is not a sanctioned value.
+  Allowed: ['0.03', '0.05', '0.08']. If you need a different value, change the
+  charter and ADMISSIBLE deliberately -- do not fit it.
+  ```
+
+  This is the one overfitting guardrail that survives contact with a motivated
+  operator at 1am, because it is a raised exception rather than a paragraph.
+
+**EGX frictions encoded**, because on this market they decide whether a plan is
+real: board lots · ±10% daily price limits (we stand aside rather than chase a
+limit-up name) · halts and stale prints · **T+2 settlement**, so today's sale
+proceeds are not investable today · a commission floor · a turnover cap and
+per-symbol cooldown to stop oscillation around a band edge.
+
+Sells are planned before buys so de-risking never waits on cash, and an order
+that busts the turnover budget is **trimmed, never dropped** — the largest drift
+is the most important thing to correct, and skipping it in favour of two small
+orders that happen to fit leaves the portfolio further from target.
+
+> **Note on the gold sleeve.** `max_name_weight` is a single-*issuer*
+> concentration limit and applies to the equity sleeve only. Applying it to a
+> one-ETF hedge sleeve would clamp a 45% hedge target to 15% and make the entire
+> devaluation response inert — a bug this codebase had, and now has a test for.
+
+See [`docs/NO_OVERFIT_CHARTER.md`](docs/NO_OVERFIT_CHARTER.md) before changing
+any strategy parameter.
+
+---
+
+## The news regime filter
+
+Our backtests found news carries essentially no predictive alpha on EGX names
+once retail fill delay is accounted for. So this layer is a **circuit breaker,
+never a signal**, and that is enforced rather than documented:
+
+```python
+allowed, suppressed = regime_filter.apply(plan.orders, regime)
+# apply() calls _assert_subtractive(orders, allowed), which raises
+# SubtractiveInvariantViolation if the result contains an order the plan never
+# had, an enlarged quantity, or a flipped side.
+```
+
+Three things follow, and each has a test:
+
+- **`Severity` has no positive band.** "COMI.CA smashes earnings, shares surge
+  20%" classifies as `NONE`. There is nowhere for a bullish score to live.
+- **The LLM composes with `max()`, never override.** It can raise severity, never
+  lower it. A timeout, a refusal, or a hallucinated all-clear cannot unblock
+  trading. The deterministic keyword classifier is the primary, so the breaker
+  still works with no API key.
+- **Asymmetry.** `BUYS_HALTED` stops buying but still permits sells — refusing to
+  let the bot de-risk during a crisis is its own kind of risk. Only `ALL_HALTED`
+  stops everything, and a `panic()` latches until explicitly cleared.
+
+Silence fails closed too: stale feeds mean `BUYS_HALTED`, because absence of bad
+news is far more likely to mean a broken poller than a calm market. Outside
+trading hours a quiet feed is normal and does not latch a halt.
+
+Feeds are public RSS/Atom only — no logins, no paywalls, no scraping disallowed
+by robots.txt. Confirm each publisher's terms before enabling one, and verify the
+URLs in `config/feeds.toml` actually resolve: a feed that 404s quietly is a
+coverage hole in the breaker.
+
+---
+
 ## Running the tests
 
 ```bash
 cd samples/python/egx_robo_advisor
 pip install -e '.[test]'
-python -m pytest        # 71 tests, no network, broker or GPU needed
+python -m pytest        # 122 tests, no network, broker or GPU needed
 ```
 
 `ruff check --select E,F,B,I` is clean.
@@ -146,7 +239,6 @@ python -m pytest        # 71 tests, no network, broker or GPU needed
 
 | Part | Adds |
 |---|---|
-| 2 | EGX strategy and the news regime filter |
 | 3 | market data providers with validation |
 | 4 | the agent loop, Thndr execution, and the mobile dashboard |
 | 5 | the backtester |

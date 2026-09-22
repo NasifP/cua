@@ -1,0 +1,69 @@
+# EGX allocation policy.
+#
+# This file is POLICY DATA, not tuning surface. Every value here must appear in
+# `ADMISSIBLE` in egx_advisor/strategy/policy.py, which rejects anything else at
+# construction time. Changing a value is a deliberate decision recorded in
+# docs/NO_OVERFIT_CHARTER.md -- not something to fit to a backtest.
+
+[parameters]
+sleeve_drift_band      = "0.05"   # allowed: 0.03, 0.05, 0.08
+name_drift_band        = "0.03"   # allowed: 0.02, 0.03, 0.05
+devaluation_trigger    = "0.15"   # allowed: 0.10, 0.15, 0.20
+devaluation_lookback_days = 180   # allowed: 90, 180, 365
+max_name_weight        = "0.15"   # allowed: 0.10, 0.15, 0.20 (equity sleeve only)
+max_turnover_per_cycle = "0.15"   # allowed: 0.10, 0.15, 0.25
+min_order_notional_egp = "5000"
+symbol_cooldown_days   = 5        # allowed: 0, 3, 5, 10
+
+[targets.baseline]
+blue_chip = "0.60"
+inflation_hedge = "0.30"
+cash = "0.10"
+
+[targets.devaluation]
+blue_chip = "0.45"
+inflation_hedge = "0.45"
+cash = "0.10"
+
+# VERIFY EVERY SYMBOL against the live EGX listing before arming. Tickers get
+# renamed, merged and suspended; the gold ETF's listing code in particular must
+# be confirmed rather than assumed.
+[[universe]]
+symbol = "COMI.CA"
+name = "Commercial International Bank"
+sleeve = "blue_chip"
+
+[[universe]]
+symbol = "TMGH.CA"
+name = "Talaat Moustafa Group Holding"
+sleeve = "blue_chip"
+
+[[universe]]
+symbol = "SWDY.CA"
+name = "Elsewedy Electric"
+sleeve = "blue_chip"
+
+[[universe]]
+symbol = "ABUK.CA"
+name = "Abu Qir Fertilizers"
+sleeve = "blue_chip"
+
+[[universe]]
+symbol = "EAST.CA"
+name = "Eastern Company"
+sleeve = "blue_chip"
+
+[[universe]]
+symbol = "ETEL.CA"
+name = "Telecom Egypt"
+sleeve = "blue_chip"
+
+[[universe]]
+symbol = "AZG.CA"
+name = "Gold-tracking ETF (confirm listing code)"
+sleeve = "inflation_hedge"
+
+# EGX market holidays move with the Hijri calendar and are published annually.
+# An empty list is honest about knowing nothing; populate it each year.
+[calendar]
+holidays = []

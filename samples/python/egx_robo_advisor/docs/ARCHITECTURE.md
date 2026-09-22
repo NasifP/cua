@@ -83,6 +83,38 @@ basis points of tracking error; an unintended order costs real money.
 **Exception.** Out of session, quiet feeds are normal and do not latch a halt.
 Otherwise the bot would open every Sunday already halted.
 
+
+---
+
+## ADR-005: The regime filter may only subtract
+
+**Decision.** `RegimeFilter.apply()` calls `_assert_subtractive()` on every
+invocation, which raises if the output contains an order the input did not, an
+enlarged quantity, or a flipped side. `Severity` has no positive band.
+
+**Why.** Our backtests found news carries essentially no predictive alpha on EGX
+names once retail fill delay is accounted for. "Use news as a filter, not a
+signal" is the kind of discipline that erodes: it starts as a comment, someone
+adds "if sentiment is very positive, upsize by 20%", and eighteen months later
+the bot is a momentum chaser with a news feed. An executable invariant does not
+erode.
+
+**Consequence.** The LLM classifier composes with `max()` over severity, never as
+an override. Its worst case is over-sensitivity (we stop buying for a while),
+never a false all-clear.
+
+---
+
+## ADR-008: The strategy layer is pure
+
+**Decision.** `plan_rebalance()` takes state and returns a plan. No clock, no
+network, no screen, no regime consultation.
+
+**Why.** It makes the strategy backtestable against replayed history and testable
+without a broker, and it keeps generation separate from suppression so each can
+be verified alone. It is also what makes the subtractive invariant checkable:
+there are two distinct artefacts to compare.
+
 ---
 
 Further decision records arrive with the parts that introduce them.
