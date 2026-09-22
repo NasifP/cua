@@ -1,12 +1,11 @@
-# EGX Robo-Advisor — the running bot
+# EGX Robo-Advisor
 
-Parts 1–4 of a safety-gated rebalancing bot for the Egyptian Exchange that drives
+A safety-gated rebalancing bot for the Egyptian Exchange that drives
 the **Thndr simulator** (paper trading) through [Cua](https://github.com/trycua/cua).
 
-These slices contain the machinery that decides whether the bot may touch the
-screen, what it would buy if allowed, when news should stop it, where its prices
-come from, and the loop and dashboard that tie them together. The bot runs from
-here; the backtester that measures it arrives in part 5.
+It decides whether it may touch the screen at all, what it would buy if allowed,
+when news should stop it, where its prices come from, and can measure its own
+frictions before any of it reaches an account.
 
 > **Status: simulator only.** Nothing in this package is investment advice.
 
@@ -26,6 +25,7 @@ here; the backtester that measures it arrives in part 5.
 | `egx_cua_agent.py` | the loop and its five gates |
 | `execution/` | the only module that drives the Thndr UI |
 | `dashboard/` | mobile UI, live log, and the kill switch |
+| `backtest/` | friction measurement: fill model, replay, bootstrap intervals |
 
 ---
 
@@ -397,23 +397,80 @@ a devaluation, never trigger one.
 
 ---
 
+## Backtesting
+
+```bash
+python run_backtest.py --synthetic                    # exercise the engine
+python run_backtest.py --yahoo --days 1825            # real data, cached to CSV
+python run_backtest.py --csv prices.csv --macro fx.csv
+```
+
+The strategy layer is pure, so replaying it is cheap. What the backtester is
+*for* is the part that matters: **measuring frictions, not discovering
+parameters.**
+
+It runs three configurations and compares them:
+
+| Run | Answers |
+|---|---|
+| `policy` | what actually happens, costs paid |
+| `frictionless` | what commission, duty and slippage cost you |
+| `buy & hold` | whether rebalancing beats leaving it alone |
+
+Three things keep it honest:
+
+- **A limit only fills if the day traded through it.** Assuming every order
+  fills at the close is the single assumption behind most backtests that cannot
+  be reproduced live. Fills are also capped by volume participation, so you
+  cannot take half a thin name's daily turnover for free. Rejected orders are
+  recorded, because a plan is not a fill and dropping them silently overstates
+  how well the policy tracked.
+- **No lookahead, asserted by a test.** Orders are priced off the *previous*
+  close and filled against the *current* day's range. Truncating the history must
+  not change the days that remain, and `test_no_lookahead...` proves it.
+- **Every comparison carries a block-bootstrap confidence interval.** Any
+  interval straddling zero prints `INDISTINGUISHABLE FROM NOISE`. Daily returns
+  are autocorrelated, so the blocks are circular rather than independent draws —
+  plain resampling would produce intervals far too narrow.
+
+The runner also prints a sample-size warning: under eight years it says outright
+that the history is long enough to compare frictions but not to choose
+parameters. That is the numerical counterpart to `PolicyParameters.validate()`.
+
+`--yahoo` pulls history through **the same provider the bot trades on**, and runs
+the same validation over it. The bridge reports per-symbol coverage against the
+exchange calendar; sparse symbols are flagged but still held, since dropping a
+universe member changes the policy's target weights and that is a deliberate
+decision rather than a side effect of a patchy download. History is cached to
+plain CSV so it can be inspected and diffed by hand.
+
+> `--synthetic` generates random prices. It exercises the engine and the cost
+> model; it says nothing about the EGX.
+
+**Before trusting any figure, replace `CostModel` with your broker's real
+schedule.** The defaults are deliberately pessimistic placeholders — the stamp
+duty rate in particular has changed repeatedly and must be confirmed.
+
+---
+
 ## Running the tests
 
 ```bash
 cd samples/python/egx_robo_advisor
 pip install -e '.[test]'
-python -m pytest        # 166 tests, no network, broker or GPU needed
+python -m pytest        # 203 tests, no network, broker or GPU needed
 ```
 
 `ruff check --select E,F,B,I` is clean.
 
 ---
 
-## What comes next
+## What is deliberately not here
 
-| Part | Adds |
-|---|---|
-| 5 | the backtester |
+- **No live-account support.** Not a missing feature, a design boundary.
+- **No holiday calendar.** EGX holidays follow the Hijri calendar and are
+  published annually. An empty set is honest about knowing nothing.
 
-See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the decision records
-behind the structure above.
+See [`docs/NO_OVERFIT_CHARTER.md`](docs/NO_OVERFIT_CHARTER.md) before changing
+any strategy parameter, and [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for
+the decision records behind the structure above.
