@@ -372,7 +372,7 @@ cd samples/python/egx_robo_advisor
 pip install -e '.[agent,ocr,dashboard,test]'
 cp .env.example .env    # then fill it in
 
-python -m pytest              # 144 tests, no network or broker needed
+python -m pytest              # 172 tests, no network or broker needed
 ```
 
 **Terminal 1 — dashboard:**
@@ -436,6 +436,54 @@ that looks authoritative and clicks the wrong button.
 
 ---
 
+## Backtesting
+
+```bash
+python run_backtest.py --synthetic                   # exercise the engine
+python run_backtest.py --csv prices.csv --macro fx.csv
+```
+
+The strategy layer is pure, so replaying it is cheap. What the backtester is
+*for* is the part that matters: **measuring frictions, not discovering
+parameters.**
+
+It runs three configurations and compares them:
+
+| Run | Answers |
+|---|---|
+| `policy` | what actually happens, costs paid |
+| `frictionless` | what commission, duty and slippage cost you |
+| `buy & hold` | whether rebalancing beats leaving it alone |
+
+Three things keep it honest:
+
+- **A limit only fills if the day traded through it.** Assuming every order
+  fills at the close is the single assumption behind most backtests that cannot
+  be reproduced live. Fills are also capped by volume participation, so you
+  cannot take half a thin name's daily turnover for free. On synthetic data the
+  fill rate lands near 57% — the rejected orders are recorded, because a plan is
+  not a fill and dropping them silently overstates how well the policy tracked.
+- **No lookahead, asserted by a test.** Orders are priced off the *previous*
+  close and filled against the *current* day's range. Truncating the history must
+  not change the days that remain, and `test_no_lookahead...` proves it.
+- **Every comparison carries a block-bootstrap confidence interval.** Any
+  interval straddling zero prints `INDISTINGUISHABLE FROM NOISE`. Daily returns
+  are autocorrelated, so the blocks are circular rather than independent draws —
+  plain resampling would produce intervals far too narrow.
+
+The runner also prints a sample-size warning: under eight years it says outright
+that the history is long enough to compare frictions but not to choose
+parameters. That is the numerical counterpart to `PolicyParameters.validate()` —
+the charter forbids fitting, and this makes visible when a fitted difference
+would have been meaningless anyway.
+
+> `--synthetic` generates random prices. It exercises the engine and the cost
+> model; it says nothing about the EGX. The output labels itself as such.
+
+**Before trusting any figure, replace `CostModel` with your broker's real
+schedule.** The defaults are deliberately pessimistic placeholders — the stamp
+duty rate in particular has changed repeatedly and must be confirmed.
+
 ## What is deliberately not here
 
 - **No live-account support.** Not a missing feature, a design boundary.
@@ -474,7 +522,13 @@ egx_advisor/
     filter.py         circuit breaker + subtractive invariant
   execution/
     thndr.py          UI flows, GuardedComputer
+  backtest/
+    engine.py         replay loop, T+2 settlement, no lookahead
+    fills.py          limit/volume/halt fill model
+    metrics.py        cost reporting + block-bootstrap intervals
+    data.py           CSV loader and a synthetic generator
 demo_dry_run.py       seven scenarios against a scripted screen
+run_backtest.py       three-way friction comparison
 dashboard/
   app.py              FastAPI + SSE + control endpoints
   templates/index.html   self-contained: inline CSS, no CDN
