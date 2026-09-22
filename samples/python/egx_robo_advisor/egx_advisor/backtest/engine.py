@@ -164,7 +164,7 @@ def run_backtest(history: PriceHistory, config: BacktestConfig) -> BacktestResul
         for symbol, bar in bars.items():
             previous_close[symbol] = bar.close
 
-        total = _value(quantities, bars, cash)
+        total = _value(quantities, bars, cash, previous_close)
         weights = {
             symbol: (qty * _close(bars, symbol, previous_close) / total) if total > 0 else Decimal(0)
             for symbol, qty in quantities.items()
@@ -237,7 +237,7 @@ def run_buy_and_hold(history: PriceHistory, config: BacktestConfig) -> BacktestR
             continue
         for symbol, bar in day_bars.items():
             previous_close[symbol] = bar.close
-        total = _value(quantities, day_bars, cash)
+        total = _value(quantities, day_bars, cash, previous_close)
         weights = {
             s: (q * _close(day_bars, s, previous_close) / total) if total > 0 else Decimal(0)
             for s, q in quantities.items()
@@ -337,12 +337,31 @@ def _close(bars: Mapping[str, Bar], symbol: str, fallback: Mapping[str, Decimal]
 
 
 def _value(
-    quantities: Mapping[str, Decimal], bars: Mapping[str, Bar], cash: Decimal
+    quantities: Mapping[str, Decimal],
+    bars: Mapping[str, Bar],
+    cash: Decimal,
+    fallback: Optional[Mapping[str, Decimal]] = None,
 ) -> Decimal:
-    return cash + sum(
-        (qty * bars[symbol].close for symbol, qty in quantities.items() if symbol in bars),
-        Decimal(0),
-    )
+    """Mark the book, carrying forward the last known close for a missing bar.
+
+    Skipping a symbol that has no bar today values the holding at zero, which
+    reads as a total loss on that name for that session and then a recovery the
+    next day -- a drawdown that never happened. Synthetic histories never show
+    this because every symbol has every day; real feeds have gaps per symbol, so
+    this is the first thing real data would have broken.
+    """
+    fallback = fallback or {}
+    total = cash
+    for symbol, qty in quantities.items():
+        if qty == 0:
+            continue
+        bar = bars.get(symbol)
+        price = bar.close if bar is not None else fallback.get(symbol)
+        if price is None:
+            # Never held a valued bar: there is nothing honest to mark it at.
+            continue
+        total += qty * price
+    return total
 
 
 def _as_datetime(day: date) -> datetime:

@@ -82,9 +82,12 @@ async def main() -> int:
         return 2
     except MarketDataError as exc:
         print(f"  FAILED: {exc}")
-        print("\n  If this is an import error, install the extra:")
-        print("    pip install -e '.[marketdata]'")
-        print("  If it is a network error, Yahoo may be unreachable from here.")
+        if "not installed" in str(exc):
+            print("\n  Install the extra:  pip install -e '.[marketdata]'")
+        else:
+            print("\n  yfinance is installed, so this is connectivity or the tickers.")
+            print("  Check that finance.yahoo.com is reachable from this machine,")
+            print("  then confirm each symbol resolves there.")
         return 1
 
     print(f"  as of {snapshot.as_of.isoformat()}")

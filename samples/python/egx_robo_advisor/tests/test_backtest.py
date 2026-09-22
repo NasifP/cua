@@ -265,3 +265,166 @@ def test_load_csv_rejects_missing_columns(tmp_path) -> None:
     path.write_text("date,symbol,close\n2026-09-20,COMI.CA,85\n", encoding="utf-8")
     with pytest.raises(HistoryError, match="missing columns"):
         load_csv(path)
+
+
+def test_missing_bar_carries_the_last_close_instead_of_valuing_at_zero() -> None:
+    """A per-symbol data gap must not read as a total loss and instant recovery.
+
+    Real feeds have gaps; synthetic ones do not, so this is the first thing live
+    data would have broken.
+    """
+    from egx_advisor.backtest.engine import _value
+
+    day_bars = {"COMI.CA": Bar(DAY, "COMI.CA", D(85), D(86), D(84), D("85.5"), D(1000))}
+    quantities = {"COMI.CA": D(100), "AZG.CA": D(200)}
+    carried = {"AZG.CA": D(19)}
+
+    with_fallback = _value(quantities, day_bars, D(1000), carried)
+    without = _value(quantities, day_bars, D(1000), {})
+
+    assert with_fallback == D(1000) + D(100) * D("85.5") + D(200) * D(19)
+    assert without < with_fallback, "no fallback drops the holding entirely"
+
+
+def test_gappy_history_does_not_produce_a_phantom_drawdown() -> None:
+    """End to end: drop one symbol's bars mid-run and check the equity curve."""
+    full = synthetic_history(SYMBOLS, start=date(2024, 1, 2), sessions=120)
+    gap_days = set(full.days[60:64])
+    holed = PriceHistory(
+        bars={
+            d: {s: b for s, b in row.items() if not (d in gap_days and s == "COMI.CA")}
+            for d, row in full.bars.items()
+        },
+        macro=full.macro,
+        days=full.days,
+    )
+    result = run_backtest(holed, BacktestConfig(policy=POLICY))
+    worst = min(compute(result).max_drawdown, 0.0)
+    # A phantom zeroing of one name would show as a drawdown far beyond anything
+    # the price series itself can produce.
+    assert worst > -0.5, f"phantom drawdown {worst:.1%} from a data gap"
+
+
+# ------------------------------------------------- provider -> backtester bridge
+
+
+def provider_rows(symbols, sessions=300, gaps=None):
+    """Rows shaped like a real feed: uneven coverage, per-symbol gaps."""
+    from egx_advisor.clock import TradingCalendar
+    from egx_advisor.marketdata.yahoo import USD_EGP_SYMBOL, YahooRow
+
+    calendar = TradingCalendar()
+    days, cursor = [], date(2024, 1, 2)
+    while len(days) < sessions:
+        if calendar.is_session_day(cursor):
+            days.append(cursor)
+        cursor += timedelta(days=1)
+
+    gaps = gaps or {}
+    out = {}
+    for index, symbol in enumerate(symbols):
+        skip = gaps.get(symbol, 0)
+        series = []
+        for i, day in enumerate(days[skip:], start=skip):
+            close = D(40 + index * 7) + D(i) / D(50)
+            series.append(
+                YahooRow(day, close, close + D("0.4"), close - D("0.4"), close, D("80000"), "EGP")
+            )
+        out[symbol] = series
+    out[USD_EGP_SYMBOL] = [
+        YahooRow(d, D(48), D(48), D(48), D(48), D(0), "EGP") for d in days
+    ]
+    return out
+
+
+class FakeProvider:
+    def __init__(self, rows):
+        self.rows = rows
+        self.calls = 0
+        self.last_report = None
+
+    async def history(self, universe, *, days=1825):
+        self.calls += 1
+        return self.rows
+
+
+async def test_provider_history_becomes_a_backtestable_price_history() -> None:
+    from egx_advisor.backtest import fetch_history
+
+    provider = FakeProvider(provider_rows(SYMBOLS))
+    history, coverage, _ = await fetch_history(provider, POLICY.universe)
+
+    assert history.days, "bridge produced no session days"
+    assert history.symbols() == set(SYMBOLS)
+    result = run_backtest(history, BacktestConfig(policy=POLICY))
+    assert len(result.snapshots) == len(history.days)
+    assert all(c > 0.9 for c in (coverage.coverage(s) for s in SYMBOLS))
+
+
+async def test_sparse_symbols_are_reported_but_still_held() -> None:
+    """Dropping a universe member changes the target weights -- the caller decides."""
+    from egx_advisor.backtest import fetch_history
+
+    rows = provider_rows(SYMBOLS, sessions=300, gaps={"AZG.CA": 250})
+    history, coverage, _ = await fetch_history(FakeProvider(rows), POLICY.universe)
+
+    assert "AZG.CA" in coverage.unusable
+    assert coverage.coverage("AZG.CA") < 0.5
+    assert "AZG.CA" in history.symbols(), "sparse symbols are flagged, not silently dropped"
+    assert "SPARSE" in coverage.render()
+
+
+async def test_macro_series_reaches_the_backtest() -> None:
+    from egx_advisor.backtest import fetch_history
+
+    history, _, _ = await fetch_history(FakeProvider(provider_rows(SYMBOLS)), POLICY.universe)
+    assert history.macro, "USD/EGP series must survive the bridge"
+    assert history.usd_egp_on(history.days[-1]) == D(48)
+
+
+async def test_cache_round_trips_and_avoids_a_second_fetch(tmp_path) -> None:
+    from egx_advisor.backtest import fetch_history
+
+    provider = FakeProvider(provider_rows(SYMBOLS, sessions=120))
+    cache = tmp_path / "hist.csv"
+
+    first, _, _ = await fetch_history(provider, POLICY.universe, cache=cache)
+    assert provider.calls == 1 and cache.exists()
+
+    second, _, _ = await fetch_history(provider, POLICY.universe, cache=cache)
+    assert provider.calls == 1, "a warm cache must not re-fetch"
+    assert [s for s in second.days] == [s for s in first.days]
+    a = run_backtest(first, BacktestConfig(policy=POLICY))
+    b = run_backtest(second, BacktestConfig(policy=POLICY))
+    assert [s.total_value for s in a.snapshots] == [s.total_value for s in b.snapshots]
+
+
+async def test_refresh_forces_a_new_fetch(tmp_path) -> None:
+    from egx_advisor.backtest import fetch_history
+
+    provider = FakeProvider(provider_rows(SYMBOLS, sessions=120))
+    cache = tmp_path / "hist.csv"
+    await fetch_history(provider, POLICY.universe, cache=cache)
+    await fetch_history(provider, POLICY.universe, cache=cache, refresh=True)
+    assert provider.calls == 2
+
+
+async def test_bridge_drops_bars_on_non_session_days() -> None:
+    """A bar dated to a Friday is a data fault, not a trading opportunity."""
+    from egx_advisor.backtest import build_history
+    from egx_advisor.marketdata.yahoo import YahooRow
+
+    rows = provider_rows(SYMBOLS, sessions=60)
+    friday = date(2024, 1, 5)  # EGX is closed Friday
+    rows["COMI.CA"] = list(rows["COMI.CA"]) + [
+        YahooRow(friday, D(50), D(50), D(50), D(50), D(1000), "EGP")
+    ]
+    history, _ = build_history(rows, POLICY.universe)
+    assert friday not in history.days
+
+
+async def test_empty_provider_response_is_rejected() -> None:
+    from egx_advisor.backtest import build_history
+
+    with pytest.raises(ValueError, match="no rows"):
+        build_history({}, POLICY.universe)

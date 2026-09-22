@@ -2,6 +2,7 @@
 """Backtest runner.
 
     python run_backtest.py --synthetic                  # exercise the engine
+    python run_backtest.py --yahoo --days 1825          # real data, cached
     python run_backtest.py --csv prices.csv --macro fx.csv
 
 What it reports, and why in this order
@@ -25,6 +26,7 @@ See docs/NO_OVERFIT_CHARTER.md.
 from __future__ import annotations
 
 import argparse
+import asyncio
 import sys
 from datetime import date
 from decimal import Decimal
@@ -38,11 +40,17 @@ from egx_advisor.backtest import (  # noqa: E402
     CostModel,
     compare,
     compute,
+    fetch_history,
     load_csv,
     run_backtest,
     run_buy_and_hold,
     sample_size_warning,
     synthetic_history,
+)
+from egx_advisor.marketdata import (  # noqa: E402
+    DataQualityError,
+    MarketDataError,
+    YahooMarketData,
 )
 from egx_advisor.strategy.policy import AllocationPolicy  # noqa: E402
 
@@ -53,8 +61,15 @@ def parse_args() -> argparse.Namespace:
     source.add_argument("--csv", help="OHLCV history: date,symbol,open,high,low,close[,volume]")
     source.add_argument("--synthetic", action="store_true",
                         help="generate random prices to exercise the engine (NOT a result)")
+    source.add_argument("--yahoo", action="store_true",
+                        help="pull real history through the same provider the bot trades on")
     p.add_argument("--macro", help="date,usd_egp series for the devaluation switch")
     p.add_argument("--sessions", type=int, default=750, help="synthetic only")
+    p.add_argument("--days", type=int, default=1825, help="--yahoo: calendar days of history")
+    p.add_argument("--cache", default="state/history.csv", help="--yahoo: CSV cache path")
+    p.add_argument("--refresh", action="store_true", help="--yahoo: ignore the cache")
+    p.add_argument("--min-coverage", type=float, default=0.80,
+                   help="--yahoo: flag symbols below this share of sessions")
     p.add_argument("--seed", type=int, default=20260922, help="synthetic only")
     p.add_argument("--start-cash", type=Decimal, default=Decimal("1000000"))
     p.add_argument("--commission", type=Decimal, default=None,
@@ -90,6 +105,46 @@ def main() -> int:
             symbols, start=date(2022, 1, 2), sessions=args.sessions, seed=args.seed,
             devaluation_at=args.sessions // 2,
         )
+    elif args.yahoo:
+        provider = YahooMarketData()
+        try:
+            history, coverage, quality = asyncio.run(
+                fetch_history(
+                    provider, policy.universe, days=args.days,
+                    cache=args.cache, refresh=args.refresh,
+                    min_coverage=args.min_coverage,
+                )
+            )
+        except DataQualityError as exc:
+            print(f"BLOCKED: {exc}\n", file=sys.stderr)
+            print(exc.report.render(), file=sys.stderr)
+            print("\nA backtest on bad data produces a number that looks like evidence.",
+                  file=sys.stderr)
+            return 2
+        except MarketDataError as exc:
+            print(f"FAILED: {exc}", file=sys.stderr)
+            if "not installed" in str(exc):
+                print("\nInstall the extra:  pip install -e '.[marketdata]'", file=sys.stderr)
+            else:
+                print("\nThis looks like a connectivity or ticker problem rather than a",
+                      file=sys.stderr)
+                print("missing package. Run verify_market_data.py to see what the feed",
+                      file=sys.stderr)
+                print("actually returns.", file=sys.stderr)
+            return 1
+
+        rule("DATA COVERAGE")
+        print(coverage.render())
+        if quality is not None and quality.warnings:
+            print()
+            for finding in quality.warnings:
+                print(finding.render())
+        if coverage.unusable:
+            print(f"\n  !! {sorted(coverage.unusable)} cover less than "
+                  f"{args.min_coverage:.0%} of sessions.")
+            print("     They are still held, because dropping a universe member changes")
+            print("     the policy's target weights -- that is your decision, not a side")
+            print("     effect of a patchy download. But results involving them are weak.")
     else:
         history = load_csv(args.csv, macro_path=args.macro, symbols=symbols)
         missing = set(symbols) - history.symbols()

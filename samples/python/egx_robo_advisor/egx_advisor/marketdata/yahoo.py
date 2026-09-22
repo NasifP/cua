@@ -269,7 +269,11 @@ def _yfinance_fetch(symbols: Sequence[str], lookback_days: int) -> dict[str, lis
         threads=True,
     )
     if frame is None or frame.empty:
-        raise MarketDataError(f"yfinance returned nothing for {list(symbols)}")
+        raise MarketDataError(
+            f"yfinance returned no rows for {list(symbols)}. Either Yahoo is "
+            f"unreachable from here, or none of these tickers resolve. Check "
+            f"connectivity first, then confirm the symbols on finance.yahoo.com."
+        )
 
     out: dict[str, list[YahooRow]] = {}
     for symbol in symbols:

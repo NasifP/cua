@@ -372,7 +372,7 @@ cd samples/python/egx_robo_advisor
 pip install -e '.[agent,ocr,dashboard,test]'
 cp .env.example .env    # then fill it in
 
-python -m pytest              # 194 tests, no network or broker needed
+python -m pytest              # 203 tests, no network or broker needed
 ```
 
 **Terminal 1 — dashboard:**
@@ -481,9 +481,23 @@ a devaluation, never trigger one.
 ## Backtesting
 
 ```bash
-python run_backtest.py --synthetic                   # exercise the engine
+python run_backtest.py --synthetic                    # exercise the engine
+python run_backtest.py --yahoo --days 1825            # real data, cached to CSV
 python run_backtest.py --csv prices.csv --macro fx.csv
 ```
+
+`--yahoo` pulls history through **the same provider the bot trades on**, and runs
+the same `quality.py` checks over it. A backtest fed from a different source than
+the live path measures something other than the bot.
+
+The bridge reports **per-symbol coverage** against the exchange calendar, because
+real feeds cover names unevenly and a symbol present for 300 of 1,200 sessions is
+not something the backtest can say anything about. Sparse symbols are flagged but
+still held: dropping a universe member changes the policy's target weights, and
+that is a decision to make deliberately rather than a side effect of a patchy
+download. Bars dated to non-session days are dropped as data faults. History is
+cached to plain CSV so it can be inspected and diffed by hand; `--refresh`
+re-pulls.
 
 The strategy layer is pure, so replaying it is cheap. What the backtester is
 *for* is the part that matters: **measuring frictions, not discovering
@@ -570,6 +584,7 @@ egx_advisor/
     fills.py          limit/volume/halt fill model
     metrics.py        cost reporting + block-bootstrap intervals
     data.py           CSV loader and a synthetic generator
+    sources.py        provider bridge, coverage report, CSV cache
 demo_dry_run.py       seven scenarios against a scripted screen
 run_backtest.py       three-way friction comparison
 verify_market_data.py check a feed before trusting it
