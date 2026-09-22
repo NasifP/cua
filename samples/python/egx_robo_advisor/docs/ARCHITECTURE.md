@@ -128,6 +128,39 @@ screenshot happened, and an OCR error on a decimal point silently multiplies an
 order by ten. The portfolio read tolerates the screen because there is no
 alternative — and even that is validated hard. Prices have an alternative.
 
+
+---
+
+## ADR-007: Panic is latched
+
+**Decision.** `RegimeFilter.panic()` sets `_panic_until`, and `evaluate()` returns
+`ALL_HALTED` while it holds, regardless of what the feeds say. It clears on a
+timer or via `clear_panic(actor=...)`.
+
+**Why.** Found by a test. `panic()` originally only set the risk-off cooldown, so
+the next `evaluate()` recomputed from the headlines and silently downgraded
+`ALL_HALTED` to `BUYS_HALTED` — putting the bot back on the screen after we had
+declared we did not trust our own data. A panic means exactly that, and a
+subsequent calm poll is not evidence to the contrary.
+
+---
+
+## ADR-010: The UI map ships uncalibrated
+
+**Decision.** `ThndrUiMap.calibration_complete` defaults to `False`, and
+`submit_order()` refuses while it is.
+
+**Why.** Nobody — including a language model — can know a third-party app's
+current pixel geometry and label text from memory. Shipping plausible-looking
+constants would produce code that reads as authoritative and clicks the wrong
+button. Making the uncalibrated state explicit and blocking is more honest than
+a comment saying "adjust these".
+
+**Related.** Semantic navigation via `ComputerAgent` is preferred over
+coordinates throughout: a model asked to "open the portfolio tab" adapts to a
+redesign, whereas a hard-coded point silently clicks whatever moved into that
+spot.
+
 ---
 
 Further decision records arrive with the parts that introduce them.
