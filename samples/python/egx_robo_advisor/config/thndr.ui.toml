@@ -1,0 +1,49 @@
+# Thndr X UI calibration.
+#
+# Partially filled from a screenshot of x.thndr.app. Every value still needs
+# checking on YOUR screen, on the screen each control actually lives on:
+#
+#   python calibrate_ui.py --target host --os macos
+#
+# prints the labels the live page exposes (read-only: it screenshots and reads,
+# never clicks). Order submission stays blocked until calibration_complete = true.
+
+[ui]
+# Observed: x.thndr.app/workspaces/default/trade?view=stock
+# Left empty on purpose -- navigating means typing into an address bar, which is
+# an order-critical primitive on a desktop the bot does not own. Open the page
+# yourself and let the bot find it already loaded.
+web_url = ""
+
+# Thndr X lists bare EGX tickers (ABUK, NIPH, PHAR) while the price feed and the
+# strategy use Yahoo-style ".CA". Every symbol crossing into the UI is stripped,
+# and every symbol read back off it is re-tagged.
+broker_symbol_suffix = ".CA"
+
+# --- observed in the screenshot -------------------------------------------
+positions_tab_label  = "Positions"
+orders_tab_label     = "Orders"
+market_closed_label  = "Market Closed"
+
+# --- NOT yet confirmed: still placeholders ---------------------------------
+# The screenshot showed no visible simulator/virtual badge. Find what Thndr X
+# uses to distinguish the paper account from the real one before arming
+# anything; if it is not text, the guard needs a different probe. See README.
+account_switcher_label  = "Account"
+simulator_option_label  = "Simulator"
+portfolio_tab_label     = "Portfolio"
+search_label            = "Search"
+buy_button_label        = "Buy"
+sell_button_label       = "Sell"
+quantity_field_label    = "Quantity"
+limit_price_field_label = "Limit price"
+review_button_label     = "Review"
+confirm_button_label    = "Confirm"
+order_placed_label      = "Order placed"
+
+calibration_complete = false
+
+# Only for names where the broker's ticker is not just the stripped symbol.
+# The gold ETF is the one most likely to need this -- confirm it.
+[ui.symbol_overrides]
+# "AZG.CA" = "AZGD"

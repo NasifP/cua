@@ -27,6 +27,7 @@ import asyncio
 import logging
 import os
 import sys
+from dataclasses import replace
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -45,10 +46,16 @@ def parse_args() -> argparse.Namespace:
         help="plan and publish, but never submit an order",
     )
     parser.add_argument(
+        "--ui",
+        default="config/thndr.ui.toml",
+        help="calibrated UI labels (see calibrate_ui.py). Its calibration_complete "
+        "is what gates order submission.",
+    )
+    parser.add_argument(
         "--calibrated",
         action="store_true",
-        help="assert that ThndrUiMap labels have been verified against the live app; "
-        "order submission is refused without it",
+        help="force calibration_complete on, for runs without a --ui file. Prefer "
+        "setting it in the file, which is a durable statement rather than a flag.",
     )
     parser.add_argument(
         "--target",
@@ -119,12 +126,23 @@ async def main() -> None:
             max_trajectory_budget={"max_budget": 5.0, "raise_error": True},
         )
 
+    ui_path = Path(args.ui)
+    if ui_path.exists():
+        ui = ThndrUiMap.from_toml(ui_path)
+        ui_source = str(ui_path)
+    else:
+        ui = ThndrUiMap()
+        ui_source = "built-in placeholders (no --ui file)"
+    if args.calibrated and not ui.calibration_complete:
+        ui = replace(ui, calibration_complete=True)
+        ui_source += " + --calibrated override"
+
     agent = EgxCuaAgent(
         config=AgentConfig(
             bus_path=args.bus,
             cycle_interval=args.interval,
             execute_orders=not args.dry_run,
-            ui=ThndrUiMap(calibration_complete=args.calibrated),
+            ui=ui,
         ),
         computer=computer,
         market_data=(
@@ -146,7 +164,8 @@ async def main() -> None:
         f"agent starting (target={args.target}/{os_type}, bus={args.bus}, "
         f"data={args.market_data}, "
         f"{'DRY RUN' if args.dry_run else 'EXECUTION ARMED'}, "
-        f"{'calibrated' if args.calibrated else 'UNCALIBRATED -- orders refused'})\n"
+        f"{'calibrated' if ui.calibration_complete else 'UNCALIBRATED -- orders refused'})\n"
+        f"UI labels from: {ui_source}\n"
         f"the bot is HALTED until you arm it from the dashboard"
     )
     await agent.run_forever()

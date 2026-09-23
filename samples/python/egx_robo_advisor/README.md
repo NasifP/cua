@@ -352,19 +352,50 @@ The app binds `127.0.0.1` and refuses a non-loopback bind unless you set
 places orders, so put it behind a tunnel that terminates TLS and authenticates —
 Cloudflare Tunnel or Tailscale — rather than exposing it directly.
 
-### Before you ever pass `--calibrated`
+### Calibrating against Thndr X
+
+```bash
+python calibrate_ui.py --target host --os macos
+```
+
+Open Thndr X, switch it to the simulator, then run this. It screenshots the
+screen, pulls the accessibility tree, runs every demo-mode probe, and prints what
+matched — so `config/thndr.ui.toml` is filled from what the page really exposes
+rather than guessed. **It never clicks**, so you can also point it at the real
+account as a test: the guard should say `CONFIRMED_LIVE`.
+
+Two things about Thndr X specifically:
+
+- **It lists bare EGX tickers** (`ABUK`, `NIPH`, `PHAR`) while the price feed and
+  the strategy use Yahoo-style `.CA`. Typing `COMI.CA` into its search finds
+  nothing, so `broker_symbol_suffix` strips it on the way to the UI and re-tags
+  what comes back. Names where the broker's ticker is not just the stripped
+  symbol go in `[ui.symbol_overrides]` — the gold ETF is the likeliest.
+- **Holdings live under a `Positions` tab**, not "Portfolio", with `Qty` and
+  `Market Value` columns. The extraction prompt targets those.
+
+> **Unresolved: how does Thndr X show that you are on the simulator?** A
+> screenshot of the trade view showed no visible simulator or virtual badge. The
+> demo guard needs *something* it can assert on. Run `calibrate_ui.py` on both
+> accounts and compare the candidate labels; whatever differs is the marker, and
+> it goes in `DEMO_TOKENS` / `LIVE_TOKENS` in `safety/demo_guard.py`. If nothing
+> textual differs, the guard needs a different probe — do not arm the bot until
+> this is settled, because the account assertion is the whole safety story.
+
+### Before you ever set `calibration_complete = true`
 
 `ThndrUiMap.calibration_complete` gates order submission and defaults to `False`
 for a reason: nobody — including a language model — can know a third-party app's
 current geometry and label text from memory. Guessing produces code that looks
 authoritative and clicks the wrong button.
 
-1. Screenshot every relevant Thndr screen **in the simulator**.
-2. Verify each label in `ThndrUiMap` against them.
-3. Re-measure `DEMO_COLOUR_SIGNATURES` from the real simulator badge.
-4. Confirm every symbol in `config/policy.egx.toml` against the live EGX listing.
-5. Run for several sessions with `--dry-run` and read the plans.
-6. Only then pass `--calibrated`.
+1. Run `calibrate_ui.py` on every screen a control lives on — Buy and Confirm
+   are in the order ticket, not the trade view.
+2. Settle the simulator-vs-real marker question above.
+3. Confirm every symbol in `config/policy.egx.toml` against the live EGX listing,
+   and its broker ticker against Thndr X's own search.
+4. Run for several sessions with `--dry-run` and read the plans.
+5. Only then set `calibration_complete = true`.
 
 ---
 
