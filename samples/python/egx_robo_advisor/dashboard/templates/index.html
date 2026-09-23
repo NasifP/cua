@@ -208,6 +208,8 @@ summary { cursor: pointer; font-size: 12px; font-weight: 600; color: var(--muted
 }
 .msg.you { padding-left: 9px; border-left: 2px solid var(--border); }
 .msg.bot { white-space: pre-wrap; }
+/* Its own block so dir="auto" applies per message rather than per character run. */
+.msg .body { display: block; }
 #resume-btn {
   flex-shrink: 0; padding: 10px 17px; font-size: 14px; font-weight: 650;
   color: #fff; background: #059669; border: none; border-radius: 10px; cursor: pointer;
@@ -300,7 +302,7 @@ summary { cursor: pointer; font-size: 12px; font-weight: 600; color: var(--muted
     </div>
     <div id="chat-log"></div>
     <div class="resume-row" style="margin-top:10px">
-      <input id="chat-input" type="text" autocomplete="off"
+      <input id="chat-input" type="text" autocomplete="off" dir="auto"
              placeholder="Why was AZG.CA not bought?">
       <button id="chat-send">Ask</button>
     </div>
@@ -546,10 +548,36 @@ $('resume-btn').addEventListener('click', async () => {
 // a reload starts a fresh conversation rather than resurrecting a stale one.
 const chatHistory = [];
 
+// dir="auto" is not enough here: it takes the direction from the FIRST strong
+// character, and an answer about EGX naturally opens with a ticker -- "AZG.CA
+// لم يُشترَ" would render left-to-right and read backwards. Tickers are
+// unavoidable in this domain, so pick the dominant script instead of the first
+// letter, and fall back to auto when there is nothing to weigh.
+function direction(text) {
+  const arabic = (text.match(/[\u0600-\u06FF\u0750-\u077F\uFB50-\uFDFF\uFE70-\uFEFF]/g) || []).length;
+  const latin  = (text.match(/[A-Za-z]/g) || []).length;
+  if (arabic > latin) return 'rtl';
+  if (latin > arabic) return 'ltr';
+  return 'auto';
+}
+
+// One place renders a message body, because there are two callers: the initial
+// "…" placeholder and the answer that replaces it. When they each built their
+// own markup, the answer quietly lost its direction and every Arabic reply read
+// backwards while the question beside it read correctly.
+function setMessage(el, who, text) {
+  // Direction goes on the text, never on .msg: the "You"/"Assistant" label is
+  // always Latin, so letting it set the paragraph direction lays every Arabic
+  // answer out backwards.
+  el.innerHTML = `<span class="who">${who === 'you' ? 'You' : 'Assistant'}</span>`
+               + `<span class="body" dir="${direction(text)}">${esc(text)}</span>`;
+  return el;
+}
+
 function addMessage(who, text) {
   const el = document.createElement('div');
   el.className = 'msg ' + (who === 'you' ? 'you' : 'bot');
-  el.innerHTML = `<span class="who">${who === 'you' ? 'You' : 'Assistant'}</span>${esc(text)}`;
+  setMessage(el, who, text);
   $('chat-log').appendChild(el);
   $('chat-log').scrollTop = $('chat-log').scrollHeight;
   return el;
@@ -571,12 +599,13 @@ async function ask() {
     });
     const data = await res.json().catch(() => ({}));
     const answer = data.answer || `(${res.status})`;
-    pending.innerHTML = `<span class="who">Assistant</span>${esc(answer)}`;
+    setMessage(pending, 'bot', answer);
+    $('chat-log').scrollTop = $('chat-log').scrollHeight;
     chatHistory.push({ role: 'user', content: question });
     chatHistory.push({ role: 'assistant', content: answer });
     while (chatHistory.length > 12) chatHistory.shift();
   } catch (err) {
-    pending.innerHTML = `<span class="who">Assistant</span>${esc('Failed: ' + err.message)}`;
+    setMessage(pending, 'bot', 'Failed: ' + err.message);
   } finally {
     $('chat-send').disabled = false;
     input.focus();

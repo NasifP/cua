@@ -223,3 +223,47 @@ def test_chat_state_is_reported_for_the_ui(chat_client) -> None:
     api, _ = chat_client
     payload = api.get("/api/state", headers={"Authorization": f"Bearer {TOKEN}"}).json()
     assert payload["chat"] == {"enabled": True, "model": "gemini/test"}
+
+
+# ------------------------------------------------------- bidirectional text
+
+
+def _template() -> str:
+    return (
+        Path(__file__).resolve().parent.parent
+        / "dashboard" / "templates" / "index.html"
+    ).read_text(encoding="utf-8")
+
+
+def test_every_chat_message_is_rendered_through_one_function() -> None:
+    """The answer once had its own copy of the markup and lost its direction.
+
+    The question beside it read correctly, so the bug was invisible unless you
+    could read Arabic. One renderer means a fix cannot apply to half the panel.
+    """
+    source = _template()
+    assert source.count('class="body" dir=') == 1, (
+        "message markup is built in more than one place; route it through "
+        "setMessage() so direction cannot be forgotten on one path"
+    )
+    assert "pending.innerHTML" not in source, (
+        "the pending bubble must be filled by setMessage(), not by its own markup"
+    )
+
+
+def test_direction_is_chosen_by_dominant_script_not_first_letter() -> None:
+    """`dir="auto"` reads the first strong character, which here is a ticker.
+
+    An answer opening with "AZG.CA لم يُشترَ" is Arabic prose, and auto would
+    lay it out left-to-right. Tickers lead sentences constantly in this domain,
+    so the choice has to weigh the whole message.
+    """
+    source = _template()
+    assert "function direction" in source, "a message needs a direction decision"
+    assert "\\u0600-\\u06FF" in source, "the Arabic range must be counted"
+    assert "arabic > latin" in source and "latin > arabic" in source, (
+        "both scripts must be weighed against each other, not just the first letter"
+    )
+    assert 'class="body" dir="${direction(text)}"' in source, (
+        "the computed direction must reach the markup"
+    )
