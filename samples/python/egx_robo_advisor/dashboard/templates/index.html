@@ -170,30 +170,32 @@ summary { cursor: pointer; font-size: 12px; font-weight: 600; color: var(--muted
   padding-bottom: calc(12px + var(--safe-bottom));
 }
 .dock-inner { max-width: 640px; margin: 0 auto; padding: 12px 16px 0; }
-#kill-btn {
+#power-btn {
   display: block; width: 100%; padding: 19px 16px;
   font-family: var(--sans); font-size: 17px; font-weight: 750; letter-spacing: 0.02em;
   color: #fff; background: #dc2626; border: none; border-radius: var(--radius);
   cursor: pointer; box-shadow: 0 4px 14px rgba(220, 38, 38, .32);
 }
-#kill-btn:active { transform: scale(.99); }
-#kill-btn:disabled { background: var(--faint); box-shadow: none; cursor: default; opacity: .75; }
-#kill-btn.armed { animation: ring 2.2s infinite; }
+#power-btn:active { transform: scale(.99); }
+#power-btn:disabled { background: var(--faint); box-shadow: none; cursor: default; opacity: .75; }
+#power-btn.armed { animation: ring 2.2s infinite; }
 @keyframes ring {
   0%   { box-shadow: 0 0 0 0 rgba(220, 38, 38, .5), 0 4px 14px rgba(220, 38, 38, .32); }
   70%  { box-shadow: 0 0 0 15px rgba(220, 38, 38, 0), 0 4px 14px rgba(220, 38, 38, .32); }
   100% { box-shadow: 0 0 0 0 rgba(220, 38, 38, 0), 0 4px 14px rgba(220, 38, 38, .32); }
 }
-@media (prefers-reduced-motion: reduce) { #kill-btn.armed { animation: none; } }
+@media (prefers-reduced-motion: reduce) { #power-btn.armed { animation: none; } }
+/* Halted: the button starts the bot, so it must not look like the stop button. */
+#power-btn.start { background: var(--ok); box-shadow: none; }
+/* The second press. Amber, because it is neither "stop" nor "done". */
+#power-btn.confirm { background: var(--warn); color: #1b1300; box-shadow: none; }
 
-#resume-wrap { margin-top: 9px; }
-.resume-row { display: flex; gap: 8px; }
-#resume-input, #chat-input {
-  flex: 1; min-width: 0; font-family: var(--mono); font-size: 12px;
+.input-row { display: flex; gap: 8px; }
+#chat-input {
+  flex: 1; min-width: 0; font-family: var(--sans); font-size: 13px;
   padding: 10px 11px; border: 1px solid var(--border); border-radius: 10px;
   background: var(--bg); color: var(--text);
 }
-#chat-input { font-family: var(--sans); font-size: 13px; }
 #chat-send {
   flex-shrink: 0; padding: 10px 16px; font-size: 13px; font-weight: 650;
   color: #fff; background: var(--accent); border: none; border-radius: 10px; cursor: pointer;
@@ -208,13 +210,9 @@ summary { cursor: pointer; font-size: 12px; font-weight: 600; color: var(--muted
 }
 .msg.you { padding-left: 9px; border-left: 2px solid var(--border); }
 .msg.bot { white-space: pre-wrap; }
-/* Its own block so dir="auto" applies per message rather than per character run. */
+/* Its own block so the computed direction applies to the whole message rather
+   than to individual character runs inside the row. */
 .msg .body { display: block; }
-#resume-btn {
-  flex-shrink: 0; padding: 10px 17px; font-size: 14px; font-weight: 650;
-  color: #fff; background: #059669; border: none; border-radius: 10px; cursor: pointer;
-}
-#resume-btn:disabled { opacity: .5; cursor: default; }
 #toast { font-size: 12px; font-weight: 600; text-align: center; margin: 9px 0 0; min-height: 1em; }
 .phase-stale { color: var(--faint); text-decoration: line-through; opacity: .75; }
 .phase-note { font-size: 10px; color: var(--faint); margin: 2px 0 0; letter-spacing: 0; text-transform: none; font-weight: 500; }
@@ -301,7 +299,7 @@ summary { cursor: pointer; font-size: 12px; font-weight: 600; color: var(--muted
       <span class="tiny" id="chat-model" style="margin:0"></span>
     </div>
     <div id="chat-log"></div>
-    <div class="resume-row" style="margin-top:10px">
+    <div class="input-row" style="margin-top:10px">
       <input id="chat-input" type="text" autocomplete="off" dir="auto"
              placeholder="Why was AZG.CA not bought?">
       <button id="chat-send">Ask</button>
@@ -324,15 +322,8 @@ summary { cursor: pointer; font-size: 12px; font-weight: 600; color: var(--muted
 
 <div class="dock">
   <div class="dock-inner">
-    <button id="kill-btn" class="armed">KILL SWITCH &mdash; STOP THE BOT</button>
-    <div id="resume-wrap" class="hidden">
-      <div class="resume-row">
-        <input id="resume-input" type="text" autocapitalize="characters" autocomplete="off"
-               spellcheck="false" placeholder="{{ resume_phrase }}">
-        <button id="resume-btn">Arm</button>
-      </div>
-      <p class="tiny">Type the phrase exactly to arm. Stopping is one tap; starting is not.</p>
-    </div>
+    <button id="power-btn" class="armed">KILL SWITCH &mdash; STOP THE BOT</button>
+    <p id="power-note" class="tiny">Stopping is one tap. Starting takes two.</p>
     <p id="toast"></p>
   </div>
 </div>
@@ -361,11 +352,7 @@ function renderControl(control) {
   $('control-state').className = 'big ' + (halted ? 'bad' : 'ok');
   $('control-reason').textContent = (control.reason || '') + (control.actor ? ' — ' + control.actor : '');
   $('control-card').className = 'card ' + (halted ? 'state-bad' : 'state-ok');
-  const btn = $('kill-btn');
-  btn.disabled = halted;
-  btn.textContent = halted ? 'BOT IS HALTED' : 'KILL SWITCH — STOP THE BOT';
-  btn.classList.toggle('armed', !halted);
-  $('resume-wrap').classList.toggle('hidden', !halted);
+  paintPowerButton(halted);
   markPhaseFreshness(halted);
 }
 
@@ -384,8 +371,14 @@ function markPhaseFreshness(halted) {
   $('phase-note').classList.toggle('hidden', !stale);
 }
 
+// The mode the page is currently showing. The arm confirmation names it and
+// echoes it back to the server, so this is the single place both the banner and
+// the thing you agree to are read from -- they cannot drift apart.
+let lastMode = null;
+
 function renderMode(mode) {
   const card = $('mode-card');
+  lastMode = mode || null;
   if (!mode) { card.classList.add('hidden'); return; }
   card.classList.remove('hidden');
   // Only a mode that can actually place an order is shown as dangerous.
@@ -517,30 +510,76 @@ async function post(path, payload) {
   return response.json();
 }
 
-$('kill-btn').addEventListener('click', async () => {
-  $('kill-btn').disabled = true;
+// One button, three states. Stopping is a single press, because a person
+// reaching for it has already decided. Starting is two, because arming puts an
+// order-placer back in front of an account and a phone in a pocket must not be
+// able to do that with one accidental tap.
+//
+// The second press is not ceremony for its own sake: it is the press that names
+// the account. The confirm label is the agent's own mode banner, so what you are
+// agreeing to is the thing the screen is showing, not a sentence written months
+// ago in a config default.
+let confirmTimer = null;
+
+function armBanner() {
+  return (lastMode && lastMode.banner) || 'START THE BOT';
+}
+
+function paintPowerButton(halted) {
+  const btn = $('power-btn');
+  clearTimeout(confirmTimer);
+  confirmTimer = null;
+  btn.disabled = false;
+  btn.className = halted ? 'start' : 'armed';
+  btn.textContent = halted ? 'START THE BOT' : 'KILL SWITCH — STOP THE BOT';
+  $('power-note').textContent = halted
+    ? 'Press to start. You will be asked to confirm the account first.'
+    : 'Stopping is one tap. Starting takes two.';
+}
+
+function askToConfirm() {
+  const btn = $('power-btn');
+  btn.className = 'confirm';
+  btn.textContent = 'CONFIRM — ' + armBanner();
+  $('power-note').textContent = 'Press again to arm. Cancels itself in 6 seconds.';
+  // Times out rather than latching: a confirm left open in a pocket is the same
+  // single accidental tap this two-step exists to prevent.
+  confirmTimer = setTimeout(() => paintPowerButton(true), 6000);
+}
+
+async function halt() {
+  $('power-btn').disabled = true;
   try {
     renderControl((await post('/api/control/halt')).control);
     toast('Bot halted.', true);
     if (navigator.vibrate) navigator.vibrate(120);
   } catch (err) {
     toast('Halt failed: ' + err.message, false);
-    $('kill-btn').disabled = false;
+    $('power-btn').disabled = false;
   }
-});
+}
 
-$('resume-btn').addEventListener('click', async () => {
-  const phrase = $('resume-input').value;
-  $('resume-btn').disabled = true;
+async function arm() {
+  const btn = $('power-btn');
+  btn.disabled = true;
   try {
-    renderControl((await post('/api/control/resume', { confirm: phrase })).control);
-    $('resume-input').value = '';
+    // Echo the mode this page is showing. The server refuses if the agent now
+    // reports a different one, so a page left open through an account switch
+    // cannot arm on what it used to be looking at.
+    const mode = (lastMode && lastMode.mode) || '';
+    renderControl((await post('/api/control/resume', { confirm: mode })).control);
     toast('Bot armed.', true);
   } catch (err) {
     toast(err.message, false);
-  } finally {
-    $('resume-btn').disabled = false;
+    paintPowerButton(true);
   }
+}
+
+$('power-btn').addEventListener('click', () => {
+  const btn = $('power-btn');
+  if (btn.classList.contains('armed')) return halt();
+  if (btn.classList.contains('confirm')) return arm();
+  askToConfirm();
 });
 
 // --- chat -------------------------------------------------------------------

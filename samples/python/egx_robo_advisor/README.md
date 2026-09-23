@@ -286,9 +286,37 @@ must work when the agent loop is wedged mid-click — a button inside the stuck
 process cannot be pressed.
 
 **Asymmetric friction:** halting is one tap with no confirmation dialog — if
-someone is reaching for that button they want the bot stopped *now*. Resuming
-requires typing an exact phrase. Stopping should always be easier than starting,
-and the bot never resumes itself.
+someone is reaching for that button they want the bot stopped *now*. Arming takes
+two, and the second press is the one that names the account:
+
+```
+  press 1:  START THE BOT
+  press 2:  CONFIRM — REAL ACCOUNT - READ ONLY, NO ORDERS
+```
+
+That label is the agent's own mode banner, read from the bus. It used to be a
+fixed phrase the operator typed, which meant a dashboard watching a real account
+still asked them to type `RESUME SIMULATOR TRADING` — affirming something false
+at the exact moment the screen was trying to say otherwise. A friction that
+makes you assert the wrong thing stops being read and becomes a password typed
+from muscle memory, which is the one thing it must never become.
+
+The confirmation is also checked on the server, not just drawn on the page. The
+page echoes the mode it is displaying and `/api/control/resume` compares it to
+what the agent currently reports:
+
+```python
+def test_a_page_left_open_through_a_mode_change_cannot_arm(client):
+    bus.put("mode", {"mode": "live_read_only", ...})   # account switched
+    stale = api.post("/api/control/resume", json={"confirm": "simulator_only"})
+    assert stale.status_code == 409
+    assert bus.is_halted()                              # it did not arm
+```
+
+So a bare POST cannot arm, a dashboard left open through an account switch
+cannot arm on what it used to be looking at, and a bus with no agent in it
+cannot arm at all. Stopping should always be easier than starting, and the bot
+never resumes itself.
 
 All CSS is inline: no CDN, no external font. This page is the remote stop button
 for something that places orders, and a stylesheet fetched from a third party is
@@ -577,7 +605,7 @@ duty rate in particular has changed repeatedly and must be confirmed.
 ```bash
 cd samples/python/egx_robo_advisor
 pip install -e '.[test]'
-python -m pytest        # 256 tests, no network, broker or GPU needed
+python -m pytest        # 258 tests, no network, broker or GPU needed
 ```
 
 `ruff check --select E,F,B,I` is clean.

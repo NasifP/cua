@@ -15,15 +15,16 @@ from dashboard.app import DashboardConfig, create_app  # noqa: E402
 from egx_advisor.bus import EventKind  # noqa: E402
 
 TOKEN = "test-token-that-is-long-enough-1234"
-PHRASE = "RESUME SIMULATOR TRADING"
 
 
 @pytest.fixture
 def client(tmp_path: Path):
-    config = DashboardConfig(
-        bus_path=str(tmp_path / "state.db"), token=TOKEN, resume_phrase=PHRASE
-    )
+    config = DashboardConfig(bus_path=str(tmp_path / "state.db"), token=TOKEN)
     app = create_app(config)
+    # Arming echoes the mode the agent reported, so a bus with no agent in it
+    # cannot arm at all. Most tests here are about something else, so give them
+    # an agent that has checked in.
+    app.state.bus.put("mode", {"mode": "simulator_only", "banner": "SIMULATOR ONLY"})
     return TestClient(app), app.state.bus
 
 
@@ -101,31 +102,74 @@ def test_kill_switch_is_idempotent(client) -> None:
     assert bus.is_halted()
 
 
-def test_resume_requires_the_exact_phrase(client) -> None:
+def test_arming_requires_the_page_to_name_the_current_mode(client) -> None:
+    """A bare POST is a mis-tap or a replay. Neither should arm an order-placer."""
     api, bus = client
     headers = {"Authorization": f"Bearer {TOKEN}"}
     api.post("/api/control/halt", headers=headers)
 
-    for wrong in ("", "resume", "resume simulator trading", "RESUME SIMULATOR"):
+    for wrong in ("", "simulator", "SIMULATOR_ONLY", "live_read_only"):
         response = api.post(
             "/api/control/resume", json={"confirm": wrong}, headers=headers
         )
-        assert response.status_code == 400
+        assert response.status_code == 409
         assert bus.is_halted(), f"{wrong!r} must not arm the bot"
 
 
-def test_resume_works_with_the_exact_phrase(client) -> None:
+def test_arming_works_when_the_page_echoes_the_live_mode(client) -> None:
     api, bus = client
     headers = {"Authorization": f"Bearer {TOKEN}"}
     api.post("/api/control/halt", headers=headers)
 
     response = api.post(
-        "/api/control/resume",
-        json={"confirm": "RESUME SIMULATOR TRADING"},
-        headers=headers,
+        "/api/control/resume", json={"confirm": "simulator_only"}, headers=headers
     )
 
     assert response.status_code == 200
+    assert not bus.is_halted()
+
+
+def test_arming_is_refused_when_no_agent_has_reported_a_mode(tmp_path: Path) -> None:
+    """Fail closed. Arming a bot we cannot describe is the case to refuse."""
+    config = DashboardConfig(bus_path=str(tmp_path / "state.db"), token=TOKEN)
+    app = create_app(config)
+    api = TestClient(app)
+    headers = {"Authorization": f"Bearer {TOKEN}"}
+
+    response = api.post(
+        "/api/control/resume", json={"confirm": "simulator_only"}, headers=headers
+    )
+
+    assert response.status_code == 409
+    assert app.state.bus.is_halted()
+
+
+def test_a_page_left_open_through_a_mode_change_cannot_arm(client) -> None:
+    """The reason arming echoes the mode at all.
+
+    A dashboard open since this morning is showing whatever the agent was doing
+    then. If the account behind it changed, the operator pressing confirm is
+    agreeing to the old banner. The echo turns that into a refusal instead of a
+    silent arm on stale information.
+    """
+    api, bus = client
+    headers = {"Authorization": f"Bearer {TOKEN}"}
+    api.post("/api/control/halt", headers=headers)
+    bus.put("mode", {"mode": "live_read_only", "banner": "REAL ACCOUNT - READ ONLY"})
+
+    stale = api.post(
+        "/api/control/resume", json={"confirm": "simulator_only"}, headers=headers
+    )
+
+    assert stale.status_code == 409
+    assert "reload" in stale.json()["detail"]
+    assert bus.is_halted(), "a stale page must not arm the bot"
+
+    # Reloading shows the new mode, and arming then works.
+    fresh = api.post(
+        "/api/control/resume", json={"confirm": "live_read_only"}, headers=headers
+    )
+    assert fresh.status_code == 200
     assert not bus.is_halted()
 
 
@@ -167,9 +211,7 @@ class FakeAssistant:
 
 @pytest.fixture
 def chat_client(tmp_path: Path):
-    config = DashboardConfig(
-        bus_path=str(tmp_path / "state.db"), token=TOKEN, resume_phrase=PHRASE
-    )
+    config = DashboardConfig(bus_path=str(tmp_path / "state.db"), token=TOKEN)
     assistant = FakeAssistant()
     app = create_app(config, assistant=assistant)
     return TestClient(app), assistant
