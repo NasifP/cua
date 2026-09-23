@@ -1,12 +1,11 @@
-# EGX Robo-Advisor — the running bot
+# EGX Robo-Advisor
 
-Parts 1–4 of a safety-gated rebalancing bot for the Egyptian Exchange that drives
+A safety-gated rebalancing bot for the Egyptian Exchange that drives
 the **Thndr simulator** (paper trading) through [Cua](https://github.com/trycua/cua).
 
-These slices contain the machinery that decides whether the bot may touch the
-screen, what it would buy if allowed, when news should stop it, where its prices
-come from, and the loop and dashboard that tie them together. The bot runs from
-here; the backtester that measures it arrives in part 5.
+It decides whether it may touch the screen at all, what it would buy if allowed,
+when news should stop it, where its prices come from, and can measure its own
+frictions before any of it reaches an account.
 
 > **Status: simulator only.** Nothing in this package is investment advice.
 
@@ -26,6 +25,7 @@ here; the backtester that measures it arrives in part 5.
 | `egx_cua_agent.py` | the loop and its five gates |
 | `execution/` | the only module that drives the Thndr UI |
 | `dashboard/` | mobile UI, live log, and the kill switch |
+| `backtest/` | friction measurement: fill model, replay, bootstrap intervals |
 
 ---
 
@@ -325,8 +325,23 @@ python dashboard/app.py
 **Terminal 2 — agent (dry run first, always):**
 
 ```bash
-python run_agent.py --dry-run
+# drive this desktop through a locally running cua-computer-server
+python run_agent.py --dry-run --target host --os macos
+
+# or drive an isolated cua container
+python run_agent.py --dry-run --target cloud --os linux
 ```
+
+`--target host` is the shortest path to a working desktop setup and the riskiest
+one: **cua controls the whole desktop, not a sandbox.** A misplaced click can
+land on any window — your mail, your files, another browser tab signed into the
+real account. Use a dedicated browser profile at minimum, and a VM if you can.
+The demo guard still gates every input, but it can only assert what is on
+screen; it cannot undo a click that landed somewhere unexpected.
+
+On desktop the guard is in better shape than on mobile: macOS, Linux and Windows
+all expose an accessibility tree, which is the strongest evidence it can get —
+the app's own published labels rather than an inference from pixels.
 
 The bot starts **halted**. Arm it from the dashboard by typing the resume phrase.
 
@@ -337,19 +352,81 @@ The app binds `127.0.0.1` and refuses a non-loopback bind unless you set
 places orders, so put it behind a tunnel that terminates TLS and authenticates —
 Cloudflare Tunnel or Tailscale — rather than exposing it directly.
 
-### Before you ever pass `--calibrated`
+### Execution modes
+
+```bash
+python run_agent.py --mode simulator_only   # default
+python run_agent.py --mode live_read_only   # observe a REAL account
+```
+
+| Mode | A real account is | Order tickets |
+|---|---|---|
+| `simulator_only` | a hard stop — halts and latches the kill switch | permitted (on the simulator) |
+| `live_read_only` | observed | **refused at the guard** |
+
+`live_read_only` exists to answer one question: *does the bot reason correctly
+about my actual portfolio?* It reads genuine holdings, prices them, and publishes
+a genuine plan to the dashboard — with nothing at stake, because **no path
+reachable in this mode can place an order.** That is enforced at the proxy, not
+requested of the caller: every order-critical primitive is refused, the order
+block declines to open, and `submit_order` raises before it looks at anything
+else. `tests/test_modes.py` comes at that claim from four directions.
+
+`AgentConfig` also forces `execute_orders` off in this mode, so two settings can
+never disagree about whether trading is possible.
+
+There is deliberately **no "fill the ticket but don't submit it" mode.** It is a
+reasonable thing to want, and it is absent rather than half-built: shipping an
+enum member nothing enforces is worse than not shipping it, because someone
+reads its name and believes in a protection that does not exist. Adding it needs
+its own enforcement — blocking Enter inside order blocks, since the bot types
+into quantity fields and Enter submits a form in most web UIs — and its own
+decision.
+
+### Calibrating against Thndr X
+
+```bash
+python calibrate_ui.py --target host --os macos
+```
+
+Open Thndr X, switch it to the simulator, then run this. It screenshots the
+screen, pulls the accessibility tree, runs every demo-mode probe, and prints what
+matched — so `config/thndr.ui.toml` is filled from what the page really exposes
+rather than guessed. **It never clicks**, so you can also point it at the real
+account as a test: the guard should say `CONFIRMED_LIVE`.
+
+Two things about Thndr X specifically:
+
+- **It lists bare EGX tickers** (`ABUK`, `NIPH`, `PHAR`) while the price feed and
+  the strategy use Yahoo-style `.CA`. Typing `COMI.CA` into its search finds
+  nothing, so `broker_symbol_suffix` strips it on the way to the UI and re-tags
+  what comes back. Names where the broker's ticker is not just the stripped
+  symbol go in `[ui.symbol_overrides]` — the gold ETF is the likeliest.
+- **Holdings live under a `Positions` tab**, not "Portfolio", with `Qty` and
+  `Market Value` columns. The extraction prompt targets those.
+
+> **Unresolved: how does Thndr X show that you are on the simulator?** A
+> screenshot of the trade view showed no visible simulator or virtual badge. The
+> demo guard needs *something* it can assert on. Run `calibrate_ui.py` on both
+> accounts and compare the candidate labels; whatever differs is the marker, and
+> it goes in `DEMO_TOKENS` / `LIVE_TOKENS` in `safety/demo_guard.py`. If nothing
+> textual differs, the guard needs a different probe — do not arm the bot until
+> this is settled, because the account assertion is the whole safety story.
+
+### Before you ever set `calibration_complete = true`
 
 `ThndrUiMap.calibration_complete` gates order submission and defaults to `False`
 for a reason: nobody — including a language model — can know a third-party app's
 current geometry and label text from memory. Guessing produces code that looks
 authoritative and clicks the wrong button.
 
-1. Screenshot every relevant Thndr screen **in the simulator**.
-2. Verify each label in `ThndrUiMap` against them.
-3. Re-measure `DEMO_COLOUR_SIGNATURES` from the real simulator badge.
-4. Confirm every symbol in `config/policy.egx.toml` against the live EGX listing.
-5. Run for several sessions with `--dry-run` and read the plans.
-6. Only then pass `--calibrated`.
+1. Run `calibrate_ui.py` on every screen a control lives on — Buy and Confirm
+   are in the order ticket, not the trade view.
+2. Settle the simulator-vs-real marker question above.
+3. Confirm every symbol in `config/policy.egx.toml` against the live EGX listing,
+   and its broker ticker against Thndr X's own search.
+4. Run for several sessions with `--dry-run` and read the plans.
+5. Only then set `calibration_complete = true`.
 
 ---
 
@@ -397,23 +474,80 @@ a devaluation, never trigger one.
 
 ---
 
+## Backtesting
+
+```bash
+python run_backtest.py --synthetic                    # exercise the engine
+python run_backtest.py --yahoo --days 1825            # real data, cached to CSV
+python run_backtest.py --csv prices.csv --macro fx.csv
+```
+
+The strategy layer is pure, so replaying it is cheap. What the backtester is
+*for* is the part that matters: **measuring frictions, not discovering
+parameters.**
+
+It runs three configurations and compares them:
+
+| Run | Answers |
+|---|---|
+| `policy` | what actually happens, costs paid |
+| `frictionless` | what commission, duty and slippage cost you |
+| `buy & hold` | whether rebalancing beats leaving it alone |
+
+Three things keep it honest:
+
+- **A limit only fills if the day traded through it.** Assuming every order
+  fills at the close is the single assumption behind most backtests that cannot
+  be reproduced live. Fills are also capped by volume participation, so you
+  cannot take half a thin name's daily turnover for free. Rejected orders are
+  recorded, because a plan is not a fill and dropping them silently overstates
+  how well the policy tracked.
+- **No lookahead, asserted by a test.** Orders are priced off the *previous*
+  close and filled against the *current* day's range. Truncating the history must
+  not change the days that remain, and `test_no_lookahead...` proves it.
+- **Every comparison carries a block-bootstrap confidence interval.** Any
+  interval straddling zero prints `INDISTINGUISHABLE FROM NOISE`. Daily returns
+  are autocorrelated, so the blocks are circular rather than independent draws —
+  plain resampling would produce intervals far too narrow.
+
+The runner also prints a sample-size warning: under eight years it says outright
+that the history is long enough to compare frictions but not to choose
+parameters. That is the numerical counterpart to `PolicyParameters.validate()`.
+
+`--yahoo` pulls history through **the same provider the bot trades on**, and runs
+the same validation over it. The bridge reports per-symbol coverage against the
+exchange calendar; sparse symbols are flagged but still held, since dropping a
+universe member changes the policy's target weights and that is a deliberate
+decision rather than a side effect of a patchy download. History is cached to
+plain CSV so it can be inspected and diffed by hand.
+
+> `--synthetic` generates random prices. It exercises the engine and the cost
+> model; it says nothing about the EGX.
+
+**Before trusting any figure, replace `CostModel` with your broker's real
+schedule.** The defaults are deliberately pessimistic placeholders — the stamp
+duty rate in particular has changed repeatedly and must be confirmed.
+
+---
+
 ## Running the tests
 
 ```bash
 cd samples/python/egx_robo_advisor
 pip install -e '.[test]'
-python -m pytest        # 166 tests, no network, broker or GPU needed
+python -m pytest        # 238 tests, no network, broker or GPU needed
 ```
 
 `ruff check --select E,F,B,I` is clean.
 
 ---
 
-## What comes next
+## What is deliberately not here
 
-| Part | Adds |
-|---|---|
-| 5 | the backtester |
+- **No live-account support.** Not a missing feature, a design boundary.
+- **No holiday calendar.** EGX holidays follow the Hijri calendar and are
+  published annually. An empty set is honest about knowing nothing.
 
-See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the decision records
-behind the structure above.
+See [`docs/NO_OVERFIT_CHARTER.md`](docs/NO_OVERFIT_CHARTER.md) before changing
+any strategy parameter, and [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for
+the decision records behind the structure above.

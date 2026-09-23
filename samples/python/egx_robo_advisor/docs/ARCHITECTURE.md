@@ -161,6 +161,3 @@ coordinates throughout: a model asked to "open the portfolio tab" adapts to a
 redesign, whereas a hard-coded point silently clicks whatever moved into that
 spot.
 
----
-
-Further decision records arrive with the parts that introduce them.

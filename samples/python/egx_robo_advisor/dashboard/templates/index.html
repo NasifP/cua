@@ -210,10 +210,18 @@ summary { cursor: pointer; font-size: 12px; font-weight: 600; color: var(--muted
   <header>
     <div>
       <h1>EGX Robo-Advisor</h1>
-      <p class="sub">Thndr simulator &middot; paper trading</p>
+      <p class="sub" id="subtitle">Thndr simulator &middot; paper trading</p>
     </div>
     <div class="conn"><span class="dot" id="conn-dot"></span><span id="conn-text">connecting</span></div>
   </header>
+
+  <!-- Mode banner: which account, and whether orders are possible at all.
+       Hidden on the simulator, where it would be noise; loud on a real one. -->
+  <section class="card state-warn hidden" id="mode-card" style="padding:11px 14px">
+    <p class="label" style="color:var(--warn)">Execution mode</p>
+    <p class="med" id="mode-banner" style="font-size:15px"></p>
+    <p class="note" id="mode-detail"></p>
+  </section>
 
   <section class="card" id="control-card">
     <div class="row">
@@ -339,6 +347,26 @@ function markPhaseFreshness(halted) {
   const stale = halted && el.textContent !== 'halted';
   el.classList.toggle('phase-stale', stale);
   $('phase-note').classList.toggle('hidden', !stale);
+}
+
+function renderMode(mode) {
+  const card = $('mode-card');
+  if (!mode) { card.classList.add('hidden'); return; }
+  card.classList.remove('hidden');
+  // Only a mode that can actually place an order is shown as dangerous.
+  const dangerous = mode.can_order && mode.live;
+  card.className = 'card ' + (dangerous ? 'state-bad' : 'state-warn');
+  $('mode-banner').textContent = mode.banner || mode.mode || '';
+  $('mode-banner').className = 'med ' + (dangerous ? 'bad' : 'warn');
+  $('mode-detail').textContent = mode.can_order
+    ? 'This mode can place orders.'
+    : 'Order tickets are refused at the guard. Nothing here can place an order.';
+  // The header must not keep claiming "paper trading" while the banner below it
+  // says a real account. Two contradictory statements on a safety screen are
+  // worse than either one alone.
+  $('subtitle').textContent = mode.live
+    ? 'Thndr · REAL account'
+    : 'Thndr simulator · paper trading';
 }
 
 function renderRegime(regime) {
@@ -483,6 +511,7 @@ $('resume-btn').addEventListener('click', async () => {
 let cursor = 0;
 
 function paint(state) {
+  renderMode(state.mode);
   renderRegime(state.regime);
   renderGuard(state.demo_verdict);
   renderPortfolio(state.portfolio, state.plan);
