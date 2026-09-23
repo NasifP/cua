@@ -345,7 +345,7 @@ class GuardedInterface:
                     return cached  # never re-roll a live verdict hoping for better
 
             screenshot = await self._capture()
-            tree = self._collect_tree()
+            tree = await self._collect_tree()
             verdict = self._guard.assert_demo(screenshot, accessibility_tree=tree)
             self._verdict = verdict
             self.stats.assertions += 1
@@ -376,11 +376,20 @@ class GuardedInterface:
             )
             return b""  # empty -> INDETERMINATE -> no click
 
-    def _collect_tree(self) -> Optional[Mapping[str, Any]]:
+    async def _collect_tree(self) -> Optional[Mapping[str, Any]]:
+        """Fetch the app's own published labels, when the platform offers them.
+
+        Accepts a sync or async provider because the cua interface exposes
+        `get_accessibility_tree()` as a coroutine. A tree that cannot be fetched
+        is simply absent: losing this probe withholds corroboration, it never
+        grants it.
+        """
         if self._tree_provider is None:
             return None
         try:
             tree = self._tree_provider()
+            if asyncio.iscoroutine(tree):
+                tree = await tree
             return tree if isinstance(tree, Mapping) else None
         except Exception as exc:  # noqa: BLE001
             logger.info("accessibility tree unavailable: %s", exc)

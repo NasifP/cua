@@ -230,3 +230,45 @@ async def test_unknown_primitive_is_gated_as_order_critical(armed) -> None:
     raw.labels = ["Portfolio"]
     with pytest.raises(DemoModeViolation):
         await guarded.brand_new_primitive("again")
+
+
+async def test_async_accessibility_provider_is_awaited(tmp_path: Path) -> None:
+    """The cua interface exposes get_accessibility_tree() as a coroutine.
+
+    A sync-only provider would receive an un-awaited coroutine, fail the
+    isinstance(Mapping) check, and silently drop the strongest probe the guard
+    has -- leaving it on OCR and colour alone at runtime.
+    """
+    bus = StateBus(tmp_path / "state.db")
+    bus.resume(actor="test", reason="armed")
+    raw = FakeInterface(labels=["Simulator"])
+
+    async def async_tree() -> dict:
+        return raw.tree
+
+    guarded = GuardedInterface(
+        raw,
+        bus=bus,
+        guard=DemoGuard(text_probes=(), colour_probe=None),
+        accessibility_tree_provider=async_tree,
+    )
+
+    verdict = await guarded.assert_demo_now()
+    assert verdict.state.may_click
+    assert "accessibility" in verdict.probes_run
+
+
+async def test_a_failing_tree_provider_withholds_rather_than_grants(tmp_path: Path) -> None:
+    bus = StateBus(tmp_path / "state.db")
+    bus.resume(actor="test", reason="armed")
+    raw = FakeInterface(labels=["Simulator"])
+
+    def boom():
+        raise RuntimeError("accessibility service disabled")
+
+    guarded = GuardedInterface(
+        raw, bus=bus, guard=DemoGuard(text_probes=(), colour_probe=None),
+        accessibility_tree_provider=boom,
+    )
+    verdict = await guarded.assert_demo_now()
+    assert not verdict.state.may_click, "a broken probe must not confirm anything"

@@ -453,7 +453,14 @@ class EgxCuaAgent:
             raw_interface,
             bus=self.bus,
             guard=self.guard,
-            accessibility_tree_provider=None,
+            # The app's own published labels are the strongest evidence the guard
+            # can get -- stronger than anything inferred from pixels, and immune
+            # to theming and font rendering. Leaving this unwired would silently
+            # reduce the guard to OCR plus an accent-colour check at runtime,
+            # which is exactly the configuration least likely to be calibrated.
+            accessibility_tree_provider=getattr(
+                raw_interface, "get_accessibility_tree", None
+            ),
         )
 
         agent = None
