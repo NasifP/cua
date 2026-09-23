@@ -1,12 +1,12 @@
-# EGX Robo-Advisor — safety, strategy, circuit breaker and market data
+# EGX Robo-Advisor — the running bot
 
-Parts 1–3 of a safety-gated rebalancing bot for the Egyptian Exchange that drives
+Parts 1–4 of a safety-gated rebalancing bot for the Egyptian Exchange that drives
 the **Thndr simulator** (paper trading) through [Cua](https://github.com/trycua/cua).
 
 These slices contain the machinery that decides whether the bot may touch the
-screen, what it would buy if allowed, when news should stop it, and where its
-prices come from. The agent loop, the dashboard and the backtester arrive in
-later parts; nothing here trades on its own.
+screen, what it would buy if allowed, when news should stop it, where its prices
+come from, and the loop and dashboard that tie them together. The bot runs from
+here; the backtester that measures it arrives in part 5.
 
 > **Status: simulator only.** Nothing in this package is investment advice.
 
@@ -23,6 +23,9 @@ later parts; nothing here trades on its own.
 | `strategy/` | allocation policy and drift-band rebalancing — pure, no I/O |
 | `regime/` | news fetching, classification, and the circuit breaker |
 | `marketdata/` | the price seam, with validation that blocks rather than degrades |
+| `egx_cua_agent.py` | the loop and its five gates |
+| `execution/` | the only module that drives the Thndr UI |
+| `dashboard/` | mobile UI, live log, and the kill switch |
 
 ---
 
@@ -224,6 +227,132 @@ coverage hole in the breaker.
 
 ---
 
+## The loop, and why the gates are in this order
+
+Each cycle runs the cheap, safe, offline checks first and only then reaches for
+the screen:
+
+```
+1. kill switch      (a file read)        -> stop
+2. trading calendar (arithmetic)         -> idle until the next session
+3. news + regime    (network, no screen) -> may forbid buying, or everything
+4. demo assertion   (screen, read-only)  -> may forbid clicking
+5. plan + execute   (clicks)             -> per-order re-assertion
+```
+
+Gate 3 finishing before gate 4 begins is the property the design turns on: **the
+news layer decides what is permitted before the bot is allowed to touch the
+screen at all.** It is structural, not conventional. `GuardedInterface` is built
+lazily inside `_ensure_connected()`, and on `ALL_HALTED` the cycle returns before
+that line — so no interface object exists and nothing in scope can click:
+
+```python
+async def test_all_halted_regime_never_touches_the_screen(tmp_path):
+    agent.regime_filter.panic("simulated data integrity failure")
+    phase = await agent._run_cycle()
+
+    assert news.polls == 1                    # news still polled
+    assert computer.interface_accesses == 0   # no interface constructed
+    assert computer._iface.screenshots == 0   # no screenshot taken
+    assert market.calls == 0                  # never even priced the universe
+```
+
+The plan comes from the pure strategy layer, which knows nothing of the news; the
+regime filter then subtracts from it. Keeping generation and suppression apart is
+what makes "news can only remove trades" checkable rather than aspirational.
+
+### The LLM cannot route around the guard
+
+`ComputerAgent` does not click through us — it takes a `Computer` and reaches for
+`computer.interface` itself. Hand it the real one and every safety property is
+bypassed by a model deciding where to tap. So it never gets the real one:
+
+```python
+agent = ComputerAgent(tools=[GuardedComputer(computer, guarded_interface)])
+```
+
+---
+
+## The dashboard
+
+Mobile-first, one screen. Bot state, risk regime, account guard, holdings and
+drift, the current plan with a rationale per order, a live SSE log of every
+primitive the bot sends to the screen, and a **KILL SWITCH** fixed to the bottom
+of the viewport.
+
+It runs as its own process, sharing only the bus file, because the kill switch
+must work when the agent loop is wedged mid-click — a button inside the stuck
+process cannot be pressed.
+
+**Asymmetric friction:** halting is one tap with no confirmation dialog — if
+someone is reaching for that button they want the bot stopped *now*. Resuming
+requires typing an exact phrase. Stopping should always be easier than starting,
+and the bot never resumes itself.
+
+All CSS is inline: no CDN, no external font. This page is the remote stop button
+for something that places orders, and a stylesheet fetched from a third party is
+a dependency the kill switch does not need.
+
+---
+
+## Running it
+
+```bash
+pip install -e '.[agent,ocr,dashboard,marketdata,test]'
+cp .env.example .env    # then fill it in
+```
+
+**Read the reasoning without a broker or a device:**
+
+```bash
+python demo_dry_run.py
+```
+
+`run_agent.py --dry-run` withholds orders but still reads the portfolio off a
+live screen, so it needs Cua credentials and a device. `demo_dry_run.py`
+substitutes a scripted screen and a fixture price file and runs everything else
+for real across seven scenarios: calm, devaluation, EGX frictions, catastrophic
+news, bullish news, feeds down, and the safety layer.
+
+**Terminal 1 — dashboard:**
+
+```bash
+export EGX_DASHBOARD_TOKEN="$(python -c 'import secrets; print(secrets.token_urlsafe(32))')"
+python dashboard/app.py
+# open http://127.0.0.1:8787/?token=$EGX_DASHBOARD_TOKEN
+```
+
+**Terminal 2 — agent (dry run first, always):**
+
+```bash
+python run_agent.py --dry-run
+```
+
+The bot starts **halted**. Arm it from the dashboard by typing the resume phrase.
+
+### Getting it on your phone
+
+The app binds `127.0.0.1` and refuses a non-loopback bind unless you set
+`EGX_ACKNOWLEDGE_PUBLIC_BIND=yes`. It is a remote control for something that
+places orders, so put it behind a tunnel that terminates TLS and authenticates —
+Cloudflare Tunnel or Tailscale — rather than exposing it directly.
+
+### Before you ever pass `--calibrated`
+
+`ThndrUiMap.calibration_complete` gates order submission and defaults to `False`
+for a reason: nobody — including a language model — can know a third-party app's
+current geometry and label text from memory. Guessing produces code that looks
+authoritative and clicks the wrong button.
+
+1. Screenshot every relevant Thndr screen **in the simulator**.
+2. Verify each label in `ThndrUiMap` against them.
+3. Re-measure `DEMO_COLOUR_SIGNATURES` from the real simulator badge.
+4. Confirm every symbol in `config/policy.egx.toml` against the live EGX listing.
+5. Run for several sessions with `--dry-run` and read the plans.
+6. Only then pass `--calibrated`.
+
+---
+
 ## Market data
 
 ```bash
@@ -273,7 +402,7 @@ a devaluation, never trigger one.
 ```bash
 cd samples/python/egx_robo_advisor
 pip install -e '.[test]'
-python -m pytest        # 144 tests, no network, broker or GPU needed
+python -m pytest        # 166 tests, no network, broker or GPU needed
 ```
 
 `ruff check --select E,F,B,I` is clean.
@@ -284,7 +413,6 @@ python -m pytest        # 144 tests, no network, broker or GPU needed
 
 | Part | Adds |
 |---|---|
-| 4 | the agent loop, Thndr execution, and the mobile dashboard |
 | 5 | the backtester |
 
 See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the decision records
