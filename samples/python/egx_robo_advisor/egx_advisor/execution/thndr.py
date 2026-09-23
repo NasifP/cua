@@ -101,6 +101,13 @@ class ThndrUiMap:
     Text anchors are preferred over coordinates throughout: they survive a layout
     change, and when they stop matching the bot fails loudly instead of clicking
     an unknown control.
+
+    These defaults are placeholders shaped like a mobile app's chrome. A desktop
+    or web interface labels things differently -- often more verbosely -- so
+    calibrate against whichever surface you actually drive. Getting this wrong
+    does not silently mis-click: navigation simply fails to find its anchor, and
+    `calibration_complete` keeps order submission blocked until a human has
+    checked each label against real screenshots.
     """
 
     account_switcher_label: str = "Account"

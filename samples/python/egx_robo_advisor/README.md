@@ -325,8 +325,23 @@ python dashboard/app.py
 **Terminal 2 — agent (dry run first, always):**
 
 ```bash
-python run_agent.py --dry-run
+# drive this desktop through a locally running cua-computer-server
+python run_agent.py --dry-run --target host --os macos
+
+# or drive an isolated cua container
+python run_agent.py --dry-run --target cloud --os linux
 ```
+
+`--target host` is the shortest path to a working desktop setup and the riskiest
+one: **cua controls the whole desktop, not a sandbox.** A misplaced click can
+land on any window — your mail, your files, another browser tab signed into the
+real account. Use a dedicated browser profile at minimum, and a VM if you can.
+The demo guard still gates every input, but it can only assert what is on
+screen; it cannot undo a click that landed somewhere unexpected.
+
+On desktop the guard is in better shape than on mobile: macOS, Linux and Windows
+all expose an accessibility tree, which is the strongest evidence it can get —
+the app's own published labels rather than an inference from pixels.
 
 The bot starts **halted**. Arm it from the dashboard by typing the resume phrase.
 
