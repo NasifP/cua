@@ -170,6 +170,7 @@ def create_app(config: Optional[DashboardConfig] = None) -> FastAPI:
             {
                 "ts": _now(),
                 "control": control.to_json(),
+                "mode": _payload(snapshots, "mode"),
                 "status": _payload(snapshots, "status"),
                 "regime": _payload(snapshots, "regime"),
                 "portfolio": _payload(snapshots, "portfolio"),

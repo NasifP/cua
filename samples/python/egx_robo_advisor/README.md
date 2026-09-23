@@ -1,224 +1,49 @@
 # EGX Robo-Advisor
 
-A safety-gated rebalancing bot for the Egyptian Exchange. It drives the **Thndr
-simulator** (paper trading) through [Cua](https://github.com/trycua/cua), and is
-built so that touching a real-money account requires a chain of failures rather
-than a single one.
+A safety-gated rebalancing bot for the Egyptian Exchange that drives
+the **Thndr simulator** (paper trading) through [Cua](https://github.com/trycua/cua).
 
-> **Status: simulator only.** Order submission is refused until the UI map is
-> calibrated against real screenshots, and the bot starts halted every time.
-> Nothing here is investment advice.
+It decides whether it may touch the screen at all, what it would buy if allowed,
+when news should stop it, where its prices come from, and can measure its own
+frictions before any of it reaches an account.
 
----
-
-## The four pillars
-
-| # | Pillar | Where it lives | The guarantee |
-|---|---|---|---|
-| 1 | **Strict demo mode** | `egx_advisor/safety/` | No input reaches the screen without a fresh, corroborated "this is the simulator" verdict |
-| 2 | **EGX strategy** | `egx_advisor/strategy/` | Pure, deterministic, and structurally hard to overfit |
-| 3 | **News regime filter** | `egx_advisor/regime/` | News can only ever *remove* trades — enforced at runtime |
-| 4 | **Mobile dashboard** | `dashboard/` | A kill switch that works even when the agent is wedged |
+> **Status: simulator only.** Nothing in this package is investment advice.
 
 ---
 
-## Architecture
+## What is here
 
-Two processes. One file between them. Nothing else.
-
-```
-┌─────────────────────────── AGENT PROCESS ───────────────────────────┐
-│                                                                     │
-│  ┌── GATE 1 ────┐  kill switch (a file read)                        │
-│  │  bus.is_halted()  ── halted? ──► stop. no network, no screen.    │
-│  └──────┬───────┘                                                   │
-│         ▼                                                           │
-│  ┌── GATE 2 ────┐  EGX calendar (arithmetic)                        │
-│  │  Sun–Thu, 10:15–14:10 Cairo ── closed? ──► idle until next open  │
-│  └──────┬───────┘                                                   │
-│         ▼                                                           │
-│  ┌── GATE 3 ────┐  NEWS + REGIME        ◄── no screen access yet    │
-│  │                                                                  │
-│  │   NewsFetcher ──► KeywordClassifier ──┐                          │
-│  │   (RSS/Atom)      (offline, primary)  ├─ combine(max severity)   │
-│  │                   LlmClassifier ──────┘   (can only escalate)    │
-│  │                          │                                       │
-│  │                          ▼                                       │
-│  │                   RegimeFilter ──► RISK_ON | BUYS_HALTED |       │
-│  │                                             ALL_HALTED           │
-│  │                                                                  │
-│  │   ALL_HALTED ──► return BEFORE _ensure_connected().              │
-│  │                  No interface is constructed. Nothing in scope    │
-│  │                  is capable of clicking.                          │
-│  └──────┬───────┘                                                   │
-│         ▼                                                           │
-│  ┌── GATE 4 ────┐  DEMO ASSERTION                                   │
-│  │   GuardedInterface wraps Computer.interface                      │
-│  │   ├─ accessibility labels ─┐                                     │
-│  │   ├─ OCR (eng+ara) ────────┼─► DemoGuard ─► CONFIRMED_DEMO       │
-│  │   └─ accent colour ────────┘               CONFIRMED_LIVE ─► HALT│
-│  │                                            INDETERMINATE  ─► HALT│
-│  └──────┬───────┘                                                   │
-│         ▼                                                           │
-│  ┌── GATE 5 ────┐  PLAN ──► FILTER ──► EXECUTE                      │
-│  │                                                                  │
-│  │   plan_rebalance(portfolio, market, policy)   ← knows no news    │
-│  │           │                                                      │
-│  │           ▼                                                      │
-│  │   RegimeFilter.apply(orders, regime)          ← only subtracts   │
-│  │           │        └─ _assert_subtractive() raises on violation  │
-│  │           ▼                                                      │
-│  │   ThndrExecutor.submit_order()  ← re-asserts before EVERY click  │
-│  └─────────────────────────────────────────────────────────────────┘
-│                              │         ▲                            │
-└──────────────────────────────┼─────────┼────────────────────────────┘
-                     writes    │         │  reads
-                     events    ▼         │  control
-                  ┌────────────────────────────────┐
-                  │   state/egx_bus.db  (SQLite)   │
-                  │   events │ snapshot │ control  │
-                  │   + HALTED sentinel file       │
-                  └────────────────────────────────┘
-                     reads     │         ▲  writes
-                     events    ▼         │  halt/resume
-┌──────────────────────── DASHBOARD PROCESS ──────────────────────────┐
-│   FastAPI + SSE + Tailwind                                          │
-│   GET  /                    mobile UI                               │
-│   GET  /api/state           holdings, drift, regime, guard verdict   │
-│   GET  /api/events/stream   live click log (SSE)                    │
-│   POST /api/control/halt    ◄── THE KILL SWITCH (one tap)           │
-│   POST /api/control/resume  ◄── requires a typed phrase             │
-└─────────────────────────────────────────────────────────────────────┘
-```
-
-### Why two processes
-
-The kill switch has to work **when the agent loop is wedged mid-click**. A button
-living inside the stuck process cannot be pressed. Splitting them also means the
-dashboard stays readable after the agent crashes — the last thing it did is still
-on screen when you open your phone — and keeps the internet-exposed component
-separate from the one driving a broker UI.
-
-SQLite in WAL mode is the transport: many concurrent readers alongside one
-writer, atomic commits, durability across a crash, and no broker to keep alive on
-a laptop. The agent is the sole writer of `events` and `snapshot`; the dashboard
-is the sole writer of `control`.
+| Module | Role |
+|---|---|
+| `types.py` | frozen value types shared by every layer |
+| `clock.py` | EGX calendar: Sunday–Thursday, Cairo time, T+2 settlement |
+| `bus.py` | the agent ↔ dashboard channel, and the kill switch |
+| `safety/` | the demo-mode guard and the only sanctioned path to the screen |
+| `strategy/` | allocation policy and drift-band rebalancing — pure, no I/O |
+| `regime/` | news fetching, classification, and the circuit breaker |
+| `marketdata/` | the price seam, with validation that blocks rather than degrades |
+| `egx_cua_agent.py` | the loop and its five gates |
+| `execution/` | the only module that drives the Thndr UI |
+| `dashboard/` | mobile UI, live log, and the kill switch |
+| `backtest/` | friction measurement: fill model, replay, bootstrap intervals |
 
 ---
 
-## How `egx_cua_agent.py` talks to the dashboard
+## The chokepoint
 
-**Agent → dashboard** (`egx_advisor/bus.py`):
-
-```python
-bus.publish(EventKind.UI_ACTION, "left_click(412, 880)", phase="executing")
-bus.put("regime", {"risk_state": "buys_halted", "drivers": [...]})
-```
-
-Events are an append-only journal with a monotonic `seq`. The dashboard streams
-them over SSE using that `seq` as a cursor, so a phone that drops off wifi
-reconnects and resumes exactly where it left off. Snapshots are last-write-wins
-key/value rows for things with no history worth keeping (current holdings, the
-live plan, the latest demo verdict).
-
-**Dashboard → agent**:
-
-```python
-bus.halt(actor="mobile:pola", reason="KILL SWITCH pressed from the dashboard")
-```
-
-The agent checks `bus.is_halted()` before **every single mutating call**, not once
-per cycle, and again between orders. `is_halted()` fails closed: a corrupt
-database, an exception, or a missing row all read as halted.
-
-The halt is deliberately redundant — a row in `control` **and** a sentinel file.
-The sentinel is written first, so a crash between the two writes leaves the bot
-halted rather than armed. Deleting the database does not un-halt the bot:
-
-```python
-def test_sentinel_file_survives_a_destroyed_database(bus_path):
-    bus.halt(actor="mobile", reason="kill switch from phone")
-    os.remove(bus_path)
-    assert StateBus(bus_path).is_halted()
-```
-
----
-
-## How news reaches the Regime Filter before the bot touches the screen
-
-The ordering is structural, not conventional. In `EgxCuaAgent._run_cycle`:
-
-```python
-# --- Gate 3: news and regime, BEFORE any screen access -----------------
-regime = await self._refresh_regime(now, in_session=True)
-
-if regime.risk_state is RiskState.ALL_HALTED:
-    # Return before `_ensure_connected()`: in this state no interface is
-    # constructed, so there is nothing in scope that could click.
-    return AgentPhase.HALTED
-
-# --- Gate 4: demo assertion --------------------------------------------
-executor = await self._ensure_connected()   # ← the interface is born here
-```
-
-The `GuardedInterface` is created lazily *inside* `_ensure_connected()`. On
-`ALL_HALTED` that line is never reached, so no interface object exists and no
-screenshot is taken. This is asserted end to end:
-
-```python
-async def test_all_halted_regime_never_touches_the_screen(tmp_path):
-    agent.regime_filter.panic("simulated data integrity failure")
-    phase = await agent._run_cycle()
-
-    assert news.polls == 1                    # news still polled
-    assert computer.interface_accesses == 0   # no interface constructed
-    assert computer._iface.screenshots == 0   # no screenshot taken
-    assert market.calls == 0                  # never even priced the universe
-```
-
-### The filter can only subtract
-
-Our backtests said news carries essentially no predictive alpha on EGX names, so
-the filter is a **circuit breaker, never a signal**. That is enforced rather than
-documented:
-
-```python
-allowed, suppressed = regime_filter.apply(plan.orders, regime)
-# apply() calls _assert_subtractive(orders, allowed), which raises
-# SubtractiveInvariantViolation if the result contains an order the plan never
-# had, an enlarged quantity, or a flipped side.
-```
-
-Three things follow, and each has a test:
-
-- **`Severity` has no positive band.** "COMI.CA smashes earnings, shares surge
-  20%" classifies as `NONE`. There is nowhere for a bullish score to live.
-- **The LLM composes with `max()`, never override.** It can raise severity, never
-  lower it. A timeout, a refusal, or a hallucinated all-clear cannot unblock
-  trading.
-- **Asymmetry.** `BUYS_HALTED` stops buying but still permits sells — refusing to
-  let the bot de-risk during a crisis is its own kind of risk. Only `ALL_HALTED`
-  stops everything.
-
-Silence fails closed too: stale feeds mean `BUYS_HALTED`, because absence of bad
-news is far more likely to mean a broken poller than a calm market.
-
----
-
-## Pillar 1: how the demo-mode gate actually holds
-
-Safety checks that live in the *caller* are advisory — the next person to add an
-order flow forgets one. So `GuardedInterface` is not a function the execution
-layer is asked to call politely. It is a proxy wrapping `Computer.interface`, and
-it is **the only handle the execution layer is ever given**. There is no code path
-from strategy to screen that skips it, because there is no other object to call.
+Safety checks that live in the *caller* are advisory: the next person to add an
+order flow forgets one, and nothing complains. So `GuardedInterface` is not a
+function the execution layer is asked to call politely — it is a proxy wrapping
+Cua's `Computer.interface`, and it is **the only handle the execution layer is
+ever given**. There is no code path from strategy to screen that skips it,
+because there is no other object to call.
 
 Every mutating call passes, in order:
 
 1. **Kill switch** — `bus.is_halted()`, fail-closed.
 2. **Demo assertion** — fresh enough for this action's risk tier.
-3. **Journal** — published to the bus *before* the action, so a crash still leaves
-   a record of what the bot was reaching for.
+3. **Journal** — published to the bus *before* the action, so a crash still
+   leaves a record of what the bot was reaching for.
 4. **The actual call.**
 5. **Post-verification** (order blocks) — did the screen change identity mid-flow?
 
@@ -230,9 +55,9 @@ Every mutating call passes, in order:
 | `NAVIGATION` | `left_click`, `scroll` | 1 corroborating source |
 | `ORDER_CRITICAL` | `type_text`, anything inside `order_critical()` | 2 sources, ≤1.5s old |
 
-`left_click` is ordinary navigation when walking the watchlist, and
-order-critical when it is the Buy button — same primitive, different stakes,
-decided by the caller's context rather than by guessing from coordinates.
+`left_click` is ordinary navigation when walking a watchlist, and order-critical
+when it is the Buy button — same primitive, different stakes, decided by the
+caller's context rather than by guessing from coordinates.
 
 **Unrecognised methods get the strictest tier.** When the Cua SDK grows a new
 input primitive, the failure mode is "the bot demands a fresh two-source
@@ -264,30 +89,58 @@ async def test_account_flipping_to_live_is_caught_on_the_very_next_call(armed):
 - **Bare "real" and "live" are NOT markers.** An EGX screen is full of "Real
   Estate" — that is TMGH's own sector — and "live price" chrome. Negative markers
   are specific multi-word phrases only; a guard that cries wolf gets switched off.
-- **Arabic and English both**, with normalisation for diacritics, alef variants,
+- **Arabic and English both**, with normalisation for diacritics, alef variants
   and ta-marbuta, because the app's language follows the phone's.
 - **Degradation never loosens the gate.** No working probe means no evidence,
   which means `INDETERMINATE`, which means no click.
 
-### The LLM cannot route around it
-
-`ComputerAgent` does not click through us — it takes a `Computer` and reaches for
-`computer.interface` itself. Hand it the real one and every safety property here
-is bypassed by a model deciding where to tap. So it never gets the real one:
-
-```python
-agent = ComputerAgent(tools=[GuardedComputer(computer, guarded_interface)])
-```
-
-`GuardedComputer` delegates everything except `.interface`, which returns the
-guarded proxy. Model-chosen clicks pass through the same gates as scripted ones.
+Probes are independent families — published accessibility labels, OCR
+(`pytesseract`, eng+ara), and a dependency-free accent-colour check built on a
+minimal PNG decoder so the guard can run on a bare interpreter.
 
 ---
 
-## Pillar 2: the EGX strategy layer
+## The bus and the kill switch
+
+`StateBus` is one SQLite file in WAL mode: many concurrent readers alongside one
+writer, atomic commits, durability across a crash, and no broker to keep alive on
+a laptop.
+
+The halt is deliberately redundant — a row in `control` **and** a sentinel file.
+The sentinel is written first, so a crash between the two writes leaves the bot
+halted rather than armed. `is_halted()` fails closed: a corrupt database, an
+exception, or a missing row all read as halted. Deleting the database does not
+un-halt the bot:
+
+```python
+def test_sentinel_file_survives_a_destroyed_database(bus_path):
+    bus.halt(actor="mobile", reason="kill switch from phone")
+    os.remove(bus_path)
+    assert StateBus(bus_path).is_halted()
+```
+
+A fresh bus starts **halted**. Arming is always an explicit act.
+
+---
+
+## EGX calendar
+
+Sunday–Thursday; Friday and Saturday are the weekend. The continuous session is
+10:00–14:30 Cairo time, resolved through `Africa/Cairo` rather than a hard-coded
+UTC+2 because Cairo observes DST again as of 2023. A rebalancer has no business
+in the opening or closing auction, so the tradeable window is narrowed at both
+ends. Equities settle T+2 in session days.
+
+Holidays follow the Hijri calendar and are published annually by EGX, so they are
+data, not a rule to compute. The empty default set is honest about knowing
+nothing.
+
+---
+
+## The EGX strategy
 
 `plan_rebalance()` is a pure function — state in, plan out, no clock, no network,
-no screen. That is what makes it backtestable against a replayed history and
+no screen. That is what makes it backtestable against replayed history and
 testable without a broker.
 
 **Allocation is deliberately dumb:**
@@ -333,58 +186,121 @@ orders that happen to fit leaves the portfolio further from target.
 > one-ETF hedge sleeve would clamp a 45% hedge target to 15% and make the entire
 > devaluation response inert — a bug this codebase had, and now has a test for.
 
+See [`docs/NO_OVERFIT_CHARTER.md`](docs/NO_OVERFIT_CHARTER.md) before changing
+any strategy parameter.
+
 ---
 
-## Pillar 4: the dashboard
+## The news regime filter
 
-Mobile-first, one screen, no scrolling required for the things that matter.
+Our backtests found news carries essentially no predictive alpha on EGX names
+once retail fill delay is accounted for. So this layer is a **circuit breaker,
+never a signal**, and that is enforced rather than documented:
 
-- **Bot state** — ARMED / HALTED, with who did it and why.
-- **Risk regime** — RISK ON / BUYS HALTED / ALL HALTED, the driving headline, and
-  feed freshness.
-- **Account guard** — SIMULATOR / REAL MONEY / UNCONFIRMED, with source count and
-  verdict age.
-- **Holdings & drift** — current vs target weight per name, with the drift bar
-  turning amber outside the band.
-- **Current plan** — every order with its one-line rationale, plus a collapsible
-  list of what was withheld and why.
-- **Live agent log** — SSE stream of every primitive the bot sends to the screen.
-- **KILL SWITCH** — fixed to the bottom of the viewport, always reachable.
+```python
+allowed, suppressed = regime_filter.apply(plan.orders, regime)
+# apply() calls _assert_subtractive(orders, allowed), which raises
+# SubtractiveInvariantViolation if the result contains an order the plan never
+# had, an enlarged quantity, or a flipped side.
+```
+
+Three things follow, and each has a test:
+
+- **`Severity` has no positive band.** "COMI.CA smashes earnings, shares surge
+  20%" classifies as `NONE`. There is nowhere for a bullish score to live.
+- **The LLM composes with `max()`, never override.** It can raise severity, never
+  lower it. A timeout, a refusal, or a hallucinated all-clear cannot unblock
+  trading. The deterministic keyword classifier is the primary, so the breaker
+  still works with no API key.
+- **Asymmetry.** `BUYS_HALTED` stops buying but still permits sells — refusing to
+  let the bot de-risk during a crisis is its own kind of risk. Only `ALL_HALTED`
+  stops everything, and a `panic()` latches until explicitly cleared.
+
+Silence fails closed too: stale feeds mean `BUYS_HALTED`, because absence of bad
+news is far more likely to mean a broken poller than a calm market. Outside
+trading hours a quiet feed is normal and does not latch a halt.
+
+Feeds are public RSS/Atom only — no logins, no paywalls, no scraping disallowed
+by robots.txt. Confirm each publisher's terms before enabling one, and verify the
+URLs in `config/feeds.toml` actually resolve: a feed that 404s quietly is a
+coverage hole in the breaker.
+
+---
+
+## The loop, and why the gates are in this order
+
+Each cycle runs the cheap, safe, offline checks first and only then reaches for
+the screen:
+
+```
+1. kill switch      (a file read)        -> stop
+2. trading calendar (arithmetic)         -> idle until the next session
+3. news + regime    (network, no screen) -> may forbid buying, or everything
+4. demo assertion   (screen, read-only)  -> may forbid clicking
+5. plan + execute   (clicks)             -> per-order re-assertion
+```
+
+Gate 3 finishing before gate 4 begins is the property the design turns on: **the
+news layer decides what is permitted before the bot is allowed to touch the
+screen at all.** It is structural, not conventional. `GuardedInterface` is built
+lazily inside `_ensure_connected()`, and on `ALL_HALTED` the cycle returns before
+that line — so no interface object exists and nothing in scope can click:
+
+```python
+async def test_all_halted_regime_never_touches_the_screen(tmp_path):
+    agent.regime_filter.panic("simulated data integrity failure")
+    phase = await agent._run_cycle()
+
+    assert news.polls == 1                    # news still polled
+    assert computer.interface_accesses == 0   # no interface constructed
+    assert computer._iface.screenshots == 0   # no screenshot taken
+    assert market.calls == 0                  # never even priced the universe
+```
+
+The plan comes from the pure strategy layer, which knows nothing of the news; the
+regime filter then subtracts from it. Keeping generation and suppression apart is
+what makes "news can only remove trades" checkable rather than aspirational.
+
+### The LLM cannot route around the guard
+
+`ComputerAgent` does not click through us — it takes a `Computer` and reaches for
+`computer.interface` itself. Hand it the real one and every safety property is
+bypassed by a model deciding where to tap. So it never gets the real one:
+
+```python
+agent = ComputerAgent(tools=[GuardedComputer(computer, guarded_interface)])
+```
+
+---
+
+## The dashboard
+
+Mobile-first, one screen. Bot state, risk regime, account guard, holdings and
+drift, the current plan with a rationale per order, a live SSE log of every
+primitive the bot sends to the screen, and a **KILL SWITCH** fixed to the bottom
+of the viewport.
+
+It runs as its own process, sharing only the bus file, because the kill switch
+must work when the agent loop is wedged mid-click — a button inside the stuck
+process cannot be pressed.
+
+**Asymmetric friction:** halting is one tap with no confirmation dialog — if
+someone is reaching for that button they want the bot stopped *now*. Resuming
+requires typing an exact phrase. Stopping should always be easier than starting,
+and the bot never resumes itself.
 
 All CSS is inline: no CDN, no external font. This page is the remote stop button
 for something that places orders, and a stylesheet fetched from a third party is
-a dependency the kill switch does not need. On a blocked network, an offline
-phone, or during a CDN outage, a utility-class CDN would leave the page as
-unstyled HTML with the most important control reduced to a plain link below the
-fold. Self-contained means the button is always the big red one.
-
-**Asymmetric friction:** halting is one tap with no confirmation dialog — if
-someone is reaching for that button they want the bot stopped *now*, and a modal
-between them and that is a liability. Resuming requires typing an exact phrase.
-Stopping should always be easier than starting, and the bot never resumes itself.
+a dependency the kill switch does not need.
 
 ---
 
 ## Running it
 
 ```bash
-cd samples/python/egx_robo_advisor
-pip install -e '.[agent,ocr,dashboard,test]'
+pip install -e '.[agent,ocr,dashboard,marketdata,test]'
 cp .env.example .env    # then fill it in
-
-python -m pytest              # 203 tests, no network or broker needed
 ```
-
-**Terminal 1 — dashboard:**
-
-```bash
-export EGX_DASHBOARD_TOKEN="$(python -c 'import secrets; print(secrets.token_urlsafe(32))')"
-python dashboard/app.py
-# open http://127.0.0.1:8787/?token=$EGX_DASHBOARD_TOKEN
-```
-
-The token is swapped for an HttpOnly cookie on first load, so it stops appearing
-in history and the phone's address bar.
 
 **Read the reasoning without a broker or a device:**
 
@@ -395,16 +311,37 @@ python demo_dry_run.py
 `run_agent.py --dry-run` withholds orders but still reads the portfolio off a
 live screen, so it needs Cua credentials and a device. `demo_dry_run.py`
 substitutes a scripted screen and a fixture price file and runs everything else
-for real — the same fetcher, classifier, filter, planner, guard and bus — across
-seven scenarios: calm, devaluation, EGX frictions, catastrophic news, bullish
-news, feeds down, and the safety layer. Every number in it is an illustrative
-fixture, not market data.
+for real across seven scenarios: calm, devaluation, EGX frictions, catastrophic
+news, bullish news, feeds down, and the safety layer.
+
+**Terminal 1 — dashboard:**
+
+```bash
+export EGX_DASHBOARD_TOKEN="$(python -c 'import secrets; print(secrets.token_urlsafe(32))')"
+python dashboard/app.py
+# open http://127.0.0.1:8787/?token=$EGX_DASHBOARD_TOKEN
+```
 
 **Terminal 2 — agent (dry run first, always):**
 
 ```bash
-python run_agent.py --dry-run
+# drive this desktop through a locally running cua-computer-server
+python run_agent.py --dry-run --target host --os macos
+
+# or drive an isolated cua container
+python run_agent.py --dry-run --target cloud --os linux
 ```
+
+`--target host` is the shortest path to a working desktop setup and the riskiest
+one: **cua controls the whole desktop, not a sandbox.** A misplaced click can
+land on any window — your mail, your files, another browser tab signed into the
+real account. Use a dedicated browser profile at minimum, and a VM if you can.
+The demo guard still gates every input, but it can only assert what is on
+screen; it cannot undo a click that landed somewhere unexpected.
+
+On desktop the guard is in better shape than on mobile: macOS, Linux and Windows
+all expose an accessibility tree, which is the strongest evidence it can get —
+the app's own published labels rather than an inference from pixels.
 
 The bot starts **halted**. Arm it from the dashboard by typing the resume phrase.
 
@@ -413,26 +350,83 @@ The bot starts **halted**. Arm it from the dashboard by typing the resume phrase
 The app binds `127.0.0.1` and refuses a non-loopback bind unless you set
 `EGX_ACKNOWLEDGE_PUBLIC_BIND=yes`. It is a remote control for something that
 places orders, so put it behind a tunnel that terminates TLS and authenticates —
-Cloudflare Tunnel or Tailscale — rather than exposing it directly:
+Cloudflare Tunnel or Tailscale — rather than exposing it directly.
+
+### Execution modes
 
 ```bash
-cloudflared tunnel --url http://127.0.0.1:8787
+python run_agent.py --mode simulator_only   # default
+python run_agent.py --mode live_read_only   # observe a REAL account
 ```
 
-### Before you ever pass `--calibrated`
+| Mode | A real account is | Order tickets |
+|---|---|---|
+| `simulator_only` | a hard stop — halts and latches the kill switch | permitted (on the simulator) |
+| `live_read_only` | observed | **refused at the guard** |
 
-`ThndrUiMap.calibration_complete` gates order submission, and it defaults to
-`False` for a reason: nobody — including a language model — can know a third-party
-app's current geometry and label text from memory. Guessing here produces code
-that looks authoritative and clicks the wrong button.
+`live_read_only` exists to answer one question: *does the bot reason correctly
+about my actual portfolio?* It reads genuine holdings, prices them, and publishes
+a genuine plan to the dashboard — with nothing at stake, because **no path
+reachable in this mode can place an order.** That is enforced at the proxy, not
+requested of the caller: every order-critical primitive is refused, the order
+block declines to open, and `submit_order` raises before it looks at anything
+else. `tests/test_modes.py` comes at that claim from four directions.
 
-1. Screenshot every relevant Thndr screen **in the simulator**.
-2. Verify each label in `ThndrUiMap` against them.
-3. Re-measure `DEMO_COLOUR_SIGNATURES` from the real simulator badge.
-4. Confirm every symbol in `config/policy.egx.toml` against the live EGX listing —
-   especially the gold ETF's code.
-5. Run for several sessions with `--dry-run` and read the plans.
-6. Only then pass `--calibrated`.
+`AgentConfig` also forces `execute_orders` off in this mode, so two settings can
+never disagree about whether trading is possible.
+
+There is deliberately **no "fill the ticket but don't submit it" mode.** It is a
+reasonable thing to want, and it is absent rather than half-built: shipping an
+enum member nothing enforces is worse than not shipping it, because someone
+reads its name and believes in a protection that does not exist. Adding it needs
+its own enforcement — blocking Enter inside order blocks, since the bot types
+into quantity fields and Enter submits a form in most web UIs — and its own
+decision.
+
+### Calibrating against Thndr X
+
+```bash
+python calibrate_ui.py --target host --os macos
+```
+
+Open Thndr X, switch it to the simulator, then run this. It screenshots the
+screen, pulls the accessibility tree, runs every demo-mode probe, and prints what
+matched — so `config/thndr.ui.toml` is filled from what the page really exposes
+rather than guessed. **It never clicks**, so you can also point it at the real
+account as a test: the guard should say `CONFIRMED_LIVE`.
+
+Two things about Thndr X specifically:
+
+- **It lists bare EGX tickers** (`ABUK`, `NIPH`, `PHAR`) while the price feed and
+  the strategy use Yahoo-style `.CA`. Typing `COMI.CA` into its search finds
+  nothing, so `broker_symbol_suffix` strips it on the way to the UI and re-tags
+  what comes back. Names where the broker's ticker is not just the stripped
+  symbol go in `[ui.symbol_overrides]` — the gold ETF is the likeliest.
+- **Holdings live under a `Positions` tab**, not "Portfolio", with `Qty` and
+  `Market Value` columns. The extraction prompt targets those.
+
+> **Unresolved: how does Thndr X show that you are on the simulator?** A
+> screenshot of the trade view showed no visible simulator or virtual badge. The
+> demo guard needs *something* it can assert on. Run `calibrate_ui.py` on both
+> accounts and compare the candidate labels; whatever differs is the marker, and
+> it goes in `DEMO_TOKENS` / `LIVE_TOKENS` in `safety/demo_guard.py`. If nothing
+> textual differs, the guard needs a different probe — do not arm the bot until
+> this is settled, because the account assertion is the whole safety story.
+
+### Before you ever set `calibration_complete = true`
+
+`ThndrUiMap.calibration_complete` gates order submission and defaults to `False`
+for a reason: nobody — including a language model — can know a third-party app's
+current geometry and label text from memory. Guessing produces code that looks
+authoritative and clicks the wrong button.
+
+1. Run `calibrate_ui.py` on every screen a control lives on — Buy and Confirm
+   are in the order ticket, not the trade view.
+2. Settle the simulator-vs-real marker question above.
+3. Confirm every symbol in `config/policy.egx.toml` against the live EGX listing,
+   and its broker ticker against Thndr X's own search.
+4. Run for several sessions with `--dry-run` and read the plans.
+5. Only then set `calibration_complete = true`.
 
 ---
 
@@ -478,6 +472,8 @@ a devaluation, never trigger one.
 > check. Compare the printed closes against egx.com.eg for a few sessions
 > yourself; the script ends with the four manual checks that matter.
 
+---
+
 ## Backtesting
 
 ```bash
@@ -485,19 +481,6 @@ python run_backtest.py --synthetic                    # exercise the engine
 python run_backtest.py --yahoo --days 1825            # real data, cached to CSV
 python run_backtest.py --csv prices.csv --macro fx.csv
 ```
-
-`--yahoo` pulls history through **the same provider the bot trades on**, and runs
-the same `quality.py` checks over it. A backtest fed from a different source than
-the live path measures something other than the bot.
-
-The bridge reports **per-symbol coverage** against the exchange calendar, because
-real feeds cover names unevenly and a symbol present for 300 of 1,200 sessions is
-not something the backtest can say anything about. Sparse symbols are flagged but
-still held: dropping a universe member changes the policy's target weights, and
-that is a decision to make deliberately rather than a side effect of a patchy
-download. Bars dated to non-session days are dropped as data faults. History is
-cached to plain CSV so it can be inspected and diffed by hand; `--refresh`
-re-pulls.
 
 The strategy layer is pure, so replaying it is cheap. What the backtester is
 *for* is the part that matters: **measuring frictions, not discovering
@@ -516,9 +499,9 @@ Three things keep it honest:
 - **A limit only fills if the day traded through it.** Assuming every order
   fills at the close is the single assumption behind most backtests that cannot
   be reproduced live. Fills are also capped by volume participation, so you
-  cannot take half a thin name's daily turnover for free. On synthetic data the
-  fill rate lands near 57% — the rejected orders are recorded, because a plan is
-  not a fill and dropping them silently overstates how well the policy tracked.
+  cannot take half a thin name's daily turnover for free. Rejected orders are
+  recorded, because a plan is not a fill and dropping them silently overstates
+  how well the policy tracked.
 - **No lookahead, asserted by a test.** Orders are priced off the *previous*
   close and filled against the *current* day's range. Truncating the history must
   not change the days that remain, and `test_no_lookahead...` proves it.
@@ -529,74 +512,42 @@ Three things keep it honest:
 
 The runner also prints a sample-size warning: under eight years it says outright
 that the history is long enough to compare frictions but not to choose
-parameters. That is the numerical counterpart to `PolicyParameters.validate()` —
-the charter forbids fitting, and this makes visible when a fitted difference
-would have been meaningless anyway.
+parameters. That is the numerical counterpart to `PolicyParameters.validate()`.
+
+`--yahoo` pulls history through **the same provider the bot trades on**, and runs
+the same validation over it. The bridge reports per-symbol coverage against the
+exchange calendar; sparse symbols are flagged but still held, since dropping a
+universe member changes the policy's target weights and that is a deliberate
+decision rather than a side effect of a patchy download. History is cached to
+plain CSV so it can be inspected and diffed by hand.
 
 > `--synthetic` generates random prices. It exercises the engine and the cost
-> model; it says nothing about the EGX. The output labels itself as such.
+> model; it says nothing about the EGX.
 
 **Before trusting any figure, replace `CostModel` with your broker's real
 schedule.** The defaults are deliberately pessimistic placeholders — the stamp
 duty rate in particular has changed repeatedly and must be confirmed.
+
+---
+
+## Running the tests
+
+```bash
+cd samples/python/egx_robo_advisor
+pip install -e '.[test]'
+python -m pytest        # 238 tests, no network, broker or GPU needed
+```
+
+`ruff check --select E,F,B,I` is clean.
+
+---
 
 ## What is deliberately not here
 
 - **No live-account support.** Not a missing feature, a design boundary.
 - **No holiday calendar.** EGX holidays follow the Hijri calendar and are
   published annually. An empty set is honest about knowing nothing.
-- **No backtester.** The strategy layer is pure and deterministic, so one is
-  straightforward to add — but a backtest of this policy would mostly measure the
-  handful of EGP devaluations in the sample, which is exactly the overfitting the
-  charter exists to prevent.
 
----
-
-## Layout
-
-```
-egx_advisor/
-  types.py            frozen value types shared by every layer
-  clock.py            EGX calendar: Sun–Thu, Cairo time, T+2
-  bus.py              the agent ↔ dashboard channel
-  marketdata/
-    base.py           provider protocol, findings, blocking rule
-    quality.py        the checks and why each one blocks
-    yahoo.py          live provider (.CA tickers), halts never inferred
-    jsonfile.py       development and backtest path
-  egx_cua_agent.py    the loop and the five gates
-  safety/
-    demo_guard.py     evidence rules and the three-way verdict
-    vision.py         OCR / accessibility / colour probes
-    guarded_interface.py   the chokepoint proxy
-    pngutil.py        dependency-free PNG decode
-  strategy/
-    policy.py         universe, sleeves, sanctioned parameters
-    rebalance.py      drift bands and EGX frictions
-  regime/
-    sources.py        RSS/Atom fetching
-    sentiment.py      keyword + LLM classifiers
-    filter.py         circuit breaker + subtractive invariant
-  execution/
-    thndr.py          UI flows, GuardedComputer
-  backtest/
-    engine.py         replay loop, T+2 settlement, no lookahead
-    fills.py          limit/volume/halt fill model
-    metrics.py        cost reporting + block-bootstrap intervals
-    data.py           CSV loader and a synthetic generator
-    sources.py        provider bridge, coverage report, CSV cache
-demo_dry_run.py       seven scenarios against a scripted screen
-run_backtest.py       three-way friction comparison
-verify_market_data.py check a feed before trusting it
-dashboard/
-  app.py              FastAPI + SSE + control endpoints
-  templates/index.html   self-contained: inline CSS, no CDN
-docs/
-  ARCHITECTURE.md     decision records
-  NO_OVERFIT_CHARTER.md
-tests/                one file per pillar; the dashboard tests skip without FastAPI
-```
-
-See [`docs/NO_OVERFIT_CHARTER.md`](docs/NO_OVERFIT_CHARTER.md) before changing any
-strategy parameter, and [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the
-decision records behind the structure above.
+See [`docs/NO_OVERFIT_CHARTER.md`](docs/NO_OVERFIT_CHARTER.md) before changing
+any strategy parameter, and [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for
+the decision records behind the structure above.

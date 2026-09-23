@@ -325,3 +325,76 @@ async def test_uncalibrated_ui_refuses_to_submit_orders(tmp_path: Path) -> None:
     with pytest.raises(ExecutionError, match="calibration_complete"):
         await executor.submit_order(order)
     assert raw.clicks == []
+
+
+# --------------------------------------------------------------- UI calibration
+
+
+def test_ui_map_loads_from_toml(tmp_path: Path) -> None:
+    """Calibration is data a human edits after looking at their screen."""
+    path = tmp_path / "ui.toml"
+    path.write_text(
+        '[ui]\nbuy_button_label = "Buy shares"\n'
+        'simulator_option_label = "Virtual Portfolio"\n'
+        "calibration_complete = true\n",
+        encoding="utf-8",
+    )
+    ui = ThndrUiMap.from_toml(path)
+    assert ui.buy_button_label == "Buy shares"
+    assert ui.simulator_option_label == "Virtual Portfolio"
+    assert ui.calibration_complete is True
+    # Unspecified keys keep their defaults rather than becoming empty.
+    assert ui.confirm_button_label == "Confirm"
+
+
+def test_ui_map_rejects_an_unknown_key(tmp_path: Path) -> None:
+    """A typo must fail loudly, not silently leave a placeholder in place."""
+    path = tmp_path / "typo.toml"
+    path.write_text('[ui]\nbuy_buton_label = "Buy"\n', encoding="utf-8")
+    with pytest.raises(ValueError, match="unknown key"):
+        ThndrUiMap.from_toml(path)
+
+
+def test_shipped_ui_config_is_not_marked_calibrated() -> None:
+    """The file in the repo must never claim someone checked their own screen."""
+    shipped = Path(__file__).resolve().parent.parent / "config" / "thndr.ui.toml"
+    assert shipped.exists()
+    assert ThndrUiMap.from_toml(shipped).calibration_complete is False
+
+
+def test_broker_symbols_drop_the_data_suffix() -> None:
+    """Thndr X lists bare EGX tickers; typing 'COMI.CA' into its search finds nothing."""
+    ui = ThndrUiMap()
+    assert ui.broker_symbol("COMI.CA") == "COMI"
+    assert ui.broker_symbol("ABUK.CA") == "ABUK"
+    # Already-bare symbols pass through untouched.
+    assert ui.broker_symbol("NIPH") == "NIPH"
+
+
+def test_symbols_round_trip_back_to_canonical() -> None:
+    """A portfolio read off the screen must be re-tagged before it sizes anything."""
+    ui = ThndrUiMap()
+    for canonical in ("COMI.CA", "TMGH.CA", "AZG.CA"):
+        assert ui.canonical_symbol(ui.broker_symbol(canonical)) == canonical
+    assert ui.canonical_symbol("niph") == "NIPH.CA"
+
+
+def test_symbol_overrides_win_in_both_directions() -> None:
+    ui = ThndrUiMap(symbol_overrides={"AZG.CA": "AZGD"})
+    assert ui.broker_symbol("AZG.CA") == "AZGD"
+    assert ui.canonical_symbol("AZGD") == "AZG.CA"
+
+
+async def test_portfolio_read_retags_broker_tickers(tmp_path: Path) -> None:
+    """End to end: the agent's JSON uses broker tickers, the Portfolio uses canonical."""
+    from egx_advisor.execution.thndr import _parse_portfolio
+
+    ui = ThndrUiMap()
+    payload = {
+        "cash_egp": "100000",
+        "positions": [{"symbol": "PHAR", "quantity": "902", "market_value": "104181"}],
+    }
+    for entry in payload["positions"]:
+        entry["symbol"] = ui.canonical_symbol(entry["symbol"])
+    portfolio = _parse_portfolio(payload, demo_confirmed=True)
+    assert "PHAR.CA" in portfolio.positions

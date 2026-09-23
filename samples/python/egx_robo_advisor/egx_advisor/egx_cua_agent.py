@@ -57,6 +57,7 @@ from .regime.filter import RegimeFilter
 from .regime.sentiment import Classifier, KeywordClassifier, LlmClassifier, combine
 from .regime.sources import NewsFetcher
 from .safety.demo_guard import DemoGuard, DemoModeViolation
+from .safety.modes import ExecutionMode, OrderTicketsForbidden
 from .safety.guarded_interface import GuardedInterface, KillSwitchEngaged
 from .strategy.policy import AllocationPolicy
 from .strategy.rebalance import plan_rebalance
@@ -79,9 +80,18 @@ class AgentConfig:
     max_orders_per_cycle: int = 4
     #: Set False only to run the loop with execution disabled (dry run).
     execute_orders: bool = True
+    #: What the bot may do, and on whose account. See safety/modes.py.
+    mode: ExecutionMode = ExecutionMode.SIMULATOR_ONLY
     ui: ThndrUiMap = field(default_factory=ThndrUiMap)
     policy: AllocationPolicy = field(default_factory=AllocationPolicy)
     holidays: frozenset[date] = frozenset()
+
+    def __post_init__(self) -> None:
+        # A mode that cannot trade must not be paired with execution enabled.
+        # Reconciling it here means the rest of the loop never has to ask which
+        # of the two settings wins.
+        if self.execute_orders and not self.mode.permits_orders:
+            self.execute_orders = False
 
 
 class EgxCuaAgent:
@@ -142,6 +152,13 @@ class EgxCuaAgent:
             except KillSwitchEngaged as exc:
                 self.bus.publish(EventKind.CONTROL, f"cycle stopped: {exc}", phase="halted")
                 phase = AgentPhase.HALTED
+            except OrderTicketsForbidden as exc:
+                # Expected on an observe-only rung: the plan reached execution
+                # and was refused by design. Not an error, and not a halt.
+                self.bus.publish(
+                    EventKind.CONTROL, f"order refused by mode: {exc}", phase="idle"
+                )
+                phase = AgentPhase.PLANNING
             except DemoModeViolation as exc:
                 # The guard has already halted the bus if it saw real money. Do not
                 # retry: the next cycle re-checks the kill switch and will find it.
@@ -200,11 +217,12 @@ class EgxCuaAgent:
         state = self.bus.control_state()
         self.bus.publish(
             EventKind.LIFECYCLE,
-            "agent started",
+            f"agent started -- {self.config.mode.banner}",
             phase="idle",
             data={
                 "halted": state.halted,
                 "halt_reason": state.reason,
+                "mode": self.config.mode.value,
                 "execute_orders": self.config.execute_orders,
                 "calibrated": self.config.ui.calibration_complete,
                 "tzdata": TZDATA_AVAILABLE,
@@ -230,6 +248,20 @@ class EgxCuaAgent:
         now = datetime.now(timezone.utc)
 
         # --- Gate 1: kill switch ------------------------------------------------
+        # Published every cycle, not just at startup: an operator opening the
+        # dashboard mid-run must never have to guess which account is being
+        # driven, and a stale banner from a previous run would be worse than none.
+        self.bus.put(
+            "mode",
+            {
+                "mode": self.config.mode.value,
+                "banner": self.config.mode.banner,
+                "live": self.config.mode.permits_live_account,
+                "can_order": self.config.mode.permits_orders,
+                "execute_orders": self.config.execute_orders,
+            },
+        )
+
         if self.bus.is_halted():
             state = self.bus.control_state()
             self.bus.put("status", {"phase": AgentPhase.HALTED.value, "reason": state.reason})
@@ -453,7 +485,15 @@ class EgxCuaAgent:
             raw_interface,
             bus=self.bus,
             guard=self.guard,
-            accessibility_tree_provider=None,
+            # The app's own published labels are the strongest evidence the guard
+            # can get -- stronger than anything inferred from pixels, and immune
+            # to theming and font rendering. Leaving this unwired would silently
+            # reduce the guard to OCR plus an accent-colour check at runtime,
+            # which is exactly the configuration least likely to be calibrated.
+            accessibility_tree_provider=getattr(
+                raw_interface, "get_accessibility_tree", None
+            ),
+            mode=self.config.mode,
         )
 
         agent = None

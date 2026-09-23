@@ -33,9 +33,10 @@ from __future__ import annotations
 import json
 import logging
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, fields
 from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation
+from pathlib import Path
 from typing import Any, Mapping, Optional, Sequence
 
 from ..bus import EventKind, StateBus
@@ -94,18 +95,42 @@ class GuardedComputer:
 # --------------------------------------------------------------------------- #
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True)
 class ThndrUiMap:
     """Labels and prompts used to navigate. Calibrate before arming.
 
     Text anchors are preferred over coordinates throughout: they survive a layout
     change, and when they stop matching the bot fails loudly instead of clicking
     an unknown control.
+
+    These defaults are placeholders shaped like a mobile app's chrome. A desktop
+    or web interface labels things differently -- often more verbosely -- so
+    calibrate against whichever surface you actually drive. Getting this wrong
+    does not silently mis-click: navigation simply fails to find its anchor, and
+    `calibration_complete` keeps order submission blocked until a human has
+    checked each label against real screenshots.
     """
 
+    #: The web app's URL. Empty means "assume it is already open", which is the
+    #: safer default: navigating implies typing into an address bar, and that is
+    #: an order-critical primitive on a desktop the bot does not own.
+    web_url: str = ""
+    #: Suffix the market-data provider uses that the broker's UI does not.
+    #: Thndr X lists bare EGX tickers ("COMI", "ABUK") while Yahoo and this
+    #: codebase carry ".CA". Typing "COMI.CA" into the broker's search finds
+    #: nothing, so every symbol crossing into the UI is translated.
+    broker_symbol_suffix: str = ".CA"
+    #: Exceptions where the broker's ticker is not just the stripped symbol.
+    symbol_overrides: Mapping[str, str] = field(default_factory=dict)
     account_switcher_label: str = "Account"
     simulator_option_label: str = "Simulator"
     portfolio_tab_label: str = "Portfolio"
+    #: Thndr X shows holdings under a "Positions" tab, not "Portfolio".
+    positions_tab_label: str = "Positions"
+    orders_tab_label: str = "Orders"
+    #: Text the app shows when the session is closed. Cross-checked against our
+    #: own calendar: if they disagree, trust the exchange and stand down.
+    market_closed_label: str = "Market Closed"
     search_label: str = "Search"
     buy_button_label: str = "Buy"
     sell_button_label: str = "Sell"
@@ -117,6 +142,43 @@ class ThndrUiMap:
     #: Set to True only after a human has verified every label above against the
     #: live app. `ThndrExecutor` refuses to submit orders while this is False.
     calibration_complete: bool = False
+
+    def broker_symbol(self, canonical: str) -> str:
+        """Canonical symbol -> what the broker's UI calls it."""
+        override = self.symbol_overrides.get(canonical)
+        if override:
+            return override
+        suffix = self.broker_symbol_suffix
+        return canonical[: -len(suffix)] if suffix and canonical.endswith(suffix) else canonical
+
+    def canonical_symbol(self, broker: str) -> str:
+        """The reverse, for reading a portfolio back off the screen."""
+        for canonical, mapped in self.symbol_overrides.items():
+            if mapped.upper() == broker.upper():
+                return canonical
+        broker = broker.strip().upper()
+        suffix = self.broker_symbol_suffix
+        return broker if not suffix or broker.endswith(suffix) else f"{broker}{suffix}"
+
+    @classmethod
+    def from_toml(cls, path: str | Path) -> "ThndrUiMap":
+        """Load a calibrated map from TOML.
+
+        Calibration is data, not code: the labels belong in a file a human edits
+        after looking at their own screen, not in a Python literal that has to be
+        patched. `calibrate_ui.py` prints what the live app actually exposes.
+        """
+        import tomllib
+
+        raw = tomllib.loads(Path(path).read_text(encoding="utf-8"))
+        section = raw.get("ui", raw)
+        known = {f.name for f in fields(cls)}
+        unknown = set(section) - known
+        if unknown:
+            raise ValueError(
+                f"{path}: unknown key(s) {sorted(unknown)}; expected {sorted(known)}"
+            )
+        return cls(**section)
 
 
 # --------------------------------------------------------------------------- #
@@ -141,12 +203,30 @@ class ThndrExecutor:
     # --------------------------------------------------------------- demo gating
 
     async def ensure_simulator(self) -> None:
-        """Confirm the simulator is active, switching to it if needed.
+        """Confirm the account on screen is the one this mode expects.
 
-        Switching is attempted at most once. If the screen still is not confirmed
-        demo afterwards, this raises: repeatedly poking an account switcher we do
-        not understand is how a bot ends up on the live tab.
+        In `SIMULATOR_ONLY` that means the simulator, switching to it at most
+        once. Switching is attempted only once because repeatedly poking an
+        account switcher we do not understand is how a bot ends up on the live
+        tab.
+
+        In `LIVE_READ_ONLY` a real account is what we came to look at, so no
+        switch is attempted and no state is fatal -- the verdict is recorded so
+        the dashboard can show which account is being observed. Nothing this
+        mode can reach is capable of placing an order: the guard refuses every
+        order-critical primitive, and `submit_order` below declines outright.
         """
+        if not self.interface.mode.permits_order_tickets:
+            verdict = await self.interface.assert_demo_now()
+            self.bus.publish(
+                EventKind.GUARD,
+                f"{self.interface.mode.banner}: observing "
+                f"{verdict.state.value} ({verdict.detail})",
+                phase="asserting_demo",
+                data=verdict.to_json(),
+            )
+            return
+
         verdict = await self.interface.assert_demo_now()
         if verdict.state is DemoState.CONFIRMED_DEMO:
             self.bus.publish(
@@ -228,18 +308,28 @@ class ThndrExecutor:
                 "no ComputerAgent configured; cannot read the portfolio screen"
             )
         reply = await self._agent_task(
-            "Read the portfolio screen currently visible and return ONLY a JSON "
-            "object, no prose, of the form: "
+            f"Read the '{self.ui.positions_tab_label}' table currently visible and "
+            "return ONLY a JSON object, no prose, of the form: "
             '{"cash_egp": "0.00", "unsettled_cash_egp": "0.00", "positions": '
-            '[{"symbol": "COMI.CA", "quantity": "100", "market_value": "8500.00"}]}. '
-            "Use the exchange ticker with a .CA suffix. Market value is in EGP. "
+            '[{"symbol": "COMI", "quantity": "100", "market_value": "8500.00"}]}. '
+            "Use the ticker exactly as the table shows it. quantity is the Qty "
+            "column and market_value is the Market Value column, in EGP. "
             "If a number is not legible, omit that position rather than guessing.",
             read_only=True,
         )
         try:
-            return json.loads(_extract_json_object(reply))
+            payload = json.loads(_extract_json_object(reply))
         except Exception as exc:  # noqa: BLE001
             raise PortfolioReadError(f"portfolio extraction did not parse: {exc}") from exc
+
+        # Translate the broker's tickers back to canonical ones before anything
+        # sizes against them; the strategy and the price feed both speak ".CA".
+        positions = payload.get("positions")
+        if isinstance(positions, list):
+            for entry in positions:
+                if isinstance(entry, dict) and entry.get("symbol"):
+                    entry["symbol"] = self.ui.canonical_symbol(str(entry["symbol"]))
+        return payload
 
     # ------------------------------------------------------------------- ordering
 
@@ -250,6 +340,12 @@ class ThndrExecutor:
         it to the strictest tier, and re-verifies on exit. If the account switched
         mid-flow, `_post_verify` halts the bot rather than reporting success.
         """
+        if not self.interface.mode.permits_orders:
+            raise ExecutionError(
+                f"{self.interface.mode.banner}: this mode observes an account and "
+                f"never trades on it. Refusing to submit "
+                f"{order.side.value} {order.quantity} {order.symbol}."
+            )
         if not self.ui.calibration_complete:
             raise ExecutionError(
                 "ThndrUiMap.calibration_complete is False: calibrate the UI labels "
@@ -261,6 +357,7 @@ class ThndrExecutor:
         side_label = (
             self.ui.buy_button_label if order.side is Side.BUY else self.ui.sell_button_label
         )
+        ui_symbol = self.ui.broker_symbol(order.symbol)
         description = (
             f"{order.side.value.upper()} {order.quantity} {order.symbol} "
             f"limit {order.limit_price}"
@@ -269,10 +366,10 @@ class ThndrExecutor:
         async with self.interface.order_critical(description):
             await self._agent_task(
                 f"In the Thndr simulator, place a LIMIT {order.side.value.upper()} order:\n"
-                f"  symbol: {order.symbol}\n"
+                f"  symbol: {ui_symbol}\n"
                 f"  quantity: {order.quantity}\n"
                 f"  limit price: {order.limit_price} EGP\n"
-                f"Steps: search for {order.symbol}, open it, tap "
+                f"Steps: search for {ui_symbol}, open it, tap "
                 f"'{side_label}', set order type to LIMIT, enter the quantity in "
                 f"'{self.ui.quantity_field_label}' and the price in "
                 f"'{self.ui.limit_price_field_label}', then "

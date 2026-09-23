@@ -69,6 +69,23 @@ past the guard". Relaxing it is a one-line, reviewable change.
 
 ---
 
+## ADR-006: Fail-closed on silence
+
+**Decision.** Stale or unpolled feeds produce `BUYS_HALTED` during a session.
+`bus.is_halted()` returns `True` on any exception. An empty screenshot yields
+`INDETERMINATE`. A fresh bus starts halted.
+
+**Why.** Absence of bad news is not evidence of calm — it is far more likely that
+the poller is broken. Every "we cannot tell" has to resolve towards inaction,
+because the asymmetry of outcomes demands it: a missed rebalance costs a few
+basis points of tracking error; an unintended order costs real money.
+
+**Exception.** Out of session, quiet feeds are normal and do not latch a halt.
+Otherwise the bot would open every Sunday already halted.
+
+
+---
+
 ## ADR-005: The regime filter may only subtract
 
 **Decision.** `RegimeFilter.apply()` calls `_assert_subtractive()` on every
@@ -88,19 +105,29 @@ never a false all-clear.
 
 ---
 
-## ADR-006: Fail-closed on silence
+## ADR-008: The strategy layer is pure
 
-**Decision.** Stale or unpolled feeds produce `BUYS_HALTED` during a session.
-`bus.is_halted()` returns `True` on any exception. An empty screenshot yields
-`INDETERMINATE`. A fresh bus starts halted.
+**Decision.** `plan_rebalance()` takes state and returns a plan. No clock, no
+network, no screen, no regime consultation.
 
-**Why.** Absence of bad news is not evidence of calm — it is far more likely that
-the poller is broken. Every "we cannot tell" has to resolve towards inaction,
-because the asymmetry of outcomes demands it: a missed rebalance costs a few
-basis points of tracking error; an unintended order costs real money.
+**Why.** It makes the strategy backtestable against replayed history and testable
+without a broker, and it keeps generation separate from suppression so each can
+be verified alone. It is also what makes the subtractive invariant checkable:
+there are two distinct artefacts to compare.
 
-**Exception.** Out of session, quiet feeds are normal and do not latch a halt.
-Otherwise the bot would open every Sunday already halted.
+
+---
+
+## ADR-009: Prices do not come from the screen
+
+**Decision.** `MarketDataProvider` is an explicit seam. `JsonFileMarketData`
+serves development and backtests; production points at a real feed.
+
+**Why.** Screen-scraped prices are low precision, arrive at whatever moment the
+screenshot happened, and an OCR error on a decimal point silently multiplies an
+order by ten. The portfolio read tolerates the screen because there is no
+alternative — and even that is validated hard. Prices have an alternative.
+
 
 ---
 
@@ -115,30 +142,6 @@ the next `evaluate()` recomputed from the headlines and silently downgraded
 `ALL_HALTED` to `BUYS_HALTED` — putting the bot back on the screen after we had
 declared we did not trust our own data. A panic means exactly that, and a
 subsequent calm poll is not evidence to the contrary.
-
----
-
-## ADR-008: The strategy layer is pure
-
-**Decision.** `plan_rebalance()` takes state and returns a plan. No clock, no
-network, no screen, no regime consultation.
-
-**Why.** It makes the strategy backtestable against replayed history and testable
-without a broker, and it keeps generation separate from suppression so each can
-be verified alone. It is also what makes the subtractive invariant checkable:
-there are two distinct artefacts to compare.
-
----
-
-## ADR-009: Prices do not come from the screen
-
-**Decision.** `MarketDataProvider` is an explicit seam. `JsonFileMarketData`
-serves development and backtests; production points at a real feed.
-
-**Why.** Screen-scraped prices are low precision, arrive at whatever moment the
-screenshot happened, and an OCR error on a decimal point silently multiplies an
-order by ten. The portfolio read tolerates the screen because there is no
-alternative — and even that is validated hard. Prices have an alternative.
 
 ---
 
@@ -157,3 +160,4 @@ a comment saying "adjust these".
 coordinates throughout: a model asked to "open the portfolio tab" adapts to a
 redesign, whereas a hard-coded point silently clicks whatever moved into that
 spot.
+
