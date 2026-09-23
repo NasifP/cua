@@ -173,12 +173,23 @@ async def main() -> None:
             "!! --target host drives THIS desktop, not a sandbox. A misplaced click\n"
             "   can land on any window. Use a dedicated browser profile, or a VM.\n"
         )
-    if mode.permits_live_account:
+    if mode.permits_live_account and not mode.permits_order_tickets:
         print(
             f"!! {mode.banner}\n"
             "   The bot will look at a real account and publish real plans.\n"
             "   It cannot open an order ticket: the guard refuses every\n"
             "   order-critical primitive in this mode.\n"
+        )
+    elif mode.permits_live_account:
+        print(
+            f"!! {mode.banner}\n"
+            "   The bot will FILL ORDER TICKETS on a real account and stop.\n"
+            "   It never submits: Enter and the submit button's own rectangle\n"
+            "   are refused at the guard. You press submit yourself, or you\n"
+            "   discard the ticket.\n"
+            "   Watch the screen while it runs. A fence stops the click the bot\n"
+            "   aims at the button it was told about; it cannot stop one aimed\n"
+            "   somewhere the layout moved to.\n"
         )
     print(
         f"agent starting ({mode.banner}, target={args.target}/{os_type}, bus={args.bus}, "

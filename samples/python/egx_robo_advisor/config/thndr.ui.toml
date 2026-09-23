@@ -43,6 +43,21 @@ order_placed_label      = "Order placed"
 
 calibration_complete = false
 
+# The broker's submit button, as [left, top, right, bottom] in SCREEN pixels.
+# REQUIRED by --mode live_prepare_only, which fills a real ticket it must never
+# commit: the guard refuses every click inside this rectangle, which is what
+# turns "the bot does not press Confirm" from a promise into a check. The mode
+# refuses to start while this is unset.
+#
+# How to measure it: open a ticket on the real account, take a screenshot, and
+# read the button's bounding box off it. Then GROW IT -- 15-20 px on each side
+# is sensible. A fence that is exactly the button fails the first time the
+# layout nudges, and it fails in the direction that places an order.
+#
+# It is coordinates, so it is the one part of this file a redesign invalidates
+# silently. Re-measure after any app update before running this mode again.
+# submit_button_rect = [300, 840, 560, 920]
+
 # Only for names where the broker's ticker is not just the stripped symbol.
 # The gold ETF is the one most likely to need this -- confirm it.
 [ui.symbol_overrides]

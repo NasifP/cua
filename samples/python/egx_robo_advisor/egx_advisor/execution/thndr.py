@@ -143,6 +143,31 @@ class ThndrUiMap:
     #: live app. `ThndrExecutor` refuses to submit orders while this is False.
     calibration_complete: bool = False
 
+    #: Screen rectangle of the broker's submit button, as `[left, top, right,
+    #: bottom]`. Required by `LIVE_PREPARE_ONLY`, which fills a real ticket it
+    #: must never commit: the guard refuses any click inside it. Measure it from
+    #: a screenshot with the ticket open, and leave a margin -- a fence that is
+    #: exactly the button's bounding box fails on the first layout nudge.
+    submit_button_rect: tuple[int, int, int, int] | None = None
+
+    def submit_fence(self) -> "SubmitFence | None":
+        """The no-click rectangle, or None if it was never measured.
+
+        None is not "no fence needed": `LIVE_PREPARE_ONLY` refuses to start
+        without one. Returning None here is how that refusal gets triggered,
+        rather than quietly substituting a default rectangle that protects
+        nothing in particular.
+        """
+        from ..safety.guarded_interface import SubmitFence
+
+        if self.submit_button_rect is None:
+            return None
+        left, top, right, bottom = self.submit_button_rect
+        return SubmitFence(
+            left=left, top=top, right=right, bottom=bottom,
+            label=f"{self.confirm_button_label} button",
+        )
+
     def broker_symbol(self, canonical: str) -> str:
         """Canonical symbol -> what the broker's UI calls it."""
         override = self.symbol_overrides.get(canonical)
@@ -178,6 +203,14 @@ class ThndrUiMap:
             raise ValueError(
                 f"{path}: unknown key(s) {sorted(unknown)}; expected {sorted(known)}"
             )
+        rect = section.get("submit_button_rect")
+        if rect is not None:
+            if len(rect) != 4:
+                raise ValueError(
+                    f"{path}: submit_button_rect must be [left, top, right, bottom], "
+                    f"got {rect!r}"
+                )
+            section["submit_button_rect"] = tuple(int(v) for v in rect)
         return cls(**section)
 
 
@@ -332,6 +365,82 @@ class ThndrExecutor:
         return payload
 
     # ------------------------------------------------------------------- ordering
+
+    async def prepare_order(self, order: ProposedOrder) -> None:
+        """Fill an order ticket on screen and stop, leaving submit to the operator.
+
+        The counterpart to `submit_order` for an operator who has no simulator
+        account. The bot does the tedious, error-prone part -- finding the
+        symbol, choosing the side, setting LIMIT, typing a quantity and a price
+        that match the plan exactly -- and then takes its hands off. The last
+        action is a person looking at a filled ticket on their own screen and
+        pressing the broker's own button, or discarding it.
+
+        What stops this method becoming `submit_order` by accident is not this
+        docstring. Inside the block the guard refuses Enter, refuses a newline in
+        typed text, and refuses any click inside the calibrated fence around the
+        submit button, so the instruction below is a description of what the
+        proxy will permit rather than a request it is trusted to honour.
+
+        Nothing here reports success: a prepared ticket is not an order, and
+        publishing one as though it were would put a fill in the journal that
+        never happened.
+        """
+        if not self.interface.mode.permits_order_tickets:
+            raise ExecutionError(
+                f"{self.interface.mode.banner}: this mode observes an account and "
+                f"never opens a ticket on it. Refusing to prepare "
+                f"{order.side.value} {order.quantity} {order.symbol}."
+            )
+        if not self.ui.calibration_complete:
+            raise ExecutionError(
+                "ThndrUiMap.calibration_complete is False: calibrate the UI labels "
+                "against real screenshots before allowing the bot near a ticket"
+            )
+        if self.agent is None:
+            raise ExecutionError("no ComputerAgent configured; refusing to click blind")
+
+        side_label = (
+            self.ui.buy_button_label if order.side is Side.BUY else self.ui.sell_button_label
+        )
+        ui_symbol = self.ui.broker_symbol(order.symbol)
+        description = (
+            f"{order.side.value.upper()} {order.quantity} {order.symbol} "
+            f"limit {order.limit_price}"
+        )
+
+        async with self.interface.order_critical(f"PREPARE {description}"):
+            await self._agent_task(
+                f"Fill in a LIMIT {order.side.value.upper()} ticket and then STOP:\n"
+                f"  symbol: {ui_symbol}\n"
+                f"  quantity: {order.quantity}\n"
+                f"  limit price: {order.limit_price} EGP\n"
+                f"Steps: search for {ui_symbol}, open it, tap "
+                f"'{side_label}', set order type to LIMIT, enter the quantity in "
+                f"'{self.ui.quantity_field_label}' and the price in "
+                f"'{self.ui.limit_price_field_label}'.\n"
+                f"Then STOP. Do NOT tap '{self.ui.review_button_label}', do NOT tap "
+                f"'{self.ui.confirm_button_label}', and do NOT press Enter. A human "
+                f"submits this ticket, not you. Leave it filled and on screen.\n"
+                f"Hard rules: never change the account; never exceed the stated "
+                f"quantity; if the quantity or price field will not accept the exact "
+                f"value, abort and report instead of substituting a different value."
+            )
+
+        self.bus.publish(
+            EventKind.ORDER,
+            f"TICKET READY, NOT SUBMITTED - {description}",
+            phase="awaiting_operator",
+            data={
+                "symbol": order.symbol,
+                "side": order.side.value,
+                "quantity": str(order.quantity),
+                "limit_price": str(order.limit_price),
+                "rationale": order.rationale,
+                "submitted": False,
+                "awaiting": "operator presses submit on the broker's own screen",
+            },
+        )
 
     async def submit_order(self, order: ProposedOrder) -> None:
         """Place one order inside an order-critical block.

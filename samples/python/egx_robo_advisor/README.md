@@ -425,14 +425,16 @@ Cloudflare Tunnel or Tailscale — rather than exposing it directly.
 ### Execution modes
 
 ```bash
-python run_agent.py --mode simulator_only   # default
-python run_agent.py --mode live_read_only   # observe a REAL account
+python run_agent.py --mode simulator_only      # default
+python run_agent.py --mode live_read_only      # observe a REAL account
+python run_agent.py --mode live_prepare_only   # fill tickets, YOU press submit
 ```
 
-| Mode | A real account is | Order tickets |
-|---|---|---|
-| `simulator_only` | a hard stop — halts and latches the kill switch | permitted (on the simulator) |
-| `live_read_only` | observed | **refused at the guard** |
+| Mode | A real account is | Order tickets | Submits |
+|---|---|---|---|
+| `simulator_only` | a hard stop — halts and latches the kill switch | permitted | yes, on the simulator |
+| `live_read_only` | observed | **refused at the guard** | no |
+| `live_prepare_only` | observed and filled in | permitted | **never — you do** |
 
 `live_read_only` exists to answer one question: *does the bot reason correctly
 about my actual portfolio?* It reads genuine holdings, prices them, and publishes
@@ -445,13 +447,54 @@ else. `tests/test_modes.py` comes at that claim from four directions.
 `AgentConfig` also forces `execute_orders` off in this mode, so two settings can
 never disagree about whether trading is possible.
 
-There is deliberately **no "fill the ticket but don't submit it" mode.** It is a
-reasonable thing to want, and it is absent rather than half-built: shipping an
-enum member nothing enforces is worse than not shipping it, because someone
-reads its name and believes in a protection that does not exist. Adding it needs
-its own enforcement — blocking Enter inside order blocks, since the bot types
-into quantity fields and Enter submits a form in most web UIs — and its own
-decision.
+#### `live_prepare_only`, for an operator with no simulator account
+
+Thndr does not give everyone a paper account. Without one, `simulator_only` can
+never pass its own assertion — the screen is always real money, so the guard
+always halts — and `live_read_only` never does anything but watch. This rung is
+for that situation: the bot fills the ticket and stops, and a person presses the
+broker's own submit button.
+
+That moves the gate. On the simulator rung the gate is *"this screen is provably
+a simulator"*, which is unavailable here. Three things carry the weight instead,
+and all three are enforced at the proxy rather than asked of the execution layer:
+
+1. **No submit key.** Enter, Return and keypad Enter are refused inside an order
+   block, as is any typed text containing a newline. `type_text("100\n")`
+   submits a form as surely as pressing the key, and is the easier one to write
+   by accident. Outside an order block Enter is ordinary and stays allowed — a
+   guard that cries wolf gets switched off.
+2. **No click inside the submit fence.** `submit_button_rect` in the UI config
+   is a rectangle around the broker's submit button, and the guard refuses any
+   click inside it. This is what turns *"the bot does not press Confirm"* from a
+   promise about the execution layer into a geometric invariant checked on every
+   pointer call. **The mode refuses to start without it** — a guard that
+   discovers the fence is missing while standing in front of a filled ticket has
+   picked the worst possible moment to find out.
+3. **Your own press**, on the broker's own screen. That is the only
+   authorisation this rung recognises, and nothing in the bot can supply it.
+
+```python
+async def test_an_agent_that_presses_enter_is_stopped_by_the_guard(tmp_path):
+    disobedient = ScriptedAgent(guarded, [("type_text", "100"), ("press_key", "enter")])
+    with pytest.raises(SubmitForbidden, match="Enter commits the ticket"):
+        await executor_for(guarded, bus).prepare_order(an_order())
+    assert ("press_key", "enter") not in raw.calls
+```
+
+The instruction sent to the model says *do not submit*. The guard is what makes
+that true: a model that ignores the prompt, or a flow that later forgets it,
+still cannot commit the ticket. `prepare_order` also journals `TICKET READY, NOT
+SUBMITTED` rather than reporting a fill, because a prepared ticket is not an
+order and a journal that implies one is worse than no journal.
+
+**What this rung does not claim.** A proxy over raw input primitives cannot
+prove no click ever lands on a submit button. It refuses the coordinates it was
+told about; it cannot know a redesign moved the button somewhere else. The fence
+narrows the risk and the journal makes it visible afterwards — it does not
+eliminate it. `submit_button_rect` is also the one piece of calibration a layout
+change invalidates *silently*, so re-measure it after any app update. Run this
+rung watching the screen, not from another room.
 
 ### Calibrating against Thndr X
 
@@ -605,7 +648,7 @@ duty rate in particular has changed repeatedly and must be confirmed.
 ```bash
 cd samples/python/egx_robo_advisor
 pip install -e '.[test]'
-python -m pytest        # 258 tests, no network, broker or GPU needed
+python -m pytest        # 273 tests, no network, broker or GPU needed
 ```
 
 `ruff check --select E,F,B,I` is clean.

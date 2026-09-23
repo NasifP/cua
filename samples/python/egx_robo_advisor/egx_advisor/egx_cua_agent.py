@@ -87,10 +87,15 @@ class AgentConfig:
     holidays: frozenset[date] = frozenset()
 
     def __post_init__(self) -> None:
-        # A mode that cannot trade must not be paired with execution enabled.
-        # Reconciling it here means the rest of the loop never has to ask which
-        # of the two settings wins.
-        if self.execute_orders and not self.mode.permits_orders:
+        # A mode that cannot touch an order at all must not be paired with
+        # execution enabled. Reconciling it here means the rest of the loop never
+        # has to ask which of the two settings wins.
+        #
+        # The test is `permits_order_tickets`, not `permits_orders`: on
+        # LIVE_PREPARE_ONLY the loop has real work to do -- filling tickets for
+        # the operator to submit -- so switching execution off there would make
+        # the rung inert.
+        if self.execute_orders and not self.mode.permits_order_tickets:
             self.execute_orders = False
 
 
@@ -347,15 +352,29 @@ class EgxCuaAgent:
                     phase="halted",
                 )
                 break
-            await executor.submit_order(order)
+            if self.config.mode.permits_orders:
+                await executor.submit_order(order)
+            else:
+                # The rung fills the ticket and stops. One per cycle is not a
+                # limit worth working around: a second ticket would overwrite the
+                # first on screen before anyone had looked at it.
+                await executor.prepare_order(order)
+                self._last_traded[order.symbol] = now.date()
+                executed += 1
+                break
             self._last_traded[order.symbol] = now.date()
             executed += 1
 
+        verb = "submitted" if self.config.mode.permits_orders else "prepared for you"
         self.bus.publish(
             EventKind.LIFECYCLE,
-            f"cycle complete: {executed} order(s) submitted",
+            f"cycle complete: {executed} order(s) {verb}",
             phase="executing",
-            data={"executed": executed, "planned": len(allowed)},
+            data={
+                "executed": executed,
+                "planned": len(allowed),
+                "submitted": self.config.mode.permits_orders,
+            },
         )
         return AgentPhase.EXECUTING
 
@@ -494,6 +513,9 @@ class EgxCuaAgent:
                 raw_interface, "get_accessibility_tree", None
             ),
             mode=self.config.mode,
+            # None when uncalibrated, which is what makes a prepare-rung guard
+            # refuse to start rather than run without the check it depends on.
+            submit_fence=self.config.ui.submit_fence(),
         )
 
         agent = None
