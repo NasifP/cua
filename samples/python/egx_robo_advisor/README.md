@@ -1,12 +1,12 @@
-# EGX Robo-Advisor — safety, strategy and the news circuit breaker
+# EGX Robo-Advisor — safety, strategy, circuit breaker and market data
 
-Parts 1–2 of a safety-gated rebalancing bot for the Egyptian Exchange that drives
+Parts 1–3 of a safety-gated rebalancing bot for the Egyptian Exchange that drives
 the **Thndr simulator** (paper trading) through [Cua](https://github.com/trycua/cua).
 
 These slices contain the machinery that decides whether the bot may touch the
-screen, what it would buy if allowed, and when news should stop it. The agent
-loop, the dashboard, the market data and the backtester arrive in later parts;
-nothing here trades on its own.
+screen, what it would buy if allowed, when news should stop it, and where its
+prices come from. The agent loop, the dashboard and the backtester arrive in
+later parts; nothing here trades on its own.
 
 > **Status: simulator only.** Nothing in this package is investment advice.
 
@@ -22,6 +22,7 @@ nothing here trades on its own.
 | `safety/` | the demo-mode guard and the only sanctioned path to the screen |
 | `strategy/` | allocation policy and drift-band rebalancing — pure, no I/O |
 | `regime/` | news fetching, classification, and the circuit breaker |
+| `marketdata/` | the price seam, with validation that blocks rather than degrades |
 
 ---
 
@@ -223,12 +224,56 @@ coverage hole in the breaker.
 
 ---
 
+## Market data
+
+```bash
+pip install -e '.[marketdata]'
+python verify_market_data.py              # check the feed before trusting it
+python verify_market_data.py --history 1825
+```
+
+`MarketDataProvider` is the seam. Prices are the denominator of every weight and
+the multiplier on every order size, so a bad feed does not produce a slightly
+worse trade — it produces an order off by a factor. Providers therefore
+**validate what they fetched and raise rather than degrade**, the same posture as
+the demo guard.
+
+`YahooMarketData` is the live path. Yahoo quotes EGX with the same `.CA` suffix
+this codebase already uses, needs no key, and is delayed and unofficial — good
+enough to develop and backtest against, to be verified before it sizes a live
+order.
+
+Blocking findings (the snapshot is refused):
+
+| Code | Why it can misprice an order |
+|---|---|
+| `CURRENCY_MISMATCH` | a USD figure read as EGP scales orders ~50× |
+| `IMPLAUSIBLE_MOVE` | beyond EGX's ±10% band is usually an unadjusted split; sizing against the pre-split price buys 5× the shares |
+| `MISSING_SYMBOL` | a universe member with no data is an unknown weight, not a zero one — it inflates every other weight |
+| `STALE_BAR` | yesterday's close during a devaluation is not a price |
+| `NON_POSITIVE`, `INVERTED_RANGE`, `CLOSE_OUTSIDE_RANGE` | the row is not what it claims |
+
+`ZERO_VOLUME` and `THIN_VOLUME` are warnings only. **Halts are never inferred
+from price data**: Yahoo cannot distinguish a suspension from a holiday or a
+gap, so `Tradability.HALTED` is left to EGX disclosures via the regime layer.
+Claiming otherwise would be worse than admitting the gap.
+
+A missing USD/EGP series leaves the policy at baseline — it can fail to *detect*
+a devaluation, never trigger one.
+
+> **`verify_market_data.py` cannot tell you the prices are correct.** It catches
+> faults self-evident from the data. A feed quietly wrong by 2% passes every
+> check. Compare the printed closes against egx.com.eg for a few sessions
+> yourself; the script ends with the four manual checks that matter.
+
+---
+
 ## Running the tests
 
 ```bash
 cd samples/python/egx_robo_advisor
 pip install -e '.[test]'
-python -m pytest        # 122 tests, no network, broker or GPU needed
+python -m pytest        # 144 tests, no network, broker or GPU needed
 ```
 
 `ruff check --select E,F,B,I` is clean.
@@ -239,7 +284,6 @@ python -m pytest        # 122 tests, no network, broker or GPU needed
 
 | Part | Adds |
 |---|---|
-| 3 | market data providers with validation |
 | 4 | the agent loop, Thndr execution, and the mobile dashboard |
 | 5 | the backtester |
 
