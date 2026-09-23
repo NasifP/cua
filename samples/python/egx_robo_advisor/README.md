@@ -352,6 +352,37 @@ The app binds `127.0.0.1` and refuses a non-loopback bind unless you set
 places orders, so put it behind a tunnel that terminates TLS and authenticates —
 Cloudflare Tunnel or Tailscale — rather than exposing it directly.
 
+### Execution modes
+
+```bash
+python run_agent.py --mode simulator_only   # default
+python run_agent.py --mode live_read_only   # observe a REAL account
+```
+
+| Mode | A real account is | Order tickets |
+|---|---|---|
+| `simulator_only` | a hard stop — halts and latches the kill switch | permitted (on the simulator) |
+| `live_read_only` | observed | **refused at the guard** |
+
+`live_read_only` exists to answer one question: *does the bot reason correctly
+about my actual portfolio?* It reads genuine holdings, prices them, and publishes
+a genuine plan to the dashboard — with nothing at stake, because **no path
+reachable in this mode can place an order.** That is enforced at the proxy, not
+requested of the caller: every order-critical primitive is refused, the order
+block declines to open, and `submit_order` raises before it looks at anything
+else. `tests/test_modes.py` comes at that claim from four directions.
+
+`AgentConfig` also forces `execute_orders` off in this mode, so two settings can
+never disagree about whether trading is possible.
+
+There is deliberately **no "fill the ticket but don't submit it" mode.** It is a
+reasonable thing to want, and it is absent rather than half-built: shipping an
+enum member nothing enforces is worse than not shipping it, because someone
+reads its name and believes in a protection that does not exist. Adding it needs
+its own enforcement — blocking Enter inside order blocks, since the bot types
+into quantity fields and Enter submits a form in most web UIs — and its own
+decision.
+
 ### Calibrating against Thndr X
 
 ```bash
@@ -504,7 +535,7 @@ duty rate in particular has changed repeatedly and must be confirmed.
 ```bash
 cd samples/python/egx_robo_advisor
 pip install -e '.[test]'
-python -m pytest        # 203 tests, no network, broker or GPU needed
+python -m pytest        # 238 tests, no network, broker or GPU needed
 ```
 
 `ruff check --select E,F,B,I` is clean.

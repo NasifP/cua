@@ -203,12 +203,30 @@ class ThndrExecutor:
     # --------------------------------------------------------------- demo gating
 
     async def ensure_simulator(self) -> None:
-        """Confirm the simulator is active, switching to it if needed.
+        """Confirm the account on screen is the one this mode expects.
 
-        Switching is attempted at most once. If the screen still is not confirmed
-        demo afterwards, this raises: repeatedly poking an account switcher we do
-        not understand is how a bot ends up on the live tab.
+        In `SIMULATOR_ONLY` that means the simulator, switching to it at most
+        once. Switching is attempted only once because repeatedly poking an
+        account switcher we do not understand is how a bot ends up on the live
+        tab.
+
+        In `LIVE_READ_ONLY` a real account is what we came to look at, so no
+        switch is attempted and no state is fatal -- the verdict is recorded so
+        the dashboard can show which account is being observed. Nothing this
+        mode can reach is capable of placing an order: the guard refuses every
+        order-critical primitive, and `submit_order` below declines outright.
         """
+        if not self.interface.mode.permits_order_tickets:
+            verdict = await self.interface.assert_demo_now()
+            self.bus.publish(
+                EventKind.GUARD,
+                f"{self.interface.mode.banner}: observing "
+                f"{verdict.state.value} ({verdict.detail})",
+                phase="asserting_demo",
+                data=verdict.to_json(),
+            )
+            return
+
         verdict = await self.interface.assert_demo_now()
         if verdict.state is DemoState.CONFIRMED_DEMO:
             self.bus.publish(
@@ -322,6 +340,12 @@ class ThndrExecutor:
         it to the strictest tier, and re-verifies on exit. If the account switched
         mid-flow, `_post_verify` halts the bot rather than reporting success.
         """
+        if not self.interface.mode.permits_orders:
+            raise ExecutionError(
+                f"{self.interface.mode.banner}: this mode observes an account and "
+                f"never trades on it. Refusing to submit "
+                f"{order.side.value} {order.quantity} {order.symbol}."
+            )
         if not self.ui.calibration_complete:
             raise ExecutionError(
                 "ThndrUiMap.calibration_complete is False: calibrate the UI labels "

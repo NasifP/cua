@@ -49,6 +49,7 @@ from .demo_guard import (
     DemoState,
     DemoVerdict,
 )
+from .modes import ExecutionMode, OrderTicketsForbidden
 
 logger = logging.getLogger(__name__)
 
@@ -191,6 +192,7 @@ class GuardedInterface:
         accessibility_tree_provider: Optional[Callable[[], Any]] = None,
         halt_on_live: bool = True,
         reassert_every_action: bool = True,
+        mode: ExecutionMode = ExecutionMode.SIMULATOR_ONLY,
     ) -> None:
         self._raw = raw_interface
         self._bus = bus
@@ -198,6 +200,7 @@ class GuardedInterface:
         self._tree_provider = accessibility_tree_provider
         self._halt_on_live = halt_on_live
         self._reassert_every_action = reassert_every_action
+        self.mode = mode
         self._verdict: Optional[DemoVerdict] = None
         self._elevation: int = 0
         self._lock = asyncio.Lock()
@@ -212,6 +215,17 @@ class GuardedInterface:
         Re-asserts on entry so the block starts from a verified screen, and
         re-verifies on exit so a mid-flow account switch cannot go unnoticed.
         """
+        if not self.mode.permits_order_tickets:
+            self.stats.calls_blocked += 1
+            self._bus.publish(
+                EventKind.GUARD,
+                f"BLOCKED ({self.mode.banner}) order block: {description}",
+                phase="executing",
+                data={"mode": self.mode.value},
+            )
+            raise OrderTicketsForbidden(
+                f"{self.mode.banner}: refusing to open an order block ({description})"
+            )
         await self._require_not_halted(f"entering order block: {description}")
         await self._refresh_verdict(ActionRisk.ORDER_CRITICAL, force=True)
         self._assert_permits(ActionRisk.ORDER_CRITICAL, f"order block: {description}")
@@ -248,6 +262,7 @@ class GuardedInterface:
             label = _format_call(name, args, kwargs)
 
             await self._require_not_halted(label)
+            self._require_mode_allows(risk, label)
 
             if risk is not ActionRisk.READ_ONLY:
                 # Fresh by default. Reusing a verdict across calls opens a window
@@ -306,11 +321,48 @@ class GuardedInterface:
                 f"kill switch engaged by {state.actor}: {state.reason}"
             )
 
+    def _require_mode_allows(self, risk: ActionRisk, label: str) -> None:
+        """Refuse order-critical work in a mode that only observes.
+
+        On `LIVE_READ_ONLY` the bot may look at a real account and navigate it,
+        but every primitive capable of composing an order -- typing into a
+        field, running a command, anything unrecognised -- is refused here, at
+        the proxy. The executor also declines to open an order block, but that
+        is the polite half; this is the half a future code path cannot forget.
+        """
+        if self.mode.permits_order_tickets:
+            return
+        if risk is not ActionRisk.ORDER_CRITICAL and not self.elevated:
+            return
+        self.stats.calls_blocked += 1
+        self.stats.last_block_reason = f"{self.mode.value} forbids order-critical work"
+        self._bus.publish(
+            EventKind.GUARD,
+            f"BLOCKED ({self.mode.banner}) before {label}",
+            phase="executing",
+            data={"mode": self.mode.value, "risk": risk.value},
+        )
+        raise OrderTicketsForbidden(
+            f"{self.mode.banner}: refusing {label}. This mode observes a real "
+            f"account and never trades on it."
+        )
+
     def _assert_permits(self, risk: ActionRisk, label: str) -> None:
         verdict = self._verdict
         if verdict is None:
             self.stats.calls_blocked += 1
             raise DemoModeViolation(f"no demo assertion available before {label}")
+
+        if self.mode.permits_live_account:
+            # On this rung both accounts are acceptable to *look at*, so the
+            # verdict's job is to report which one we are on rather than to gate
+            # navigation. The gate that matters has already run:
+            # `_require_mode_allows` refuses every order-critical primitive
+            # before we get here, so nothing reachable from this point can
+            # compose an order. Blocking navigation as well would simply stop
+            # the bot reading the portfolio it was pointed at.
+            return
+
         permitted, why = verdict.permits(risk)
         if permitted:
             return
@@ -322,9 +374,16 @@ class GuardedInterface:
             phase="halted",
             data={"verdict": verdict.to_json(), "risk": risk.value},
         )
-        if verdict.state is DemoState.CONFIRMED_LIVE and self._halt_on_live:
-            # Not a retryable condition. Real money on screen means the bot's
-            # model of the world is wrong; stop everything and get a human.
+        if (
+            verdict.state is DemoState.CONFIRMED_LIVE
+            and self._halt_on_live
+            and not self.mode.permits_live_account
+        ):
+            # Not a retryable condition in simulator mode. Real money on screen
+            # means the bot's model of the world is wrong; stop and get a human.
+            # On LIVE_READ_ONLY a real account is expected, so seeing one is not
+            # an emergency -- and it is not a licence either: order-critical work
+            # is already refused by _require_mode_allows before reaching here.
             self._bus.halt(
                 actor="demo_guard",
                 reason=f"real-money environment detected before {label}",

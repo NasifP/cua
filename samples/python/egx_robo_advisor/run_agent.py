@@ -36,6 +36,7 @@ from egx_advisor.egx_cua_agent import AgentConfig, EgxCuaAgent  # noqa: E402
 from egx_advisor.execution.thndr import ThndrUiMap  # noqa: E402
 from egx_advisor.marketdata import JsonFileMarketData, YahooMarketData  # noqa: E402
 from egx_advisor.safety.demo_guard import DemoGuard  # noqa: E402
+from egx_advisor.safety.modes import ExecutionMode  # noqa: E402
 
 
 def parse_args() -> argparse.Namespace:
@@ -70,6 +71,12 @@ def parse_args() -> argparse.Namespace:
         choices=("macos", "linux", "windows"),
         default=None,
         help="operating system of the target (default: this machine's, for --target host)",
+    )
+    parser.add_argument(
+        "--mode",
+        choices=[m.value for m in ExecutionMode],
+        default=ExecutionMode.SIMULATOR_ONLY.value,
+        help="what the bot may do, and on whose account (see safety/modes.py)",
     )
     parser.add_argument("--bus", default=os.environ.get("EGX_BUS_PATH", "state/egx_bus.db"))
     parser.add_argument(
@@ -137,11 +144,13 @@ async def main() -> None:
         ui = replace(ui, calibration_complete=True)
         ui_source += " + --calibrated override"
 
+    mode = ExecutionMode.parse(args.mode)
     agent = EgxCuaAgent(
         config=AgentConfig(
             bus_path=args.bus,
             cycle_interval=args.interval,
             execute_orders=not args.dry_run,
+            mode=mode,
             ui=ui,
         ),
         computer=computer,
@@ -160,8 +169,15 @@ async def main() -> None:
             "!! --target host drives THIS desktop, not a sandbox. A misplaced click\n"
             "   can land on any window. Use a dedicated browser profile, or a VM.\n"
         )
+    if mode.permits_live_account:
+        print(
+            f"!! {mode.banner}\n"
+            "   The bot will look at a real account and publish real plans.\n"
+            "   It cannot open an order ticket: the guard refuses every\n"
+            "   order-critical primitive in this mode.\n"
+        )
     print(
-        f"agent starting (target={args.target}/{os_type}, bus={args.bus}, "
+        f"agent starting ({mode.banner}, target={args.target}/{os_type}, bus={args.bus}, "
         f"data={args.market_data}, "
         f"{'DRY RUN' if args.dry_run else 'EXECUTION ARMED'}, "
         f"{'calibrated' if ui.calibration_complete else 'UNCALIBRATED -- orders refused'})\n"
