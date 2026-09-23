@@ -25,6 +25,7 @@ frictions before any of it reaches an account.
 | `egx_cua_agent.py` | the loop and its five gates |
 | `execution/` | the only module that drives the Thndr UI |
 | `dashboard/` | mobile UI, live log, and the kill switch |
+| `assistant.py` | the chat explainer: reads the bus, holds no authority |
 | `backtest/` | friction measurement: fill model, replay, bootstrap intervals |
 
 ---
@@ -345,6 +346,47 @@ the app's own published labels rather than an inference from pixels.
 
 The bot starts **halted**. Arm it from the dashboard by typing the resume phrase.
 
+### The chat assistant
+
+```bash
+pip install -e '.[chat]'
+export GEMINI_API_KEY=...
+export EGX_CHAT_ENABLED=true
+export EGX_CHAT_MODEL=gemini/gemini-2.5-pro   # any litellm ID
+```
+
+A panel on the dashboard that explains what the bot did and why, in Arabic or
+English, reading the live bus: the plan and its rationales, what was suppressed
+and by which driver, the regime, recent activity. Good for *"why was AZG.CA not
+bought?"* and for the concepts behind the answer — drift bands, T+2, the
+turnover cap.
+
+**It is read-only, and that is structural rather than instructed.** It is given
+the bus and nothing else: no guard, no executor, no control surface. There is no
+tool it could call if asked to halt or trade, and a test asserts the module
+never imports one. The kill switch stays a button.
+
+It is **off by default**, because enabling it sends your holdings and their
+values to a model provider. That should be a decision, not an inherited setting.
+
+> **It will not give you trade recommendations, and that is deliberate.** The
+> strategy is rule-based on purpose — see
+> [`docs/NO_OVERFIT_CHARTER.md`](docs/NO_OVERFIT_CHARTER.md) — so the assistant
+> is told to explain what the rules do instead of improvising a view. A model
+> generating buy and sell calls from charts would undo the design rather than
+> extend it.
+
+Three places take a model, and they are not interchangeable:
+
+| Setting | Used for | Note |
+|---|---|---|
+| `EGX_CHAT_MODEL` | the assistant | any capable model |
+| `EGX_CLASSIFIER_MODEL` | news circuit breaker | composes with `max()`, so it can only escalate — a wrong answer cannot unblock trading |
+| `EGX_AGENT_MODEL` | driving the screen | needs **computer-use** support; not every model has it |
+
+Provider model IDs move faster than this README, so check your provider's
+current list rather than trusting the defaults.
+
 ### Getting it on your phone
 
 The app binds `127.0.0.1` and refuses a non-loopback bind unless you set
@@ -535,7 +577,7 @@ duty rate in particular has changed repeatedly and must be confirmed.
 ```bash
 cd samples/python/egx_robo_advisor
 pip install -e '.[test]'
-python -m pytest        # 238 tests, no network, broker or GPU needed
+python -m pytest        # 254 tests, no network, broker or GPU needed
 ```
 
 `ruff check --select E,F,B,I` is clean.

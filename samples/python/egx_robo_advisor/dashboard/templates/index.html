@@ -188,11 +188,26 @@ summary { cursor: pointer; font-size: 12px; font-weight: 600; color: var(--muted
 
 #resume-wrap { margin-top: 9px; }
 .resume-row { display: flex; gap: 8px; }
-#resume-input {
+#resume-input, #chat-input {
   flex: 1; min-width: 0; font-family: var(--mono); font-size: 12px;
   padding: 10px 11px; border: 1px solid var(--border); border-radius: 10px;
   background: var(--bg); color: var(--text);
 }
+#chat-input { font-family: var(--sans); font-size: 13px; }
+#chat-send {
+  flex-shrink: 0; padding: 10px 16px; font-size: 13px; font-weight: 650;
+  color: #fff; background: var(--accent); border: none; border-radius: 10px; cursor: pointer;
+}
+#chat-send:disabled { opacity: .5; cursor: default; }
+#chat-log { max-height: 320px; overflow-y: auto; overscroll-behavior: contain; }
+#chat-log:empty { display: none; }
+.msg { margin-top: 9px; font-size: 13px; line-height: 1.5; overflow-wrap: anywhere; }
+.msg .who {
+  font-size: 10px; font-weight: 650; letter-spacing: .06em; text-transform: uppercase;
+  color: var(--muted); display: block; margin-bottom: 2px;
+}
+.msg.you { padding-left: 9px; border-left: 2px solid var(--border); }
+.msg.bot { white-space: pre-wrap; }
 #resume-btn {
   flex-shrink: 0; padding: 10px 17px; font-size: 14px; font-weight: 650;
   color: #fff; background: #059669; border: none; border-radius: 10px; cursor: pointer;
@@ -275,6 +290,24 @@ summary { cursor: pointer; font-size: 12px; font-weight: 600; color: var(--muted
       <summary>Withheld orders</summary>
       <div id="suppressed"></div>
     </details>
+  </section>
+
+  <!-- Ask: explains the bot. Deliberately has no controls in it. -->
+  <section class="card hidden" id="chat-card">
+    <div class="head">
+      <h2>Ask about the bot</h2>
+      <span class="tiny" id="chat-model" style="margin:0"></span>
+    </div>
+    <div id="chat-log"></div>
+    <div class="resume-row" style="margin-top:10px">
+      <input id="chat-input" type="text" autocomplete="off"
+             placeholder="Why was AZG.CA not bought?">
+      <button id="chat-send">Ask</button>
+    </div>
+    <p class="tiny">
+      Explains decisions and teaches the rules. It cannot halt, arm or trade —
+      the kill switch is the red button below.
+    </p>
   </section>
 
   <section class="card">
@@ -508,6 +541,51 @@ $('resume-btn').addEventListener('click', async () => {
   }
 });
 
+// --- chat -------------------------------------------------------------------
+// History lives in the page, not on the server: the assistant is stateless, so
+// a reload starts a fresh conversation rather than resurrecting a stale one.
+const chatHistory = [];
+
+function addMessage(who, text) {
+  const el = document.createElement('div');
+  el.className = 'msg ' + (who === 'you' ? 'you' : 'bot');
+  el.innerHTML = `<span class="who">${who === 'you' ? 'You' : 'Assistant'}</span>${esc(text)}`;
+  $('chat-log').appendChild(el);
+  $('chat-log').scrollTop = $('chat-log').scrollHeight;
+  return el;
+}
+
+async function ask() {
+  const input = $('chat-input');
+  const question = input.value.trim();
+  if (!question) return;
+  input.value = '';
+  addMessage('you', question);
+  const pending = addMessage('bot', '…');
+  $('chat-send').disabled = true;
+  try {
+    const res = await fetch('/api/chat', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ question, history: chatHistory }),
+    });
+    const data = await res.json().catch(() => ({}));
+    const answer = data.answer || `(${res.status})`;
+    pending.innerHTML = `<span class="who">Assistant</span>${esc(answer)}`;
+    chatHistory.push({ role: 'user', content: question });
+    chatHistory.push({ role: 'assistant', content: answer });
+    while (chatHistory.length > 12) chatHistory.shift();
+  } catch (err) {
+    pending.innerHTML = `<span class="who">Assistant</span>${esc('Failed: ' + err.message)}`;
+  } finally {
+    $('chat-send').disabled = false;
+    input.focus();
+  }
+}
+
+$('chat-send').addEventListener('click', ask);
+$('chat-input').addEventListener('keydown', (e) => { if (e.key === 'Enter') ask(); });
+
 let cursor = 0;
 
 function paint(state) {
@@ -526,6 +604,10 @@ async function loadState() {
   const state = await response.json();
   renderControl(state.control);
   paint(state);
+  if (state.chat && state.chat.enabled) {
+    $('chat-card').classList.remove('hidden');
+    $('chat-model').textContent = state.chat.model || '';
+  }
   $('log').innerHTML = '';
   (state.events || []).forEach(appendEvent);
   cursor = state.latest_seq || 0;

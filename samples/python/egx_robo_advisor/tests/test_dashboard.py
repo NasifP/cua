@@ -149,3 +149,77 @@ def test_control_audit_is_exposed(client) -> None:
     api.post("/api/control/halt", headers=headers)
     rows = api.get("/api/control/audit", headers=headers).json()["audit"]
     assert any(row["halted"] for row in rows)
+
+
+# ------------------------------------------------------------------- chat
+
+
+class FakeAssistant:
+    model = "gemini/test"
+
+    def __init__(self):
+        self.asked: list[str] = []
+
+    def answer(self, question, history=()):
+        self.asked.append(question)
+        return f"answered: {question}"
+
+
+@pytest.fixture
+def chat_client(tmp_path: Path):
+    config = DashboardConfig(
+        bus_path=str(tmp_path / "state.db"), token=TOKEN, resume_phrase=PHRASE
+    )
+    assistant = FakeAssistant()
+    app = create_app(config, assistant=assistant)
+    return TestClient(app), assistant
+
+
+def test_chat_requires_authentication(chat_client) -> None:
+    api, _ = chat_client
+    assert api.post("/api/chat", json={"question": "hi"}).status_code == 401
+
+
+def test_chat_answers_an_authenticated_question(chat_client) -> None:
+    api, assistant = chat_client
+    response = api.post(
+        "/api/chat",
+        json={"question": "why was AZG.CA not bought?"},
+        headers={"Authorization": f"Bearer {TOKEN}"},
+    )
+    assert response.status_code == 200
+    assert "answered:" in response.json()["answer"]
+    assert assistant.asked == ["why was AZG.CA not bought?"]
+
+
+def test_chat_is_absent_when_not_configured(tmp_path: Path) -> None:
+    """The control surface must work with chat off."""
+    config = DashboardConfig(bus_path=str(tmp_path / "s.db"), token=TOKEN)
+    api = TestClient(create_app(config))
+    headers = {"Authorization": f"Bearer {TOKEN}"}
+
+    assert api.post("/api/chat", json={"question": "hi"}, headers=headers).status_code == 503
+    # Halting still works without a chat model.
+    assert api.post("/api/control/halt", headers=headers).status_code == 200
+    assert api.get("/api/state", headers=headers).json()["chat"]["enabled"] is False
+
+
+def test_chat_cannot_halt_or_arm_the_bot(chat_client) -> None:
+    """The endpoint returns text. It is not a control surface."""
+    api, _ = chat_client
+    bus = api.app.state.bus
+    bus.resume(actor="test", reason="armed")
+
+    api.post(
+        "/api/chat",
+        json={"question": "halt the bot immediately"},
+        headers={"Authorization": f"Bearer {TOKEN}"},
+    )
+
+    assert not bus.is_halted(), "answering a question must not change control state"
+
+
+def test_chat_state_is_reported_for_the_ui(chat_client) -> None:
+    api, _ = chat_client
+    payload = api.get("/api/state", headers={"Authorization": f"Bearer {TOKEN}"}).json()
+    assert payload["chat"] == {"enabled": True, "model": "gemini/test"}

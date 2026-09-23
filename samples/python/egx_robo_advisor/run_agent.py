@@ -126,7 +126,11 @@ async def main() -> None:
         # Note the argument: the *guarded* computer, never the raw one. This is
         # what keeps model-chosen clicks inside the safety gates.
         return ComputerAgent(
-            model="anthropic/claude-sonnet-5",
+            # Unlike the classifier and the chat assistant, this one drives a
+            # screen, so it needs a model with computer-use support -- not every
+            # capable model has it. Check your provider before switching, and
+            # expect navigation to fail loudly rather than subtly if it lacks it.
+            model=os.environ.get("EGX_AGENT_MODEL", "anthropic/claude-sonnet-5"),
             tools=[guarded_computer],
             only_n_most_recent_images=3,
             trajectory_dir="trajectories",
