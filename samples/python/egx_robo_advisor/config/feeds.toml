@@ -1,0 +1,28 @@
+# News sources for the regime filter (circuit breaker).
+#
+# Check each publisher's terms of use before enabling it. These are public
+# RSS/Atom endpoints; the fetcher does not log in, defeat paywalls, or scrape
+# pages disallowed by robots.txt. Prefer official EGX disclosure feeds as the
+# authoritative source for halts and suspensions.
+#
+# Verify each URL actually resolves. An authoritative-looking feed that 404s
+# quietly is a coverage hole in the circuit breaker, which is why the filter
+# treats stale feeds as a reason to stop buying.
+
+[[source]]
+name = "EGX disclosures"
+url = "https://www.egx.com.eg/en/rss/news.aspx"
+authoritative = true
+min_interval = 120
+
+[[source]]
+name = "Mubasher Egypt"
+url = "https://www.mubasher.info/rss/news?market=EGX"
+authoritative = false
+min_interval = 180
+
+[[source]]
+name = "Enterprise MEA"
+url = "https://enterprise.press/feed/"
+authoritative = false
+min_interval = 300
