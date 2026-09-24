@@ -57,7 +57,9 @@ logger = logging.getLogger(__name__)
 #: Default model. Provider model IDs move faster than this file will be updated,
 #: so treat it as a starting point and check your provider's current list. Any
 #: litellm-supported identifier works: "gemini/...", "anthropic/...", etc.
-DEFAULT_CHAT_MODEL = os.environ.get("EGX_CHAT_MODEL", "gemini/gemini-2.5-pro")
+def default_chat_model() -> str:
+    """EGX_CHAT_MODEL, read when an assistant is built rather than at import."""
+    return os.environ.get("EGX_CHAT_MODEL", "gemini/gemini-2.5-pro")
 
 #: Hard ceilings, so one question cannot drag the whole journal into a prompt.
 MAX_EVENTS = 40
@@ -101,7 +103,7 @@ class Assistant:
     """Answers questions about the bot from the bus. Holds no ability to act."""
 
     bus: StateBus
-    model: str = DEFAULT_CHAT_MODEL
+    model: str = field(default_factory=default_chat_model)
     #: Injected for testing; resolved to litellm on first use when None.
     completion: Optional[Callable[..., Any]] = None
     timeout: float = 60.0

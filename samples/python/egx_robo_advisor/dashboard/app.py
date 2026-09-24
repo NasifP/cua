@@ -41,13 +41,20 @@ from pathlib import Path
 from typing import Any, AsyncIterator, Optional
 
 from fastapi import Cookie, Depends, FastAPI, HTTPException, Request, Response
-from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
+from fastapi.responses import (
+    HTMLResponse,
+    JSONResponse,
+    RedirectResponse,
+    StreamingResponse,
+)
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from egx_advisor import login_link  # noqa: E402
 from egx_advisor.bus import StateBus  # noqa: E402
+from egx_advisor.paths import bus_path  # noqa: E402
 
 logger = logging.getLogger(__name__)
 
@@ -101,7 +108,9 @@ class DashboardConfig:
     @classmethod
     def from_env(cls) -> "DashboardConfig":
         return cls(
-            bus_path=os.environ.get("EGX_BUS_PATH", "state/egx_bus.db"),
+            # Anchored at the project root, so this watches the same bus as the
+            # agent whatever directory either process was started from.
+            bus_path=str(bus_path()),
             token=os.environ.get("EGX_DASHBOARD_TOKEN", ""),
             # Off unless asked for: enabling it sends your holdings to a model
             # provider, which should be a choice rather than a default.
@@ -166,21 +175,42 @@ def create_app(
 
     # ---------------------------------------------------------------- pages
 
+    def _with_session_cookie(request: Request, response: Response) -> Response:
+        response.set_cookie(
+            COOKIE_NAME,
+            config.session_value,
+            httponly=True,
+            samesite="strict",
+            secure=request.url.scheme == "https",
+            max_age=60 * 60 * 24 * 30,
+        )
+        return response
+
     @app.get("/", response_class=HTMLResponse)
     async def index(request: Request, auth: str = Depends(require_session)) -> Response:
+        if auth == "query":
+            # Trade the URL token for an HttpOnly cookie, and move off the URL
+            # that carries it, so it leaves the address bar at once.
+            return _with_session_cookie(request, RedirectResponse("/", status_code=303))
         response = templates.TemplateResponse(request, "index.html", {})
-        if auth in ("bearer", "query"):
-            # Trade the URL token for an HttpOnly cookie so it stops appearing in
-            # browser history, referrers, and the phone's address bar.
-            response.set_cookie(
-                COOKIE_NAME,
-                config.session_value,
-                httponly=True,
-                samesite="strict",
-                secure=request.url.scheme == "https",
-                max_age=60 * 60 * 24 * 30,
-            )
+        if auth == "bearer":
+            _with_session_cookie(request, response)
         return response
+
+    #: Signatures already spent, so a link from the history cannot sign in twice.
+    used_login_links: set[str] = set()
+
+    @app.get("/login")
+    async def login(request: Request, ts: str = "", sig: str = "") -> Response:
+        """Sign in from the launcher's short-lived link, without the password in it."""
+        if sig in used_login_links or not login_link.verify(config.token, ts, sig):
+            return HTMLResponse(
+                "<p>This sign-in link has expired or was already used. Start the "
+                "bot again with start.cmd, or open the dashboard with its password.</p>",
+                status_code=401,
+            )
+        used_login_links.add(sig)
+        return _with_session_cookie(request, RedirectResponse("/", status_code=303))
 
     @app.get("/healthz")
     async def healthz() -> JSONResponse:

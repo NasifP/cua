@@ -35,6 +35,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from egx_advisor.bus import StateBus  # noqa: E402
 from egx_advisor.cua_runtime import require_cua_python  # noqa: E402
 from egx_advisor.execution.thndr import ThndrUiMap  # noqa: E402
+from egx_advisor.paths import project_path, ui_map_path  # noqa: E402
 from egx_advisor.safety.demo_guard import (  # noqa: E402
     DEMO_TOKENS,
     LIVE_TOKENS,
@@ -57,8 +58,8 @@ async def main() -> int:
     parser = argparse.ArgumentParser(description="inspect the live UI, read-only")
     parser.add_argument("--target", choices=("host", "cloud"), default="host")
     parser.add_argument("--os", dest="os_type", choices=("macos", "linux", "windows"))
-    parser.add_argument("--ui", default="config/thndr.ui.toml")
-    parser.add_argument("--out", default="state/calibration",
+    parser.add_argument("--ui", default=str(ui_map_path()))
+    parser.add_argument("--out", default=str(project_path("state/calibration")),
                         help="where to save the screenshot and accessibility tree")
     parser.add_argument("--max-labels", type=int, default=120)
     args = parser.parse_args()

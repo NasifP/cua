@@ -15,9 +15,10 @@ tab signed into the real account. Prefer a dedicated browser profile at minimum,
 and a VM if you can. ``cloud`` drives an isolated container instead, which is
 slower to set up and much harder to damage anything with.
 
-The bot always starts HALTED. Arming is done from the dashboard, deliberately:
-starting an automated order-placer should be a conscious act with a typed
-confirmation, not a side effect of running a command.
+The bot always starts HALTED, on every start. Arming is done from the
+dashboard, with two presses, the second naming the account: starting an
+automated order-placer should be a conscious act, not a side effect of running
+a command. On Windows, start.cmd runs this together with the dashboard.
 """
 
 from __future__ import annotations
@@ -36,6 +37,7 @@ from egx_advisor.cua_runtime import require_cua_python  # noqa: E402
 from egx_advisor.egx_cua_agent import AgentConfig, EgxCuaAgent  # noqa: E402
 from egx_advisor.execution.thndr import ThndrUiMap  # noqa: E402
 from egx_advisor.marketdata import JsonFileMarketData, YahooMarketData  # noqa: E402
+from egx_advisor.paths import bus_path, ui_map_path  # noqa: E402
 from egx_advisor.safety.demo_guard import DemoGuard  # noqa: E402
 from egx_advisor.safety.modes import ExecutionMode  # noqa: E402
 
@@ -73,7 +75,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--ui",
-        default="config/thndr.ui.toml",
+        default=str(ui_map_path()),
         help="calibrated UI labels (see calibrate_ui.py). Its calibration_complete "
         "is what gates order submission.",
     )
@@ -100,10 +102,14 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--mode",
         choices=[m.value for m in ExecutionMode],
-        default=ExecutionMode.SIMULATOR_ONLY.value,
+        # EGX_MODE in .env sets this, so the launcher and a bare
+        # `python run_agent.py` agree on which account is being driven.
+        default=os.environ.get("EGX_MODE") or ExecutionMode.SIMULATOR_ONLY.value,
         help="what the bot may do, and on whose account (see safety/modes.py)",
     )
-    parser.add_argument("--bus", default=os.environ.get("EGX_BUS_PATH", "state/egx_bus.db"))
+    # Resolved after .env is loaded, against the project root, so the agent and
+    # the dashboard always share one bus whatever directory each started in.
+    parser.add_argument("--bus", default=None)
     parser.add_argument(
         "--market-data",
         default="yahoo",
@@ -115,8 +121,11 @@ def parse_args() -> argparse.Namespace:
 
 
 async def main() -> None:
-    args = parse_args()
+    # Before parse_args: argument defaults read the environment.
     env_note = _load_env_file()
+    args = parse_args()
+    if args.bus is None:
+        args.bus = str(bus_path())
     logging.basicConfig(
         level=logging.DEBUG if args.verbose else logging.INFO,
         format="%(asctime)s %(levelname)-7s %(name)s: %(message)s",
