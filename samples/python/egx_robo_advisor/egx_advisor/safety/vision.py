@@ -19,7 +19,7 @@ from __future__ import annotations
 import logging
 import re
 import unicodedata
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any, Mapping, Optional, Protocol, Sequence
 
 from .pngutil import RgbImage, decode_png
@@ -212,6 +212,49 @@ class TesseractTextProbe:
 # --------------------------------------------------------------------------- #
 # Accessibility tree
 # --------------------------------------------------------------------------- #
+
+
+def ocr_screen_lines(
+    screenshot: bytes, languages: str = "eng+ara", min_confidence: float = 55.0
+) -> tuple[list[str], Optional[str]]:
+    """Read every line of text on a screenshot, for calibration rather than gating.
+
+    Returns ``(lines, None)``, or ``([], reason)`` when OCR cannot run. The guard
+    reads fixed regions against marker lists; calibration needs the whole page,
+    because on Windows the accessibility tree cua returns holds window titles
+    only, so OCR is the one source that sees the page itself.
+    """
+    try:
+        import io
+
+        import pytesseract
+        from PIL import Image
+    except ImportError as exc:
+        return [], f"pytesseract/Pillow not installed ({exc})"
+    try:
+        image = Image.open(io.BytesIO(screenshot)).convert("RGB")
+        data = pytesseract.image_to_data(
+            image, lang=languages, output_type=pytesseract.Output.DICT
+        )
+    except Exception as exc:  # noqa: BLE001 - a missing binary or language pack
+        return [], f"OCR failed: {exc}"
+
+    texts = data.get("text", [])
+    columns = [data.get(k, []) for k in ("conf", "block_num", "par_num", "line_num")]
+    lines: dict[tuple[Any, Any, Any], list[str]] = {}
+    for i, raw in enumerate(texts):
+        word = (raw or "").strip()
+        if not word or any(i >= len(col) for col in columns):
+            continue
+        try:
+            confidence = float(columns[0][i])
+        except (TypeError, ValueError):
+            continue
+        if confidence < min_confidence:
+            continue
+        key = (columns[1][i], columns[2][i], columns[3][i])
+        lines.setdefault(key, []).append(word)
+    return [" ".join(words) for words in lines.values()], None
 
 
 class AccessibilityTextProbe:

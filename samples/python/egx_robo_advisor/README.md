@@ -518,6 +518,30 @@ matched — so `config/thndr.ui.toml` is filled from what the page really expose
 rather than guessed. **It never clicks**, so you can also point it at the real
 account as a test: the guard should say `CONFIRMED_LIVE`.
 
+**On Windows, install Tesseract first.** cua's Windows accessibility tree lists
+window titles only (`ThndrX - Google Chrome`, `Chrome Legacy Window`), never the
+page inside, so OCR is the only way either this tool or the demo guard sees
+Thndr X. Without it every label reads `MISS` and the guard can never confirm
+anything, so the bot will not act.
+
+```powershell
+winget install UB-Mannheim.TesseractOCR
+# as Administrator: add the Arabic language pack
+Invoke-WebRequest "https://github.com/tesseract-ocr/tessdata_fast/raw/main/ara.traineddata" `
+  -OutFile "C:\Program Files\Tesseract-OCR\tessdata\ara.traineddata"
+# put tesseract.exe on PATH, then open a new terminal
+$u = [Environment]::GetEnvironmentVariable("Path", "User")
+[Environment]::SetEnvironmentVariable("Path", "$u;C:\Program Files\Tesseract-OCR", "User")
+tesseract --list-langs   # must list ara and eng
+```
+
+The calibration tool screenshots whatever window is in front, which is the
+terminal you just typed in. Give yourself time to switch to Thndr X:
+
+```powershell
+Start-Sleep -Seconds 10; python calibrate_ui.py --target host --os windows
+```
+
 Two things about Thndr X specifically:
 
 - **It lists bare EGX tickers** (`ABUK`, `NIPH`, `PHAR`) while the price feed and
