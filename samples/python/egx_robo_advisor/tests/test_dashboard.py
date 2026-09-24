@@ -311,6 +311,36 @@ def test_direction_is_chosen_by_dominant_script_not_first_letter() -> None:
     )
 
 
+# ------------------------------------------------------------- arm button
+
+
+def test_the_control_stream_does_not_cancel_a_pending_confirm() -> None:
+    """The bot could not be armed from the page at all.
+
+    /api/events/stream re-sends control state every second, and renderControl
+    repainted the power button on every tick, which reset a pending CONFIRM to
+    START THE BOT within a second -- far inside its six-second window, and too
+    fast for a person to press. The repaint must be skipped while a confirm is
+    pending and the halted state has not changed.
+
+    Driven in headless Chromium before and after the fix: before, CONFIRM was
+    gone 2.5 s after the first press; after, it held, the second press armed,
+    and left alone it timed out at six seconds.
+    """
+    source = _template()
+    start = source.index("function renderControl(control)")
+    body = source[start:source.index("\n}\n", start)]
+    assert "confirmTimer" in body, (
+        "renderControl must know whether a confirm is pending before it "
+        "repaints the power button"
+    )
+    unguarded = [
+        line for line in body.splitlines()
+        if "paintPowerButton(" in line and not line.strip().startswith("if ")
+    ]
+    assert not unguarded, f"unconditional repaint in renderControl: {unguarded}"
+
+
 # ------------------------------------------------------------ .env loading
 
 

@@ -346,13 +346,21 @@ function setConn(ok, label) {
   $('conn-text').textContent = label;
 }
 
+// The halted state the power button was last painted for. The event stream
+// re-sends control state every second; repainting on each tick wiped a pending
+// confirm within a second, so a person could never press it in time and the
+// bot could not be armed at all. Repaint only when the state actually changes.
+let paintedHalted = null;
+
 function renderControl(control) {
   const halted = control.halted;
   $('control-state').textContent = halted ? 'HALTED' : 'ARMED';
   $('control-state').className = 'big ' + (halted ? 'bad' : 'ok');
   $('control-reason').textContent = (control.reason || '') + (control.actor ? ' — ' + control.actor : '');
   $('control-card').className = 'card ' + (halted ? 'state-bad' : 'state-ok');
-  paintPowerButton(halted);
+  const confirmPending = confirmTimer !== null;
+  if (halted !== paintedHalted || !confirmPending) paintPowerButton(halted);
+  paintedHalted = halted;
   markPhaseFreshness(halted);
 }
 
