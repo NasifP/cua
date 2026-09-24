@@ -35,6 +35,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import re
 from dataclasses import dataclass, field
 from typing import Any, Callable, Iterable, Mapping, Optional, Protocol, Sequence
@@ -243,12 +244,25 @@ Return a JSON array and nothing else.
 """
 
 
+#: Any litellm-supported identifier: "gemini/...", "anthropic/...", and so on.
+#: Provider model IDs move faster than this file will be updated, so check your
+#: provider's current list rather than trusting this default.
+DEFAULT_CLASSIFIER_MODEL = os.environ.get(
+    "EGX_CLASSIFIER_MODEL", "gemini/gemini-2.5-pro"
+)
+
+
 @dataclass
 class LlmClassifier:
-    """Recall booster. Composed with max(), so it can only ever raise severity."""
+    """Recall booster. Composed with max(), so it can only ever raise severity.
+
+    Whichever model backs this, the composition rule is what keeps it safe: it
+    can escalate a headline's severity but never reduce it, so a model that is
+    unavailable, slow, or simply wrong cannot unblock trading.
+    """
 
     name: str = "llm"
-    model: str = "anthropic/claude-sonnet-5"
+    model: str = DEFAULT_CLASSIFIER_MODEL
     completion: Optional[Callable[..., Any]] = None
     timeout: float = 30.0
     max_headlines: int = 40

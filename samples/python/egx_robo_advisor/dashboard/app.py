@@ -22,9 +22,9 @@ ends up reachable from the open internet.
 
 Asymmetric friction
 -------------------
-Halting is one tap and always available. Resuming requires a typed confirmation
-phrase. Stopping should be easier than starting, always, and the bot never
-resumes itself.
+Halting is one tap and always available. Arming takes a second press, on a
+button that names the account it is about to arm. Stopping should be easier than
+starting, always, and the bot never resumes itself.
 """
 
 from __future__ import annotations
@@ -55,11 +55,24 @@ COOKIE_NAME = "egx_session"
 MIN_TOKEN_LENGTH = 24
 
 
+class ChatRequest(BaseModel):
+    """A question and the conversation so far.
+
+    History is supplied by the client and is therefore untrusted: it is clamped
+    and only `user`/`assistant` roles survive, so a crafted payload cannot inject
+    a `system` turn and rewrite the assistant's instructions.
+    """
+
+    question: str = ""
+    history: list[dict] = []
+
+
 class ResumeRequest(BaseModel):
     """JSON body for resume.
 
-    JSON rather than a form: `Form(...)` drags in python-multipart for no benefit
-    when the only field is a short string.
+    `confirm` is the execution mode the page is currently showing, echoed back
+    to the server. It is sent by the page, not typed by a person: see
+    `api_resume` for what the echo is actually for.
     """
 
     confirm: str = ""
@@ -69,7 +82,10 @@ class ResumeRequest(BaseModel):
 class DashboardConfig:
     bus_path: str
     token: str
-    resume_phrase: str = "RESUME SIMULATOR TRADING"
+    #: Chat sends your holdings and their values to a model provider, so it is
+    #: opt-in. The dashboard's control surface works with it off.
+    chat_enabled: bool = False
+    chat_model: str = "gemini/gemini-2.5-pro"
 
     def __post_init__(self) -> None:
         if not self.token:
@@ -81,15 +97,17 @@ class DashboardConfig:
             raise RuntimeError(
                 f"EGX_DASHBOARD_TOKEN must be at least {MIN_TOKEN_LENGTH} characters"
             )
-        if not self.resume_phrase.strip():
-            raise RuntimeError("EGX_RESUME_PHRASE must not be empty")
 
     @classmethod
     def from_env(cls) -> "DashboardConfig":
         return cls(
             bus_path=os.environ.get("EGX_BUS_PATH", "state/egx_bus.db"),
             token=os.environ.get("EGX_DASHBOARD_TOKEN", ""),
-            resume_phrase=os.environ.get("EGX_RESUME_PHRASE", "RESUME SIMULATOR TRADING"),
+            # Off unless asked for: enabling it sends your holdings to a model
+            # provider, which should be a choice rather than a default.
+            chat_enabled=os.environ.get("EGX_CHAT_ENABLED", "").lower()
+            in ("1", "true", "yes"),
+            chat_model=os.environ.get("EGX_CHAT_MODEL", "gemini/gemini-2.5-pro"),
         )
 
     @property
@@ -104,15 +122,30 @@ class DashboardConfig:
         ).hexdigest()
 
 
-def create_app(config: Optional[DashboardConfig] = None) -> FastAPI:
-    """Build the dashboard. All state is captured here, not at module scope."""
+def create_app(
+    config: Optional[DashboardConfig] = None, *, assistant: Optional[Any] = None
+) -> FastAPI:
+    """Build the dashboard. All state is captured here, not at module scope.
+
+    `assistant` is injected rather than constructed here so the dashboard has no
+    opinion about which model answers, and so it can be left out entirely --
+    chat is optional, and the control surface must work without it.
+    """
     config = config or DashboardConfig.from_env()
     bus = StateBus(config.bus_path)
+    if assistant is None and config.chat_enabled:
+        from egx_advisor.assistant import Assistant
+
+        assistant = Assistant(bus=bus, model=config.chat_model)
     templates = Jinja2Templates(directory=str(Path(__file__).parent / "templates"))
 
     app = FastAPI(title="EGX Robo-Advisor", docs_url=None, redoc_url=None)
     app.state.config = config
     app.state.bus = bus
+    # The assistant reads the bus and returns text. It is given no other
+    # collaborator, so there is nothing it could act through.
+    app.state.assistant = assistant
+    app.state.chat_busy = False
 
     # ----------------------------------------------------------------- auth
 
@@ -135,9 +168,7 @@ def create_app(config: Optional[DashboardConfig] = None) -> FastAPI:
 
     @app.get("/", response_class=HTMLResponse)
     async def index(request: Request, auth: str = Depends(require_session)) -> Response:
-        response = templates.TemplateResponse(
-            request, "index.html", {"resume_phrase": config.resume_phrase}
-        )
+        response = templates.TemplateResponse(request, "index.html", {})
         if auth in ("bearer", "query"):
             # Trade the URL token for an HttpOnly cookie so it stops appearing in
             # browser history, referrers, and the phone's address bar.
@@ -176,6 +207,10 @@ def create_app(config: Optional[DashboardConfig] = None) -> FastAPI:
                 "portfolio": _payload(snapshots, "portfolio"),
                 "plan": _payload(snapshots, "plan"),
                 "demo_verdict": _payload(snapshots, "demo_verdict"),
+                "chat": {
+                    "enabled": app.state.assistant is not None,
+                    "model": getattr(app.state.assistant, "model", ""),
+                },
                 "events": [e.to_json() for e in events],
                 "latest_seq": events[-1].seq if events else 0,
             }
@@ -238,16 +273,43 @@ def create_app(config: Optional[DashboardConfig] = None) -> FastAPI:
         body: ResumeRequest,
         auth: str = Depends(require_session),
     ) -> JSONResponse:
-        """Arm the bot. Requires the exact phrase typed out.
+        """Arm the bot. Requires the page to echo back the mode it is showing.
 
-        Deliberately more effort than halting. Resuming puts an automated
-        order-placer back in front of an account, and that should never be a
-        mis-tap on a phone in a pocket.
+        Stopping is one tap; starting is not. Arming puts an automated
+        order-placer back in front of an account, and that must never be a
+        mis-tap on a phone in a pocket. The page supplies the second step (a
+        confirm press); this endpoint supplies the check that a second step
+        actually happened on a page that had *seen the current mode*.
+
+        It used to be a phrase a person typed. That phrase was a fixed string,
+        so on a dashboard watching a real account it still read "RESUME
+        SIMULATOR TRADING" -- asking the operator to affirm something false at
+        the exact moment the screen was trying to tell them otherwise. Echoing
+        the live mode cannot drift that way: the value being confirmed and the
+        value on the banner come from the same place.
+
+        Unknown mode fails closed. An absent `mode` snapshot means no agent has
+        reported in, and arming a bot we cannot describe is the case this
+        endpoint exists to refuse.
         """
-        if not hmac.compare_digest(body.confirm.strip(), config.resume_phrase):
+        published = await asyncio.to_thread(bus.get, "mode")
+        # get() returns {"ts": ..., "payload": ...}, not the payload itself.
+        current = str(((published or {}).get("payload") or {}).get("mode") or "")
+        if not current:
             raise HTTPException(
-                status_code=400,
-                detail=f"type the exact phrase to resume: {config.resume_phrase!r}",
+                status_code=409,
+                detail=(
+                    "no agent has reported its execution mode yet; start the agent "
+                    "before arming it"
+                ),
+            )
+        if not hmac.compare_digest(body.confirm.strip(), current):
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    f"this page is showing {body.confirm.strip()!r} but the agent "
+                    f"reports {current!r}; reload before arming"
+                ),
             )
         actor = _actor(request)
         state = await asyncio.to_thread(
@@ -255,6 +317,37 @@ def create_app(config: Optional[DashboardConfig] = None) -> FastAPI:
         )
         logger.warning("bot armed by %s", actor)
         return JSONResponse({"ok": True, "control": state.to_json()})
+
+    @app.post("/api/chat")
+    async def api_chat(
+        request: Request, body: ChatRequest, auth: str = Depends(require_session)
+    ) -> JSONResponse:
+        """Ask the assistant about the bot.
+
+        Explicitly not a control surface. The assistant is constructed with the
+        bus and nothing else, so there is no tool it could call even if asked;
+        halting and arming remain the endpoints above and the button on the page.
+        """
+        assistant = app.state.assistant
+        if assistant is None:
+            return JSONResponse(
+                {"answer": "Chat is disabled on this dashboard."}, status_code=503
+            )
+
+        # One in flight at a time. A chat panel should not be able to queue up
+        # model calls faster than they complete.
+        if app.state.chat_busy:
+            return JSONResponse(
+                {"answer": "Still answering the previous question."}, status_code=429
+            )
+        app.state.chat_busy = True
+        try:
+            answer = await asyncio.to_thread(
+                assistant.answer, body.question, body.history
+            )
+        finally:
+            app.state.chat_busy = False
+        return JSONResponse({"answer": answer})
 
     @app.get("/api/control/audit")
     async def api_audit(auth: str = Depends(require_session)) -> JSONResponse:
@@ -285,11 +378,35 @@ def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def _load_env_file() -> None:
+    """Read .env into the environment, if one is there.
+
+    Called from `main()`, never at import: this module promises no import-time
+    side effects, and a test importing it must not pick up a developer's .env.
+    Real environment variables win over the file.
+    """
+    env_path = Path(__file__).resolve().parent.parent / ".env"
+    if not env_path.exists():
+        return
+    try:
+        from dotenv import load_dotenv
+    except ImportError:
+        logger.warning(
+            "%s exists but python-dotenv is not installed, so it was ignored. "
+            "Install it, or set EGX_DASHBOARD_TOKEN in your shell.",
+            env_path,
+        )
+        return
+    load_dotenv(env_path, override=False)
+    logger.info("loaded %s", env_path)
+
+
 def main() -> None:
     """Entry point. Refuses a public bind unless explicitly acknowledged."""
     import uvicorn
 
     logging.basicConfig(level=logging.INFO)
+    _load_env_file()
     host = os.environ.get("EGX_DASHBOARD_HOST", "127.0.0.1")
     port = int(os.environ.get("EGX_DASHBOARD_PORT", "8787"))
     if host not in ("127.0.0.1", "::1", "localhost") and os.environ.get(

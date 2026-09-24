@@ -33,6 +33,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from egx_advisor.bus import StateBus  # noqa: E402
+from egx_advisor.cua_runtime import require_cua_python  # noqa: E402
 from egx_advisor.execution.thndr import ThndrUiMap  # noqa: E402
 from egx_advisor.safety.demo_guard import (  # noqa: E402
     DEMO_TOKENS,
@@ -41,7 +42,11 @@ from egx_advisor.safety.demo_guard import (  # noqa: E402
     DemoGuard,
 )
 from egx_advisor.safety.guarded_interface import GuardedInterface  # noqa: E402
-from egx_advisor.safety.vision import _walk_labels, contains_token  # noqa: E402
+from egx_advisor.safety.vision import (  # noqa: E402
+    _walk_labels,
+    contains_token,
+    ocr_screen_lines,
+)
 
 
 def rule(title: str) -> None:
@@ -58,6 +63,7 @@ async def main() -> int:
     parser.add_argument("--max-labels", type=int, default=120)
     args = parser.parse_args()
 
+    require_cua_python(Path(__file__).resolve().parent)
     try:
         from computer import Computer
     except ImportError as exc:
@@ -114,6 +120,19 @@ async def main() -> int:
             labels = [x.strip() for x in _walk_labels(tree) if x and x.strip()]
             print(f"  accessibility tree -> {out / 'tree.json'} ({len(labels)} labels)")
 
+        # On Windows the tree cua returns holds window titles, not page content,
+        # so without OCR every label below would read MISS on every screen.
+        ocr_lines, ocr_error = ocr_screen_lines(screenshot or b"")
+        if ocr_error:
+            print(f"  OCR unavailable: {ocr_error}")
+            print("  On Windows the accessibility tree lists window titles only, so")
+            print("  without OCR this tool cannot see the page. Install Tesseract with")
+            print("  the Arabic language pack (see the README), then run this again.")
+        else:
+            (out / "ocr.txt").write_text("\n".join(ocr_lines), encoding="utf-8")
+            print(f"  OCR -> {out / 'ocr.txt'} ({len(ocr_lines)} lines)")
+        labels = labels + ocr_lines
+
         rule("WHAT THE GUARD DECIDED")
         verdict = await guarded.assert_demo_now()
         print(f"  state             {verdict.state.value.upper()}")
@@ -133,7 +152,7 @@ async def main() -> int:
             print("     or check that the accessibility tree is reachable. With no")
             print("     probe the guard can never confirm, so the bot will never click.")
 
-        rule("MARKER MATCHES IN THE ACCESSIBILITY LABELS")
+        rule("MARKER MATCHES IN THE ACCESSIBILITY LABELS AND OCR TEXT")
         if labels:
             joined = " \n".join(labels)
             hit_demo = [t for t in DEMO_TOKENS if contains_token(joined, t)]
@@ -145,7 +164,7 @@ async def main() -> int:
                 print("  token this page uses to DEMO_TOKENS in safety/demo_guard.py.")
                 print("  Look for it among the candidate labels below.")
         else:
-            print("  no accessibility labels to match against")
+            print("  no accessibility labels or OCR text to match against")
 
         rule(f"CANDIDATE LABELS (first {args.max_labels})")
         print("  Copy the real strings into config/thndr.ui.toml.\n")

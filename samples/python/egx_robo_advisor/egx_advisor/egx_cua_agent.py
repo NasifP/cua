@@ -87,10 +87,15 @@ class AgentConfig:
     holidays: frozenset[date] = frozenset()
 
     def __post_init__(self) -> None:
-        # A mode that cannot trade must not be paired with execution enabled.
-        # Reconciling it here means the rest of the loop never has to ask which
-        # of the two settings wins.
-        if self.execute_orders and not self.mode.permits_orders:
+        # A mode that cannot touch an order at all must not be paired with
+        # execution enabled. Reconciling it here means the rest of the loop never
+        # has to ask which of the two settings wins.
+        #
+        # The test is `permits_order_tickets`, not `permits_orders`: on
+        # LIVE_PREPARE_ONLY the loop has real work to do -- filling tickets for
+        # the operator to submit -- so switching execution off there would make
+        # the rung inert.
+        if self.execute_orders and not self.mode.permits_order_tickets:
             self.execute_orders = False
 
 
@@ -114,8 +119,10 @@ class EgxCuaAgent:
         regime_filter: Optional[RegimeFilter] = None,
         demo_guard: Optional[DemoGuard] = None,
         bus: Optional[StateBus] = None,
+        vision_completion: Optional[Any] = None,
     ) -> None:
         self.config = config
+        self._vision_completion = vision_completion
         self._computer = computer
         self._market_data = market_data
         self._agent_factory = agent_factory
@@ -167,10 +174,17 @@ class EgxCuaAgent:
                 )
                 phase = AgentPhase.HALTED
             except (MarketDataError, PortfolioReadError) as exc:
-                # We do not understand our own inputs. Stop buying until we do.
-                self._regime = self.regime_filter.panic(str(exc))
-                self._publish_regime()
-                self.bus.publish(EventKind.ERROR, f"input failure: {exc}", phase="error")
+                # We do not understand our own inputs, so this cycle plans nothing
+                # and the next one reads them again. This used to latch a 24-hour
+                # panic, which nothing could clear short of a restart: one
+                # illegible screenshot or one missing Yahoo row stopped the bot
+                # for a day. A failed read already produces no plan, and a plan
+                # is the only way to an order, so retrying is the safe choice.
+                self.bus.publish(
+                    EventKind.ERROR,
+                    f"could not read inputs, will retry next cycle: {exc}",
+                    phase="error",
+                )
                 phase = AgentPhase.ERROR
             except ExecutionError as exc:
                 self.bus.publish(EventKind.ERROR, f"execution failed: {exc}", phase="error")
@@ -214,6 +228,15 @@ class EgxCuaAgent:
                 loop.add_signal_handler(sig, _handler, signame)
 
     def _announce_startup(self) -> None:
+        # Every start is a halted start. The control row outlives the process,
+        # and on Windows Ctrl-C does not run the signal handler that halts it,
+        # so an agent stopped while armed used to come back armed. Starting is
+        # the operator's act, every time.
+        if not self.bus.is_halted():
+            self.bus.halt(
+                actor="system",
+                reason="agent (re)started; arm from the dashboard to begin",
+            )
         state = self.bus.control_state()
         self.bus.publish(
             EventKind.LIFECYCLE,
@@ -347,15 +370,29 @@ class EgxCuaAgent:
                     phase="halted",
                 )
                 break
-            await executor.submit_order(order)
+            if self.config.mode.permits_orders:
+                await executor.submit_order(order)
+            else:
+                # The rung fills the ticket and stops. One per cycle is not a
+                # limit worth working around: a second ticket would overwrite the
+                # first on screen before anyone had looked at it.
+                await executor.prepare_order(order)
+                self._last_traded[order.symbol] = now.date()
+                executed += 1
+                break
             self._last_traded[order.symbol] = now.date()
             executed += 1
 
+        verb = "submitted" if self.config.mode.permits_orders else "prepared for you"
         self.bus.publish(
             EventKind.LIFECYCLE,
-            f"cycle complete: {executed} order(s) submitted",
+            f"cycle complete: {executed} order(s) {verb}",
             phase="executing",
-            data={"executed": executed, "planned": len(allowed)},
+            data={
+                "executed": executed,
+                "planned": len(allowed),
+                "submitted": self.config.mode.permits_orders,
+            },
         )
         return AgentPhase.EXECUTING
 
@@ -494,6 +531,9 @@ class EgxCuaAgent:
                 raw_interface, "get_accessibility_tree", None
             ),
             mode=self.config.mode,
+            # None when uncalibrated, which is what makes a prepare-rung guard
+            # refuse to start rather than run without the check it depends on.
+            submit_fence=self.config.ui.submit_fence(),
         )
 
         agent = None
@@ -506,6 +546,7 @@ class EgxCuaAgent:
             bus=self.bus,
             ui=self.config.ui,
             agent=agent,
+            vision_completion=self._vision_completion,
         )
         self.bus.publish(EventKind.LIFECYCLE, "guarded interface attached", phase="idle")
         return self._executor

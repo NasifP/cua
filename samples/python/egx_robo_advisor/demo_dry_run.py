@@ -22,13 +22,14 @@ import asyncio
 import json
 import sys
 import tempfile
-from datetime import datetime, timedelta, timezone
+from contextlib import ExitStack
+from datetime import datetime, timezone
 from decimal import Decimal as D
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from egx_advisor.bus import EventKind, StateBus
+from egx_advisor.bus import StateBus
 from egx_advisor.marketdata import JsonFileMarketData
 from egx_advisor.regime.filter import RegimeFilter
 from egx_advisor.regime.sentiment import KeywordClassifier
@@ -37,7 +38,7 @@ from egx_advisor.safety.guarded_interface import GuardedInterface, KillSwitchEng
 from egx_advisor.safety.pngutil import encode_png
 from egx_advisor.strategy.policy import AllocationPolicy
 from egx_advisor.strategy.rebalance import plan_rebalance
-from egx_advisor.types import Headline, Portfolio, Position, RiskState, Side
+from egx_advisor.types import Headline, Portfolio, Position, Side
 
 BLANK = encode_png(8, 8, bytes(8 * 8 * 3))
 POLICY = AllocationPolicy()
@@ -285,54 +286,59 @@ class ScriptedScreen:
 
 async def scenario_safety(tmp: Path) -> None:
     rule("7. SAFETY LAYER vs a scripted screen")
-    bus = StateBus(tmp / "demo_bus.db")
-    bus.resume(actor="demo", reason="armed for the dry run")
+    # Every bus is closed before main() removes the temporary directory:
+    # Windows will not delete a database file SQLite still holds open.
+    with ExitStack() as buses:
+        bus = buses.enter_context(StateBus(tmp / "demo_bus.db"))
+        bus.resume(actor="demo", reason="armed for the dry run")
 
-    screen = ScriptedScreen(["Simulator", "Portfolio", "Real Estate Sector"])
-    gi = GuardedInterface(
-        screen, bus=bus,
-        guard=DemoGuard(text_probes=(), colour_probe=None),
-        accessibility_tree_provider=lambda: screen.tree,
-    )
+        screen = ScriptedScreen(["Simulator", "Portfolio", "Real Estate Sector"])
+        gi = GuardedInterface(
+            screen, bus=bus,
+            guard=DemoGuard(text_probes=(), colour_probe=None),
+            accessibility_tree_provider=lambda: screen.tree,
+        )
 
-    print("  a) simulator badge present, plus a 'Real Estate' label (the trap)")
-    async with gi.order_critical("BUY COMI.CA x600"):
-        await gi.type_text("600")
-        await gi.left_click(412, 880)
-    print(f"     -> reached screen: {screen.calls}")
+        print("  a) simulator badge present, plus a 'Real Estate' label (the trap)")
+        async with gi.order_critical("BUY COMI.CA x600"):
+            await gi.type_text("600")
+            await gi.left_click(412, 880)
+        print(f"     -> reached screen: {screen.calls}")
 
-    print("\n  b) account flips to the REAL account mid-session")
-    screen.labels = ["Real Account", "Portfolio"]   # the switch the guard must catch
-    before = len(screen.calls)
-    try:
-        await gi.left_click(1, 1)
-        print("     -> !! FAILURE: a click landed on a live account")
-    except DemoModeViolation as exc:
-        print(f"     -> blocked: {str(exc)[:88]}")
-    print(f"     -> clicks that landed: {len(screen.calls) - before}")
-    print(f"     -> bot auto-halted: {bus.is_halted()} ({bus.control_state().reason[:46]})")
+        print("\n  b) account flips to the REAL account mid-session")
+        screen.labels = ["Real Account", "Portfolio"]   # the switch the guard must catch
+        before = len(screen.calls)
+        try:
+            await gi.left_click(1, 1)
+            print("     -> !! FAILURE: a click landed on a live account")
+        except DemoModeViolation as exc:
+            print(f"     -> blocked: {str(exc)[:88]}")
+        print(f"     -> clicks that landed: {len(screen.calls) - before}")
+        print(f"     -> bot auto-halted: {bus.is_halted()} ({bus.control_state().reason[:46]})")
 
-    print("\n  c) kill switch pressed from the dashboard process")
-    bus2 = StateBus(tmp / "demo_bus2.db")
-    bus2.resume(actor="demo", reason="armed")
-    screen2 = ScriptedScreen(["Simulator"])
-    gi2 = GuardedInterface(
-        screen2, bus=bus2,
-        guard=DemoGuard(text_probes=(), colour_probe=None),
-        accessibility_tree_provider=lambda: screen2.tree,
-    )
-    await gi2.left_click(5, 5)
-    StateBus(tmp / "demo_bus2.db").halt(actor="mobile:pola", reason="KILL SWITCH from phone")
-    try:
-        await gi2.left_click(6, 6)
-        print("     -> !! FAILURE: click got through after the kill switch")
-    except KillSwitchEngaged as exc:
-        print(f"     -> blocked: {exc}")
-    print(f"     -> clicks that landed: {screen2.calls}")
+        print("\n  c) kill switch pressed from the dashboard process")
+        bus2 = buses.enter_context(StateBus(tmp / "demo_bus2.db"))
+        bus2.resume(actor="demo", reason="armed")
+        screen2 = ScriptedScreen(["Simulator"])
+        gi2 = GuardedInterface(
+            screen2, bus=bus2,
+            guard=DemoGuard(text_probes=(), colour_probe=None),
+            accessibility_tree_provider=lambda: screen2.tree,
+        )
+        await gi2.left_click(5, 5)
+        # A second handle on the same file, standing in for the dashboard process.
+        dashboard = buses.enter_context(StateBus(tmp / "demo_bus2.db"))
+        dashboard.halt(actor="mobile:pola", reason="KILL SWITCH from phone")
+        try:
+            await gi2.left_click(6, 6)
+            print("     -> !! FAILURE: click got through after the kill switch")
+        except KillSwitchEngaged as exc:
+            print(f"     -> blocked: {exc}")
+        print(f"     -> clicks that landed: {screen2.calls}")
 
-    print("\n  d) what the dashboard would show (journal tail)")
-    for e in bus.recent_events(limit=9):
-        print(f"     {e.ts.strftime('%H:%M:%S')}  {e.kind:9} {e.message[:76]}")
+        print("\n  d) what the dashboard would show (journal tail)")
+        for e in bus.recent_events(limit=9):
+            print(f"     {e.ts.strftime('%H:%M:%S')}  {e.kind:9} {e.message[:76]}")
 
 
 async def main() -> None:

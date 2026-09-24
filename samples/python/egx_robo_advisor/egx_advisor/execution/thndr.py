@@ -30,21 +30,40 @@ whereas a hard-coded point silently clicks whatever moved into that spot.
 
 from __future__ import annotations
 
+import asyncio
+import base64
 import json
 import logging
+import os
 import re
 from dataclasses import dataclass, field, fields
 from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
-from typing import Any, Mapping, Optional, Sequence
+from typing import TYPE_CHECKING, Any, Callable, Mapping, Optional
 
 from ..bus import EventKind, StateBus
-from ..safety.demo_guard import ActionRisk, DemoModeViolation, DemoState
+from ..safety.demo_guard import DemoModeViolation, DemoState
 from ..safety.guarded_interface import GuardedInterface
 from ..types import Portfolio, Position, ProposedOrder, Side
 
+if TYPE_CHECKING:
+    from ..safety.guarded_interface import SubmitFence
+
 logger = logging.getLogger(__name__)
+
+
+def default_vision_model() -> str:
+    """The litellm model that reads the portfolio screenshot.
+
+    EGX_VISION_MODEL if set, else the chat model, else a Gemini default. Read
+    at call time rather than import time, so a value in `.env` takes effect.
+    """
+    return (
+        os.environ.get("EGX_VISION_MODEL")
+        or os.environ.get("EGX_CHAT_MODEL")
+        or "gemini/gemini-2.5-pro"
+    )
 
 
 class ExecutionError(RuntimeError):
@@ -143,6 +162,31 @@ class ThndrUiMap:
     #: live app. `ThndrExecutor` refuses to submit orders while this is False.
     calibration_complete: bool = False
 
+    #: Screen rectangle of the broker's submit button, as `[left, top, right,
+    #: bottom]`. Required by `LIVE_PREPARE_ONLY`, which fills a real ticket it
+    #: must never commit: the guard refuses any click inside it. Measure it from
+    #: a screenshot with the ticket open, and leave a margin -- a fence that is
+    #: exactly the button's bounding box fails on the first layout nudge.
+    submit_button_rect: tuple[int, int, int, int] | None = None
+
+    def submit_fence(self) -> "SubmitFence | None":
+        """The no-click rectangle, or None if it was never measured.
+
+        None is not "no fence needed": `LIVE_PREPARE_ONLY` refuses to start
+        without one. Returning None here is how that refusal gets triggered,
+        rather than quietly substituting a default rectangle that protects
+        nothing in particular.
+        """
+        from ..safety.guarded_interface import SubmitFence
+
+        if self.submit_button_rect is None:
+            return None
+        left, top, right, bottom = self.submit_button_rect
+        return SubmitFence(
+            left=left, top=top, right=right, bottom=bottom,
+            label=f"{self.confirm_button_label} button",
+        )
+
     def broker_symbol(self, canonical: str) -> str:
         """Canonical symbol -> what the broker's UI calls it."""
         override = self.symbol_overrides.get(canonical)
@@ -178,6 +222,14 @@ class ThndrUiMap:
             raise ValueError(
                 f"{path}: unknown key(s) {sorted(unknown)}; expected {sorted(known)}"
             )
+        rect = section.get("submit_button_rect")
+        if rect is not None:
+            if len(rect) != 4:
+                raise ValueError(
+                    f"{path}: submit_button_rect must be [left, top, right, bottom], "
+                    f"got {rect!r}"
+                )
+            section["submit_button_rect"] = tuple(int(v) for v in rect)
         return cls(**section)
 
 
@@ -199,6 +251,15 @@ class ThndrExecutor:
     agent: Optional[Any] = None
     #: Cap on model turns per UI task, so a confused agent cannot flail forever.
     max_turns_per_task: int = 12
+    #: litellm model that reads the portfolio off a screenshot. A plain vision
+    #: call, not a computer-use agent: reading must not come with the ability
+    #: to click. Read when the executor is built, so `.env` has been loaded.
+    vision_model: str = field(default_factory=lambda: default_vision_model())
+    #: Injected in tests; `litellm.completion` otherwise.
+    vision_completion: Optional[Callable[..., Any]] = None
+    #: Seconds before a vision call is abandoned, so a hung request cannot
+    #: freeze the loop.
+    vision_timeout: float = 90.0
 
     # --------------------------------------------------------------- demo gating
 
@@ -268,18 +329,36 @@ class ThndrExecutor:
     async def read_portfolio(self) -> Portfolio:
         """Read holdings off the portfolio screen.
 
-        Read-only throughout, so it runs before any assertion has been made --
-        which it has to, since we need the screen open to assert anything about it.
+        On a rung that may open tickets, the agent first navigates to the
+        holdings. On `LIVE_READ_ONLY` nothing is clicked -- the guard would
+        refuse it anyway -- so the screen is read exactly as the operator left
+        it, and the operator is told which tab to leave open.
         """
-        await self._agent_task(
-            f"Open the '{self.ui.portfolio_tab_label}' screen so that all holdings "
-            f"and the cash balance are visible. Scroll to the top. "
-            f"Do not tap Buy, Sell, or Confirm. Do not change the account."
-        )
+        if self.interface.mode.permits_order_tickets:
+            await self._agent_task(
+                f"Open the '{self.ui.portfolio_tab_label}' screen so that all holdings "
+                f"and the cash balance are visible. Scroll to the top. "
+                f"Do not tap Buy, Sell, or Confirm. Do not change the account."
+            )
+        else:
+            self.bus.publish(
+                EventKind.LIFECYCLE,
+                f"reading the screen as it is (no clicks on this rung); keep Thndr X "
+                f"in front with the '{self.ui.positions_tab_label}' tab open",
+                phase="reading_portfolio",
+            )
         screenshot = await self.interface.screenshot()
         payload = await self._extract_portfolio(screenshot)
+        cash_visible = payload.get("cash_egp") not in (None, "")
         verdict = await self.interface.assert_demo_now()
         portfolio = _parse_portfolio(payload, demo_confirmed=verdict.state.may_click)
+        if not cash_visible:
+            self.bus.publish(
+                EventKind.GUARD,
+                "cash balance not visible on screen: the plan treats cash as 0, so "
+                "it proposes no buys and the weights leave cash out",
+                phase="reading_portfolio",
+            )
 
         self.bus.put(
             "portfolio",
@@ -289,6 +368,7 @@ class ThndrExecutor:
                 "cash_egp": str(portfolio.cash_egp),
                 "unsettled_cash_egp": str(portfolio.unsettled_cash_egp),
                 "demo_confirmed": portfolio.demo_confirmed,
+                "cash_visible": cash_visible,
                 "positions": [
                     {
                         "symbol": p.symbol,
@@ -302,25 +382,90 @@ class ThndrExecutor:
         return portfolio
 
     async def _extract_portfolio(self, screenshot: bytes) -> Mapping[str, Any]:
-        """Turn the portfolio screen into structured data via the vision model."""
-        if self.agent is None:
-            raise PortfolioReadError(
-                "no ComputerAgent configured; cannot read the portfolio screen"
-            )
-        reply = await self._agent_task(
-            f"Read the '{self.ui.positions_tab_label}' table currently visible and "
-            "return ONLY a JSON object, no prose, of the form: "
-            '{"cash_egp": "0.00", "unsettled_cash_egp": "0.00", "positions": '
-            '[{"symbol": "COMI", "quantity": "100", "market_value": "8500.00"}]}. '
-            "Use the ticker exactly as the table shows it. quantity is the Qty "
-            "column and market_value is the Market Value column, in EGP. "
-            "If a number is not legible, omit that position rather than guessing.",
-            read_only=True,
+        """Turn the portfolio screen into structured data with a vision model.
+
+        The screenshot is attached to the request. The earlier version asked a
+        computer-use agent in text alone, so the model never saw the screen,
+        and the prompt's example values could come back as a well-formed,
+        entirely invented portfolio. The prompt now carries no numbers to echo.
+        """
+        if not screenshot:
+            raise PortfolioReadError("empty screenshot; nothing to read")
+        completion = self.vision_completion
+        if completion is None:
+            try:
+                from litellm import completion as litellm_completion
+            except ImportError as exc:
+                raise PortfolioReadError(
+                    f"litellm is not installed, so the screen cannot be read: {exc}"
+                ) from exc
+            completion = litellm_completion
+
+        prompt = (
+            f"This is a screenshot of the Thndr X trading app. Read the "
+            f"'{self.ui.positions_tab_label}' table and return ONLY a JSON object, "
+            "no prose, with exactly these keys:\n"
+            '  "positions": a list of objects with "symbol", "quantity", "market_value"\n'
+            '  "cash_egp": the available cash balance in EGP, or null\n'
+            '  "unsettled_cash_egp": unsettled cash in EGP, or null\n'
+            "Rules: use each ticker exactly as the table shows it. quantity is the Qty "
+            "column. market_value is the market value column in EGP; the header may be "
+            "abbreviated (Thndr X shows 'Mkt. Val...'). Never use AvgCost, Weight or "
+            "P/L for either. Copy digits as shown, without thousands separators. If "
+            "the cash balance is not on this screen, set cash_egp to null -- do not "
+            "guess and do not write zero. If a number is not legible, omit that position. "
+            "If this is not the Thndr X positions table, return {\"positions\": [], "
+            '"cash_egp": null, "unsettled_cash_egp": null, "not_positions_screen": true}.'
         )
+        encoded = base64.b64encode(screenshot).decode("ascii")
+        messages = [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": prompt},
+                    {
+                        "type": "image_url",
+                        "image_url": {"url": f"data:image/png;base64,{encoded}"},
+                    },
+                ],
+            }
+        ]
+        self.bus.publish(
+            EventKind.LIFECYCLE,
+            f"reading the positions table with {self.vision_model}",
+            phase="reading_portfolio",
+        )
+        try:
+            response = await asyncio.wait_for(
+                asyncio.to_thread(
+                    completion,
+                    model=self.vision_model,
+                    messages=messages,
+                    timeout=self.vision_timeout,
+                ),
+                timeout=self.vision_timeout + 10,
+            )
+            reply = response["choices"][0]["message"]["content"] or ""
+        except asyncio.TimeoutError as exc:
+            raise PortfolioReadError(
+                f"vision model did not answer within {self.vision_timeout:.0f}s"
+            ) from exc
+        except PortfolioReadError:
+            raise
+        except Exception as exc:  # noqa: BLE001 - provider errors come in many types
+            raise PortfolioReadError(f"vision model call failed: {exc}") from exc
+
         try:
             payload = json.loads(_extract_json_object(reply))
         except Exception as exc:  # noqa: BLE001
             raise PortfolioReadError(f"portfolio extraction did not parse: {exc}") from exc
+        if not isinstance(payload, dict):
+            raise PortfolioReadError("portfolio extraction was not a JSON object")
+        if payload.get("not_positions_screen"):
+            raise PortfolioReadError(
+                "the window in front is not the Thndr X positions table; bring Thndr X "
+                f"to the front with the '{self.ui.positions_tab_label}' tab open"
+            )
 
         # Translate the broker's tickers back to canonical ones before anything
         # sizes against them; the strategy and the price feed both speak ".CA".
@@ -332,6 +477,82 @@ class ThndrExecutor:
         return payload
 
     # ------------------------------------------------------------------- ordering
+
+    async def prepare_order(self, order: ProposedOrder) -> None:
+        """Fill an order ticket on screen and stop, leaving submit to the operator.
+
+        The counterpart to `submit_order` for an operator who has no simulator
+        account. The bot does the tedious, error-prone part -- finding the
+        symbol, choosing the side, setting LIMIT, typing a quantity and a price
+        that match the plan exactly -- and then takes its hands off. The last
+        action is a person looking at a filled ticket on their own screen and
+        pressing the broker's own button, or discarding it.
+
+        What stops this method becoming `submit_order` by accident is not this
+        docstring. Inside the block the guard refuses Enter, refuses a newline in
+        typed text, and refuses any click inside the calibrated fence around the
+        submit button, so the instruction below is a description of what the
+        proxy will permit rather than a request it is trusted to honour.
+
+        Nothing here reports success: a prepared ticket is not an order, and
+        publishing one as though it were would put a fill in the journal that
+        never happened.
+        """
+        if not self.interface.mode.permits_order_tickets:
+            raise ExecutionError(
+                f"{self.interface.mode.banner}: this mode observes an account and "
+                f"never opens a ticket on it. Refusing to prepare "
+                f"{order.side.value} {order.quantity} {order.symbol}."
+            )
+        if not self.ui.calibration_complete:
+            raise ExecutionError(
+                "ThndrUiMap.calibration_complete is False: calibrate the UI labels "
+                "against real screenshots before allowing the bot near a ticket"
+            )
+        if self.agent is None:
+            raise ExecutionError("no ComputerAgent configured; refusing to click blind")
+
+        side_label = (
+            self.ui.buy_button_label if order.side is Side.BUY else self.ui.sell_button_label
+        )
+        ui_symbol = self.ui.broker_symbol(order.symbol)
+        description = (
+            f"{order.side.value.upper()} {order.quantity} {order.symbol} "
+            f"limit {order.limit_price}"
+        )
+
+        async with self.interface.order_critical(f"PREPARE {description}"):
+            await self._agent_task(
+                f"Fill in a LIMIT {order.side.value.upper()} ticket and then STOP:\n"
+                f"  symbol: {ui_symbol}\n"
+                f"  quantity: {order.quantity}\n"
+                f"  limit price: {order.limit_price} EGP\n"
+                f"Steps: search for {ui_symbol}, open it, tap "
+                f"'{side_label}', set order type to LIMIT, enter the quantity in "
+                f"'{self.ui.quantity_field_label}' and the price in "
+                f"'{self.ui.limit_price_field_label}'.\n"
+                f"Then STOP. Do NOT tap '{self.ui.review_button_label}', do NOT tap "
+                f"'{self.ui.confirm_button_label}', and do NOT press Enter. A human "
+                f"submits this ticket, not you. Leave it filled and on screen.\n"
+                f"Hard rules: never change the account; never exceed the stated "
+                f"quantity; if the quantity or price field will not accept the exact "
+                f"value, abort and report instead of substituting a different value."
+            )
+
+        self.bus.publish(
+            EventKind.ORDER,
+            f"TICKET READY, NOT SUBMITTED - {description}",
+            phase="awaiting_operator",
+            data={
+                "symbol": order.symbol,
+                "side": order.side.value,
+                "quantity": str(order.quantity),
+                "limit_price": str(order.limit_price),
+                "rationale": order.rationale,
+                "submitted": False,
+                "awaiting": "operator presses submit on the broker's own screen",
+            },
+        )
 
     async def submit_order(self, order: ProposedOrder) -> None:
         """Place one order inside an order-critical block.

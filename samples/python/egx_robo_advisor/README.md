@@ -25,6 +25,7 @@ frictions before any of it reaches an account.
 | `egx_cua_agent.py` | the loop and its five gates |
 | `execution/` | the only module that drives the Thndr UI |
 | `dashboard/` | mobile UI, live log, and the kill switch |
+| `assistant.py` | the chat explainer: reads the bus, holds no authority |
 | `backtest/` | friction measurement: fill model, replay, bootstrap intervals |
 
 ---
@@ -285,9 +286,37 @@ must work when the agent loop is wedged mid-click — a button inside the stuck
 process cannot be pressed.
 
 **Asymmetric friction:** halting is one tap with no confirmation dialog — if
-someone is reaching for that button they want the bot stopped *now*. Resuming
-requires typing an exact phrase. Stopping should always be easier than starting,
-and the bot never resumes itself.
+someone is reaching for that button they want the bot stopped *now*. Arming takes
+two, and the second press is the one that names the account:
+
+```
+  press 1:  START THE BOT
+  press 2:  CONFIRM — REAL ACCOUNT - READ ONLY, NO ORDERS
+```
+
+That label is the agent's own mode banner, read from the bus. It used to be a
+fixed phrase the operator typed, which meant a dashboard watching a real account
+still asked them to type `RESUME SIMULATOR TRADING` — affirming something false
+at the exact moment the screen was trying to say otherwise. A friction that
+makes you assert the wrong thing stops being read and becomes a password typed
+from muscle memory, which is the one thing it must never become.
+
+The confirmation is also checked on the server, not just drawn on the page. The
+page echoes the mode it is displaying and `/api/control/resume` compares it to
+what the agent currently reports:
+
+```python
+def test_a_page_left_open_through_a_mode_change_cannot_arm(client):
+    bus.put("mode", {"mode": "live_read_only", ...})   # account switched
+    stale = api.post("/api/control/resume", json={"confirm": "simulator_only"})
+    assert stale.status_code == 409
+    assert bus.is_halted()                              # it did not arm
+```
+
+So a bare POST cannot arm, a dashboard left open through an account switch
+cannot arm on what it used to be looking at, and a bus with no agent in it
+cannot arm at all. Stopping should always be easier than starting, and the bot
+never resumes itself.
 
 All CSS is inline: no CDN, no external font. This page is the remote stop button
 for something that places orders, and a stylesheet fetched from a third party is
@@ -296,6 +325,10 @@ a dependency the kill switch does not need.
 ---
 
 ## Running it
+
+Needs Python 3.12 or 3.13 for the `agent` extra. cua does not support 3.14 yet,
+and pip refuses to install this sample there. The core package and the tests
+also run on 3.11.
 
 ```bash
 pip install -e '.[agent,ocr,dashboard,marketdata,test]'
@@ -345,6 +378,53 @@ the app's own published labels rather than an inference from pixels.
 
 The bot starts **halted**. Arm it from the dashboard by typing the resume phrase.
 
+### The chat assistant
+
+```bash
+pip install -e '.[chat]'
+export GEMINI_API_KEY=...
+export EGX_CHAT_ENABLED=true
+export EGX_CHAT_MODEL=gemini/gemini-2.5-pro   # any litellm ID
+```
+
+A panel on the dashboard that explains what the bot did and why, in Arabic or
+English, reading the live bus: the plan and its rationales, what was suppressed
+and by which driver, the regime, recent activity. Good for *"why was AZG.CA not
+bought?"* and for the concepts behind the answer — drift bands, T+2, the
+turnover cap.
+
+**It is read-only, and that is structural rather than instructed.** It is given
+the bus and nothing else: no guard, no executor, no control surface. There is no
+tool it could call if asked to halt or trade, and a test asserts the module
+never imports one. The kill switch stays a button.
+
+It is **off by default**, because enabling it sends your holdings and their
+values to a model provider. That should be a decision, not an inherited setting.
+
+> **It will not give you trade recommendations, and that is deliberate.** The
+> strategy is rule-based on purpose — see
+> [`docs/NO_OVERFIT_CHARTER.md`](docs/NO_OVERFIT_CHARTER.md) — so the assistant
+> is told to explain what the rules do instead of improvising a view. A model
+> generating buy and sell calls from charts would undo the design rather than
+> extend it.
+
+Three places take a model, and they are not interchangeable:
+
+| Setting | Used for | Note |
+|---|---|---|
+| `EGX_CHAT_MODEL` | the assistant | any capable model |
+| `EGX_CLASSIFIER_MODEL` | news circuit breaker | composes with `max()`, so it can only escalate — a wrong answer cannot unblock trading |
+| `EGX_AGENT_MODEL` | driving the screen | needs **computer-use** support; not every model has it |
+
+For a Gemini agent model, set `EGX_AGENT_MODEL` to a computer-use ID with no
+`gemini/` prefix (for example `gemini-2.5-computer-use-preview-10-2025`), set
+`GOOGLE_API_KEY`, and install `cua-agent[gemini]`. cua-agent drives Gemini
+through Google's SDK rather than litellm, and that SDK does not read
+`GEMINI_API_KEY`. The same AI Studio key works for both.
+
+Provider model IDs move faster than this README, so check your provider's
+current list rather than trusting the defaults.
+
 ### Getting it on your phone
 
 The app binds `127.0.0.1` and refuses a non-loopback bind unless you set
@@ -355,33 +435,88 @@ Cloudflare Tunnel or Tailscale — rather than exposing it directly.
 ### Execution modes
 
 ```bash
-python run_agent.py --mode simulator_only   # default
-python run_agent.py --mode live_read_only   # observe a REAL account
+python run_agent.py --mode simulator_only      # default
+python run_agent.py --mode live_read_only      # observe a REAL account
+python run_agent.py --mode live_prepare_only   # fill tickets, YOU press submit
 ```
 
-| Mode | A real account is | Order tickets |
-|---|---|---|
-| `simulator_only` | a hard stop — halts and latches the kill switch | permitted (on the simulator) |
-| `live_read_only` | observed | **refused at the guard** |
+| Mode | A real account is | Order tickets | Submits |
+|---|---|---|---|
+| `simulator_only` | a hard stop — halts and latches the kill switch | permitted | yes, on the simulator |
+| `live_read_only` | read from a screenshot; **no click, key or typing at all** | **refused at the guard** | no |
+| `live_prepare_only` | observed and filled in | permitted | **never — you do** |
 
 `live_read_only` exists to answer one question: *does the bot reason correctly
 about my actual portfolio?* It reads genuine holdings, prices them, and publishes
-a genuine plan to the dashboard — with nothing at stake, because **no path
-reachable in this mode can place an order.** That is enforced at the proxy, not
-requested of the caller: every order-critical primitive is refused, the order
-block declines to open, and `submit_order` raises before it looks at anything
-else. `tests/test_modes.py` comes at that claim from four directions.
+a genuine plan to the dashboard — with nothing at stake, because **the bot
+sends no input at all.** Every click, key, hotkey, drag, scroll and typed
+character is refused at the proxy; only screenshots and other reads pass. You
+leave Thndr X in front on the `Positions` tab, and the bot reads that screen as
+it is with a vision model (`EGX_VISION_MODEL`, else `EGX_CHAT_MODEL`). The
+order block declines to open, and `submit_order` raises before it looks at
+anything else.
+
+An earlier version refused only typing and let clicks and keys through as
+"navigation". That was not safe: a click opens a ticket, digit keys fill its
+quantity, Enter submits it, and a click on the Orders tab cancels one. On a real
+account the only input set that provably cannot reach an order is the empty one.
+`tests/test_modes.py` checks each primitive.
+
+Every start of `run_agent.py` is a halted start, whatever state the previous run
+left behind, and a read that fails is retried on the next cycle rather than
+halting the bot for a day.
 
 `AgentConfig` also forces `execute_orders` off in this mode, so two settings can
 never disagree about whether trading is possible.
 
-There is deliberately **no "fill the ticket but don't submit it" mode.** It is a
-reasonable thing to want, and it is absent rather than half-built: shipping an
-enum member nothing enforces is worse than not shipping it, because someone
-reads its name and believes in a protection that does not exist. Adding it needs
-its own enforcement — blocking Enter inside order blocks, since the bot types
-into quantity fields and Enter submits a form in most web UIs — and its own
-decision.
+#### `live_prepare_only`, for an operator with no simulator account
+
+Thndr does not give everyone a paper account. Without one, `simulator_only` can
+never pass its own assertion — the screen is always real money, so the guard
+always halts — and `live_read_only` never does anything but watch. This rung is
+for that situation: the bot fills the ticket and stops, and a person presses the
+broker's own submit button.
+
+That moves the gate. On the simulator rung the gate is *"this screen is provably
+a simulator"*, which is unavailable here. Three things carry the weight instead,
+and all three are enforced at the proxy rather than asked of the execution layer:
+
+1. **No submit key.** Enter, Return and keypad Enter are refused inside an order
+   block, as is any typed text containing a newline. `type_text("100\n")`
+   submits a form as surely as pressing the key, and is the easier one to write
+   by accident. Outside an order block Enter is ordinary and stays allowed — a
+   guard that cries wolf gets switched off.
+2. **No click inside the submit fence.** `submit_button_rect` in the UI config
+   is a rectangle around the broker's submit button, and the guard refuses any
+   click inside it. This is what turns *"the bot does not press Confirm"* from a
+   promise about the execution layer into a geometric invariant checked on every
+   pointer call. **The mode refuses to start without it** — a guard that
+   discovers the fence is missing while standing in front of a filled ticket has
+   picked the worst possible moment to find out.
+3. **Your own press**, on the broker's own screen. That is the only
+   authorisation this rung recognises, and nothing in the bot can supply it.
+
+```python
+async def test_an_agent_that_presses_enter_is_stopped_by_the_guard(tmp_path):
+    disobedient = ScriptedAgent(guarded, [("type_text", "100"), ("press_key", "enter")])
+    with pytest.raises(SubmitForbidden, match="Enter commits the ticket"):
+        await executor_for(guarded, bus).prepare_order(an_order())
+    assert ("press_key", "enter") not in raw.calls
+```
+
+The instruction sent to the model says *do not submit*. The guard is what makes
+that true: a model that ignores the prompt, or a flow that later forgets it,
+still cannot commit the ticket. `prepare_order` also journals `TICKET READY, NOT
+SUBMITTED` rather than reporting a fill, because a prepared ticket is not an
+order and a journal that implies one is worse than no journal.
+
+**What this rung does not claim.** A proxy over raw input primitives cannot
+prove no click ever lands on a submit button. It refuses the coordinates it was
+told about; it cannot know a redesign moved the button somewhere else. The fence
+narrows the risk and the journal makes it visible afterwards — it does not
+eliminate it. `submit_button_rect` is also the one piece of calibration a layout
+change invalidates *silently*, so re-measure it after any app update. Run this
+rung watching the screen, not from another room.
 
 ### Calibrating against Thndr X
 
@@ -394,6 +529,30 @@ screen, pulls the accessibility tree, runs every demo-mode probe, and prints wha
 matched — so `config/thndr.ui.toml` is filled from what the page really exposes
 rather than guessed. **It never clicks**, so you can also point it at the real
 account as a test: the guard should say `CONFIRMED_LIVE`.
+
+**On Windows, install Tesseract first.** cua's Windows accessibility tree lists
+window titles only (`ThndrX - Google Chrome`, `Chrome Legacy Window`), never the
+page inside, so OCR is the only way either this tool or the demo guard sees
+Thndr X. Without it every label reads `MISS` and the guard can never confirm
+anything, so the bot will not act.
+
+```powershell
+winget install UB-Mannheim.TesseractOCR
+# as Administrator: add the Arabic language pack
+Invoke-WebRequest "https://github.com/tesseract-ocr/tessdata_fast/raw/main/ara.traineddata" `
+  -OutFile "C:\Program Files\Tesseract-OCR\tessdata\ara.traineddata"
+# put tesseract.exe on PATH, then open a new terminal
+$u = [Environment]::GetEnvironmentVariable("Path", "User")
+[Environment]::SetEnvironmentVariable("Path", "$u;C:\Program Files\Tesseract-OCR", "User")
+tesseract --list-langs   # must list ara and eng
+```
+
+The calibration tool screenshots whatever window is in front, which is the
+terminal you just typed in. Give yourself time to switch to Thndr X:
+
+```powershell
+Start-Sleep -Seconds 10; python calibrate_ui.py --target host --os windows
+```
 
 Two things about Thndr X specifically:
 
@@ -535,7 +694,7 @@ duty rate in particular has changed repeatedly and must be confirmed.
 ```bash
 cd samples/python/egx_robo_advisor
 pip install -e '.[test]'
-python -m pytest        # 238 tests, no network, broker or GPU needed
+python -m pytest        # 275 tests, no network, broker or GPU needed
 ```
 
 `ruff check --select E,F,B,I` is clean.

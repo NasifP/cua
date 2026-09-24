@@ -1,10 +1,18 @@
+[build-system]
+# 77+ for the SPDX `license = "MIT"` string (PEP 639); older setuptools warn.
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
 [project]
 name = "egx-robo-advisor"
 version = "0.1.0"
 description = "Safety-gated EGX robo-advisor driving the Thndr simulator through Cua"
 readme = "README.md"
-requires-python = ">=3.11"
-license = { text = "MIT" }
+# Capped below 3.14 because cua-agent and cua-computer are. Without the cap, pip
+# on 3.14 silently falls back to cua-agent 0.5.x, which imports as `agent`
+# rather than `cua_agent`, and run_agent.py fails at import.
+requires-python = ">=3.11,<3.14"
+license = "MIT"
 dependencies = []
 
 [project.optional-dependencies]
@@ -12,9 +20,19 @@ dependencies = []
 # to load and run on a bare interpreter, or the bot cannot safely refuse to click.
 ocr = ["pytesseract>=0.3.10", "Pillow>=10.0.0"]
 marketdata = ["yfinance>=0.2.40"]
-agent = ["cua-computer>=0.1.0", "cua-agent>=0.4.0", "litellm>=1.0.0", "python-dotenv>=1.0.0"]
+# litellm routes to any provider: gemini/..., anthropic/..., etc.
+chat = ["litellm>=1.0.0"]
+# cua-agent 0.8.1 is the first release importable as `cua_agent`; cua-computer
+# 0.5 is the line it is built against, and needs Python 3.12+.
+agent = ["cua-computer>=0.5.0,<0.6.0", "cua-agent>=0.8.1", "litellm>=1.0.0", "python-dotenv>=1.0.0"]
 dashboard = ["fastapi>=0.110", "uvicorn[standard]>=0.29", "jinja2>=3.1", "pydantic>=2.0"]
 test = ["pytest>=8.0.0", "pytest-asyncio>=0.23"]
+
+[tool.setuptools.packages.find]
+# Name the package explicitly. Automatic discovery sees state/, config/ and
+# dashboard/ beside egx_advisor/ and refuses to build a flat layout. The
+# dashboard and the entry scripts run from the checkout, not from site-packages.
+include = ["egx_advisor*"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

@@ -32,11 +32,36 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+from egx_advisor.cua_runtime import require_cua_python  # noqa: E402
 from egx_advisor.egx_cua_agent import AgentConfig, EgxCuaAgent  # noqa: E402
 from egx_advisor.execution.thndr import ThndrUiMap  # noqa: E402
 from egx_advisor.marketdata import JsonFileMarketData, YahooMarketData  # noqa: E402
 from egx_advisor.safety.demo_guard import DemoGuard  # noqa: E402
 from egx_advisor.safety.modes import ExecutionMode  # noqa: E402
+
+
+def _load_env_file() -> str:
+    """Read .env into the environment, if one is there and python-dotenv is installed.
+
+    Called from `main()` rather than at import, because this module promises to
+    have no import-time side effects -- a test that imports it must not pick up
+    whatever happens to be in the developer's .env.
+
+    Real environment variables win over the file: an operator who exports a
+    token for one run should not have it silently overridden by a stale file.
+    """
+    env_path = Path(__file__).resolve().parent / ".env"
+    if not env_path.exists():
+        return ""
+    try:
+        from dotenv import load_dotenv
+    except ImportError:
+        return (
+            f"{env_path} exists but python-dotenv is not installed, so it was "
+            f"ignored. Install it, or set the variables in your shell."
+        )
+    load_dotenv(env_path, override=False)
+    return f"loaded {env_path}"
 
 
 def parse_args() -> argparse.Namespace:
@@ -91,11 +116,16 @@ def parse_args() -> argparse.Namespace:
 
 async def main() -> None:
     args = parse_args()
+    env_note = _load_env_file()
     logging.basicConfig(
         level=logging.DEBUG if args.verbose else logging.INFO,
         format="%(asctime)s %(levelname)-7s %(name)s: %(message)s",
     )
 
+    # Before the import: on an unsupported Python, pip installs an old cua that
+    # imports fine and then fails later on something that does not mention
+    # Python at all.
+    require_cua_python(Path(__file__).resolve().parent)
     try:
         from computer import Computer
         from cua_agent import ComputerAgent
@@ -126,7 +156,11 @@ async def main() -> None:
         # Note the argument: the *guarded* computer, never the raw one. This is
         # what keeps model-chosen clicks inside the safety gates.
         return ComputerAgent(
-            model="anthropic/claude-sonnet-5",
+            # Unlike the classifier and the chat assistant, this one drives a
+            # screen, so it needs a model with computer-use support -- not every
+            # capable model has it. Check your provider before switching, and
+            # expect navigation to fail loudly rather than subtly if it lacks it.
+            model=os.environ.get("EGX_AGENT_MODEL", "anthropic/claude-sonnet-5"),
             tools=[guarded_computer],
             only_n_most_recent_images=3,
             trajectory_dir="trajectories",
@@ -169,12 +203,23 @@ async def main() -> None:
             "!! --target host drives THIS desktop, not a sandbox. A misplaced click\n"
             "   can land on any window. Use a dedicated browser profile, or a VM.\n"
         )
-    if mode.permits_live_account:
+    if mode.permits_live_account and not mode.permits_order_tickets:
         print(
             f"!! {mode.banner}\n"
-            "   The bot will look at a real account and publish real plans.\n"
-            "   It cannot open an order ticket: the guard refuses every\n"
-            "   order-critical primitive in this mode.\n"
+            "   The bot reads a real account and publishes real plans. It sends no\n"
+            "   input at all: every click, key and typed character is refused at\n"
+            "   the guard. Leave Thndr X in front on the Positions tab.\n"
+        )
+    elif mode.permits_live_account:
+        print(
+            f"!! {mode.banner}\n"
+            "   The bot will FILL ORDER TICKETS on a real account and stop.\n"
+            "   It never submits: Enter and the submit button's own rectangle\n"
+            "   are refused at the guard. You press submit yourself, or you\n"
+            "   discard the ticket.\n"
+            "   Watch the screen while it runs. A fence stops the click the bot\n"
+            "   aims at the button it was told about; it cannot stop one aimed\n"
+            "   somewhere the layout moved to.\n"
         )
     print(
         f"agent starting ({mode.banner}, target={args.target}/{os_type}, bus={args.bus}, "
@@ -182,7 +227,8 @@ async def main() -> None:
         f"{'DRY RUN' if args.dry_run else 'EXECUTION ARMED'}, "
         f"{'calibrated' if ui.calibration_complete else 'UNCALIBRATED -- orders refused'})\n"
         f"UI labels from: {ui_source}\n"
-        f"the bot is HALTED until you arm it from the dashboard"
+        + (f"env: {env_note}\n" if env_note else "")
+        + "the bot is HALTED until you arm it from the dashboard"
     )
     await agent.run_forever()
 
