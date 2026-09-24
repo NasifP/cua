@@ -352,33 +352,7 @@ class ThndrExecutor:
         cash_visible = payload.get("cash_egp") not in (None, "")
         verdict = await self.interface.assert_demo_now()
         portfolio = _parse_portfolio(payload, demo_confirmed=verdict.state.may_click)
-        if not cash_visible:
-            self.bus.publish(
-                EventKind.GUARD,
-                "cash balance not visible on screen: the plan treats cash as 0, so "
-                "it proposes no buys and the weights leave cash out",
-                phase="reading_portfolio",
-            )
-
-        self.bus.put(
-            "portfolio",
-            {
-                "as_of": portfolio.as_of.isoformat(),
-                "total_value": str(portfolio.total_value),
-                "cash_egp": str(portfolio.cash_egp),
-                "unsettled_cash_egp": str(portfolio.unsettled_cash_egp),
-                "demo_confirmed": portfolio.demo_confirmed,
-                "cash_visible": cash_visible,
-                "positions": [
-                    {
-                        "symbol": p.symbol,
-                        "quantity": str(p.quantity),
-                        "market_value": str(p.market_value),
-                    }
-                    for p in portfolio.positions.values()
-                ],
-            },
-        )
+        publish_portfolio(self.bus, portfolio, cash_visible=cash_visible)
         return portfolio
 
     async def _extract_portfolio(self, screenshot: bytes) -> Mapping[str, Any]:
@@ -391,90 +365,23 @@ class ThndrExecutor:
         """
         if not screenshot:
             raise PortfolioReadError("empty screenshot; nothing to read")
-        completion = self.vision_completion
-        if completion is None:
-            try:
-                from litellm import completion as litellm_completion
-            except ImportError as exc:
-                raise PortfolioReadError(
-                    f"litellm is not installed, so the screen cannot be read: {exc}"
-                ) from exc
-            completion = litellm_completion
-
-        prompt = (
-            f"This is a screenshot of the Thndr X trading app. Read the "
-            f"'{self.ui.positions_tab_label}' table and return ONLY a JSON object, "
-            "no prose, with exactly these keys:\n"
-            '  "positions": a list of objects with "symbol", "quantity", "market_value"\n'
-            '  "cash_egp": the available cash balance in EGP, or null\n'
-            '  "unsettled_cash_egp": unsettled cash in EGP, or null\n'
-            "Rules: use each ticker exactly as the table shows it. quantity is the Qty "
-            "column. market_value is the market value column in EGP; the header may be "
-            "abbreviated (Thndr X shows 'Mkt. Val...'). Never use AvgCost, Weight or "
-            "P/L for either. Copy digits as shown, without thousands separators. If "
-            "the cash balance is not on this screen, set cash_egp to null -- do not "
-            "guess and do not write zero. If a number is not legible, omit that position. "
-            "If this is not the Thndr X positions table, return {\"positions\": [], "
-            '"cash_egp": null, "unsettled_cash_egp": null, "not_positions_screen": true}.'
-        )
         encoded = base64.b64encode(screenshot).decode("ascii")
-        messages = [
-            {
-                "role": "user",
-                "content": [
-                    {"type": "text", "text": prompt},
-                    {
-                        "type": "image_url",
-                        "image_url": {"url": f"data:image/png;base64,{encoded}"},
-                    },
-                ],
-            }
-        ]
-        self.bus.publish(
-            EventKind.LIFECYCLE,
-            f"reading the positions table with {self.vision_model}",
-            phase="reading_portfolio",
-        )
-        try:
-            response = await asyncio.wait_for(
-                asyncio.to_thread(
-                    completion,
-                    model=self.vision_model,
-                    messages=messages,
-                    timeout=self.vision_timeout,
-                ),
-                timeout=self.vision_timeout + 10,
-            )
-            reply = response["choices"][0]["message"]["content"] or ""
-        except asyncio.TimeoutError as exc:
-            raise PortfolioReadError(
-                f"vision model did not answer within {self.vision_timeout:.0f}s"
-            ) from exc
-        except PortfolioReadError:
-            raise
-        except Exception as exc:  # noqa: BLE001 - provider errors come in many types
-            raise PortfolioReadError(f"vision model call failed: {exc}") from exc
-
-        try:
-            payload = json.loads(_extract_json_object(reply))
-        except Exception as exc:  # noqa: BLE001
-            raise PortfolioReadError(f"portfolio extraction did not parse: {exc}") from exc
-        if not isinstance(payload, dict):
-            raise PortfolioReadError("portfolio extraction was not a JSON object")
-        if payload.get("not_positions_screen"):
-            raise PortfolioReadError(
+        return await extract_positions(
+            ui=self.ui,
+            bus=self.bus,
+            model=self.vision_model,
+            completion=self.vision_completion,
+            timeout=self.vision_timeout,
+            prompt=positions_prompt(self.ui, source="a screenshot"),
+            attachment={
+                "type": "image_url",
+                "image_url": {"url": f"data:image/png;base64,{encoded}"},
+            },
+            wrong_screen=(
                 "the window in front is not the Thndr X positions table; bring Thndr X "
                 f"to the front with the '{self.ui.positions_tab_label}' tab open"
-            )
-
-        # Translate the broker's tickers back to canonical ones before anything
-        # sizes against them; the strategy and the price feed both speak ".CA".
-        positions = payload.get("positions")
-        if isinstance(positions, list):
-            for entry in positions:
-                if isinstance(entry, dict) and entry.get("symbol"):
-                    entry["symbol"] = self.ui.canonical_symbol(str(entry["symbol"]))
-        return payload
+            ),
+        )
 
     # ------------------------------------------------------------------- ordering
 
@@ -685,6 +592,132 @@ class ThndrExecutor:
                 break
 
         return "\n".join(final_text)
+
+
+# --------------------------------------------------------------------------- #
+# Portfolio reading, shared by the screen and the in-app browser
+# --------------------------------------------------------------------------- #
+
+
+def positions_prompt(ui: "ThndrUiMap", *, source: str) -> str:
+    """The extraction prompt. It carries no numbers, so none can be echoed back."""
+    return (
+        f"This is {source} of the Thndr X trading app. Read the "
+        f"'{ui.positions_tab_label}' table and return ONLY a JSON object, "
+        "no prose, with exactly these keys:\n"
+        '  "positions": a list of objects with "symbol", "quantity", "market_value"\n'
+        '  "cash_egp": the available cash balance in EGP, or null\n'
+        '  "unsettled_cash_egp": unsettled cash in EGP, or null\n'
+        "Rules: use each ticker exactly as the table shows it. quantity is the Qty "
+        "column. market_value is the market value column in EGP; the header may be "
+        "abbreviated (Thndr X shows 'Mkt. Val...'). Never use AvgCost, Weight or "
+        "P/L for either. Copy digits as shown, without thousands separators. If "
+        "the cash balance is not shown, set cash_egp to null -- do not "
+        "guess and do not write zero. If a number is not legible, omit that position. "
+        "If this is not the Thndr X positions table, return {\"positions\": [], "
+        '"cash_egp": null, "unsettled_cash_egp": null, "not_positions_screen": true}.'
+    )
+
+
+async def extract_positions(
+    *,
+    ui: "ThndrUiMap",
+    bus: StateBus,
+    model: str,
+    completion: Optional[Callable[..., Any]],
+    timeout: float,
+    prompt: str,
+    attachment: Optional[Mapping[str, Any]] = None,
+    wrong_screen: str,
+) -> dict[str, Any]:
+    """One model call that turns the positions view into JSON, validated shape-first.
+
+    `attachment` is an extra content part -- the screenshot -- or None when the
+    prompt already carries the page text.
+    """
+    if completion is None:
+        try:
+            from litellm import completion as litellm_completion
+        except ImportError as exc:
+            raise PortfolioReadError(
+                f"litellm is not installed, so the portfolio cannot be read: {exc}"
+            ) from exc
+        completion = litellm_completion
+
+    content: list[Mapping[str, Any]] = [{"type": "text", "text": prompt}]
+    if attachment is not None:
+        content.append(attachment)
+    bus.publish(
+        EventKind.LIFECYCLE,
+        f"reading the positions table with {model}",
+        phase="reading_portfolio",
+    )
+    try:
+        response = await asyncio.wait_for(
+            asyncio.to_thread(
+                completion,
+                model=model,
+                messages=[{"role": "user", "content": content}],
+                timeout=timeout,
+            ),
+            timeout=timeout + 10,
+        )
+        reply = response["choices"][0]["message"]["content"] or ""
+    except asyncio.TimeoutError as exc:
+        raise PortfolioReadError(f"the model did not answer within {timeout:.0f}s") from exc
+    except Exception as exc:  # noqa: BLE001 - provider errors come in many types
+        raise PortfolioReadError(f"model call failed: {exc}") from exc
+
+    try:
+        payload = json.loads(_extract_json_object(reply))
+    except Exception as exc:  # noqa: BLE001
+        raise PortfolioReadError(f"portfolio extraction did not parse: {exc}") from exc
+    if not isinstance(payload, dict):
+        raise PortfolioReadError("portfolio extraction was not a JSON object")
+    if payload.get("not_positions_screen"):
+        raise PortfolioReadError(wrong_screen)
+
+    # Translate the broker's tickers back to canonical ones before anything
+    # sizes against them; the strategy and the price feed both speak ".CA".
+    positions = payload.get("positions")
+    if isinstance(positions, list):
+        for entry in positions:
+            if isinstance(entry, dict) and entry.get("symbol"):
+                entry["symbol"] = ui.canonical_symbol(str(entry["symbol"]))
+    return payload
+
+
+def publish_portfolio(
+    bus: StateBus, portfolio: Portfolio, *, cash_visible: bool, source: str = "screen"
+) -> None:
+    """Put a validated portfolio on the bus, warning when cash was not shown."""
+    if not cash_visible:
+        bus.publish(
+            EventKind.GUARD,
+            "cash balance not visible on screen: the plan treats cash as 0, so "
+            "it proposes no buys and the weights leave cash out",
+            phase="reading_portfolio",
+        )
+    bus.put(
+        "portfolio",
+        {
+            "as_of": portfolio.as_of.isoformat(),
+            "total_value": str(portfolio.total_value),
+            "cash_egp": str(portfolio.cash_egp),
+            "unsettled_cash_egp": str(portfolio.unsettled_cash_egp),
+            "demo_confirmed": portfolio.demo_confirmed,
+            "cash_visible": cash_visible,
+            "source": source,
+            "positions": [
+                {
+                    "symbol": p.symbol,
+                    "quantity": str(p.quantity),
+                    "market_value": str(p.market_value),
+                }
+                for p in portfolio.positions.values()
+            ],
+        },
+    )
 
 
 # --------------------------------------------------------------------------- #

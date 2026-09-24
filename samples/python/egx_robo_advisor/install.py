@@ -16,7 +16,7 @@ What it does, each step skipped when already done:
 4. finds Tesseract (the OCR program), offers to install it on Windows, and
    downloads the English and Arabic language data into state/tessdata, which
    needs no administrator rights
-5. offers a desktop shortcut to start.cmd
+5. offers a desktop shortcut to desktop.cmd, the app
 6. runs doctor.py and prints what, if anything, is left
 
 It never overwrites a value you already set in .env, and it never prints the
@@ -40,7 +40,7 @@ from typing import Callable
 ROOT = Path(__file__).resolve().parent
 TESSDATA = ROOT / "state" / "tessdata"
 TESSDATA_URL = "https://github.com/tesseract-ocr/tessdata_fast/raw/main/{lang}.traineddata"
-EXTRAS = "agent,ocr,dashboard,marketdata,chat"
+EXTRAS = "agent,ocr,dashboard,marketdata,chat,desktop"
 MIN_TOKEN_LENGTH = 24
 WINDOWS_TESSERACT = (
     r"C:\Program Files\Tesseract-OCR\tesseract.exe",
@@ -229,7 +229,7 @@ def create_shortcut(*, assume_yes: bool) -> None:
         return
     if not ask("  Put an 'EGX Robo-Advisor' shortcut on the desktop?", assume_yes=assume_yes):
         return
-    target = ROOT / "start.cmd"
+    target = ROOT / "desktop.cmd"
     script = (
         "$s = (New-Object -ComObject WScript.Shell).CreateShortcut("
         "[Environment]::GetFolderPath('Desktop') + '\\EGX Robo-Advisor.lnk'); "
@@ -269,9 +269,9 @@ def main() -> int:
     step("Checking everything (doctor.py)")
     result = subprocess.run([str(venv_python()), str(ROOT / "doctor.py")], cwd=ROOT)
     if result.returncode == 0:
-        print("\nDone. Start the bot with start.cmd (or the desktop shortcut).")
+        print("\nDone. Open the app with desktop.cmd (or the desktop shortcut).")
     else:
-        print("\nFix the FAIL lines above, then run doctor.py again or start.cmd.")
+        print("\nFix the FAIL lines above, then run doctor.py again or desktop.cmd.")
     return result.returncode
 
 
