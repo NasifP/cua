@@ -478,20 +478,29 @@ class GuardedInterface:
             )
 
     def _require_mode_allows(self, risk: ActionRisk, label: str) -> None:
-        """Refuse order-critical work in a mode that only observes.
+        """Refuse every input in a mode that only observes.
 
-        On `LIVE_READ_ONLY` the bot may look at a real account and navigate it,
-        but every primitive capable of composing an order -- typing into a
-        field, running a command, anything unrecognised -- is refused here, at
-        the proxy. The executor also declines to open an order block, but that
-        is the polite half; this is the half a future code path cannot forget.
+        On `LIVE_READ_ONLY` the bot looks at a real account and does nothing
+        else: screenshots and other reads pass, and every click, key, hotkey,
+        drag, scroll and typed character is refused here, at the proxy. The
+        operator puts the screen where it needs to be.
+
+        This used to refuse only order-critical calls and let "navigation"
+        through, on the theory that a click cannot compose an order. It can: a
+        click opens a ticket, digit keys fill its quantity, Enter submits it, and
+        a click on the Orders tab cancels one. A model denied `type_text` falls
+        back to exactly that, one key at a time. On a real account the only
+        input set that provably cannot reach an order is the empty one.
+
+        The executor also declines to open an order block, but that is the
+        polite half; this is the half a future code path cannot forget.
         """
         if self.mode.permits_order_tickets:
             return
-        if risk is not ActionRisk.ORDER_CRITICAL and not self.elevated:
+        if risk is ActionRisk.READ_ONLY:
             return
         self.stats.calls_blocked += 1
-        self.stats.last_block_reason = f"{self.mode.value} forbids order-critical work"
+        self.stats.last_block_reason = f"{self.mode.value} forbids all input"
         self._bus.publish(
             EventKind.GUARD,
             f"BLOCKED ({self.mode.banner}) before {label}",
@@ -499,8 +508,8 @@ class GuardedInterface:
             data={"mode": self.mode.value, "risk": risk.value},
         )
         raise OrderTicketsForbidden(
-            f"{self.mode.banner}: refusing {label}. This mode observes a real "
-            f"account and never trades on it."
+            f"{self.mode.banner}: refusing {label}. This mode only reads the "
+            f"screen; it never clicks, types or presses a key on a real account."
         )
 
     def _assert_permits(self, risk: ActionRisk, label: str) -> None:

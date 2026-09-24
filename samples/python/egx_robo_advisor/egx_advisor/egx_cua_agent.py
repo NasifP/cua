@@ -119,8 +119,10 @@ class EgxCuaAgent:
         regime_filter: Optional[RegimeFilter] = None,
         demo_guard: Optional[DemoGuard] = None,
         bus: Optional[StateBus] = None,
+        vision_completion: Optional[Any] = None,
     ) -> None:
         self.config = config
+        self._vision_completion = vision_completion
         self._computer = computer
         self._market_data = market_data
         self._agent_factory = agent_factory
@@ -172,10 +174,17 @@ class EgxCuaAgent:
                 )
                 phase = AgentPhase.HALTED
             except (MarketDataError, PortfolioReadError) as exc:
-                # We do not understand our own inputs. Stop buying until we do.
-                self._regime = self.regime_filter.panic(str(exc))
-                self._publish_regime()
-                self.bus.publish(EventKind.ERROR, f"input failure: {exc}", phase="error")
+                # We do not understand our own inputs, so this cycle plans nothing
+                # and the next one reads them again. This used to latch a 24-hour
+                # panic, which nothing could clear short of a restart: one
+                # illegible screenshot or one missing Yahoo row stopped the bot
+                # for a day. A failed read already produces no plan, and a plan
+                # is the only way to an order, so retrying is the safe choice.
+                self.bus.publish(
+                    EventKind.ERROR,
+                    f"could not read inputs, will retry next cycle: {exc}",
+                    phase="error",
+                )
                 phase = AgentPhase.ERROR
             except ExecutionError as exc:
                 self.bus.publish(EventKind.ERROR, f"execution failed: {exc}", phase="error")
@@ -219,6 +228,15 @@ class EgxCuaAgent:
                 loop.add_signal_handler(sig, _handler, signame)
 
     def _announce_startup(self) -> None:
+        # Every start is a halted start. The control row outlives the process,
+        # and on Windows Ctrl-C does not run the signal handler that halts it,
+        # so an agent stopped while armed used to come back armed. Starting is
+        # the operator's act, every time.
+        if not self.bus.is_halted():
+            self.bus.halt(
+                actor="system",
+                reason="agent (re)started; arm from the dashboard to begin",
+            )
         state = self.bus.control_state()
         self.bus.publish(
             EventKind.LIFECYCLE,
@@ -528,6 +546,7 @@ class EgxCuaAgent:
             bus=self.bus,
             ui=self.config.ui,
             agent=agent,
+            vision_completion=self._vision_completion,
         )
         self.bus.publish(EventKind.LIFECYCLE, "guarded interface attached", phase="idle")
         return self._executor

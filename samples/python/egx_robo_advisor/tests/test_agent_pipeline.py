@@ -99,6 +99,18 @@ class FakeAgent:
         yield {"output": [{"type": "message", "content": [{"text": reply}]}]}
 
 
+class FakeVision:
+    """Stands in for litellm.completion on the portfolio read."""
+
+    def __init__(self, reply: str = "") -> None:
+        self.reply = reply or PORTFOLIO_JSON
+        self.calls: list[dict] = []
+
+    def __call__(self, **kwargs):
+        self.calls.append(kwargs)
+        return {"choices": [{"message": {"content": self.reply}}]}
+
+
 class FakeNews:
     def __init__(self, titles=()) -> None:
         self.titles = list(titles)
@@ -156,6 +168,7 @@ def build(tmp_path: Path, *, titles=(), execute=True, calibrated=True):
         market_data=market,
         agent_factory=factory,
         news_fetcher=news,
+        vision_completion=FakeVision(),
         classifiers=(KeywordClassifier(),),
         regime_filter=RegimeFilter(),
         demo_guard=DemoGuard(text_probes=(), colour_probe=None),
@@ -398,3 +411,36 @@ async def test_portfolio_read_retags_broker_tickers(tmp_path: Path) -> None:
         entry["symbol"] = ui.canonical_symbol(entry["symbol"])
     portfolio = _parse_portfolio(payload, demo_confirmed=True)
     assert "PHAR.CA" in portfolio.positions
+
+
+
+# ---------------------------------------------------------------- lifecycle
+
+
+def test_every_start_is_a_halted_start(tmp_path: Path) -> None:
+    """The control row outlives the process, and Ctrl-C on Windows does not halt.
+
+    An agent stopped while armed used to come back armed on the next start.
+    """
+    agent, bus, *_ = build(tmp_path)
+    assert not bus.is_halted(), "precondition: left armed by a previous run"
+    agent._announce_startup()
+    assert bus.is_halted()
+
+
+async def test_an_unreadable_input_is_retried_not_latched(tmp_path: Path) -> None:
+    """One bad read used to latch ALL_HALTED for 24 hours, with nothing to clear it."""
+    from egx_advisor.execution.thndr import PortfolioReadError
+
+    agent, bus, *_ = build(tmp_path)
+
+    async def failing_cycle():
+        agent.request_stop()
+        raise PortfolioReadError("reply did not parse")
+
+    agent._run_cycle = failing_cycle
+    await agent.run_forever()
+
+    assert not agent.regime_filter.panicking
+    messages = [e.message for e in bus.recent_events(limit=20)]
+    assert any("will retry next cycle" in m for m in messages)

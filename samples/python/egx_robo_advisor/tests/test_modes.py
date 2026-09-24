@@ -56,6 +56,15 @@ class FakeInterface:
     async def press_key(self, key: str) -> None:
         self.calls.append(("press_key", key))
 
+    async def double_click(self, x: int, y: int) -> None:
+        self.calls.append(("double_click", x, y))
+
+    async def hotkey(self, *keys: str) -> None:
+        self.calls.append(("hotkey", *keys))
+
+    async def drag_to(self, x: int, y: int) -> None:
+        self.calls.append(("drag_to", x, y))
+
     async def brand_new_primitive(self, payload: str) -> None:
         self.calls.append(("brand_new_primitive", payload))
 
@@ -117,13 +126,39 @@ async def test_a_real_account_no_longer_halts_the_bot(tmp_path: Path) -> None:
     assert not bus.is_halted(), "a real account is expected on this rung"
 
 
-async def test_reading_and_navigating_a_real_account_is_permitted(tmp_path: Path) -> None:
-    """Otherwise the bot cannot reach the holdings it was pointed at."""
+async def test_reading_a_real_account_is_permitted(tmp_path: Path) -> None:
     _, raw, guarded = build(tmp_path, mode=ExecutionMode.LIVE_READ_ONLY)
     assert await guarded.get_screen_size() == {"width": 1920, "height": 1080}
-    await guarded.left_click(100, 200)
-    await guarded.scroll_down(3)
-    assert ("left_click", 100, 200) in raw.calls
+    assert await guarded.screenshot()
+
+
+@pytest.mark.parametrize(
+    "method, args",
+    [
+        ("left_click", (100, 200)),       # opens a ticket, or cancels from Orders
+        ("double_click", (100, 200)),
+        ("press_key", ("enter",)),        # submits a ticket
+        ("press_key", ("1",)),            # types a quantity one digit at a time
+        ("hotkey", ("ctrl", "v")),        # pastes one
+        ("drag_to", (10, 10)),
+        ("scroll_down", (3,)),
+        ("type_text", ("100",)),
+    ],
+)
+async def test_the_read_only_rung_refuses_every_input(
+    tmp_path: Path, method: str, args: tuple
+) -> None:
+    """A click can open a ticket, digit keys fill it, and Enter submits it.
+
+    This rung once refused only typing and let clicks and keys through as
+    "navigation". A model denied type_text falls back to pressing keys one at a
+    time, which composes an order as surely. On a real account the only input
+    set that provably cannot reach an order is the empty one.
+    """
+    _, raw, guarded = build(tmp_path, mode=ExecutionMode.LIVE_READ_ONLY)
+    with pytest.raises(OrderTicketsForbidden, match="never clicks"):
+        await getattr(guarded, method)(*args)
+    assert raw.calls == []
 
 
 async def test_simulator_mode_still_halts_on_a_real_account(tmp_path: Path) -> None:
@@ -140,7 +175,7 @@ async def test_simulator_mode_still_halts_on_a_real_account(tmp_path: Path) -> N
 
 async def test_order_critical_primitives_are_refused(tmp_path: Path) -> None:
     _, raw, guarded = build(tmp_path, mode=ExecutionMode.LIVE_READ_ONLY)
-    with pytest.raises(OrderTicketsForbidden, match="never trades"):
+    with pytest.raises(OrderTicketsForbidden, match="only reads the screen"):
         await guarded.type_text("100")
     assert raw.calls == []
 
@@ -194,11 +229,10 @@ async def test_the_executor_declines_to_submit(tmp_path: Path) -> None:
 
 async def test_the_kill_switch_still_stops_observation(tmp_path: Path) -> None:
     bus, raw, guarded = build(tmp_path, mode=ExecutionMode.LIVE_READ_ONLY)
-    await guarded.left_click(1, 1)
+    await guarded.get_screen_size()
     bus.halt(actor="mobile", reason="KILL SWITCH")
     with pytest.raises(KillSwitchEngaged):
-        await guarded.left_click(2, 2)
-    assert len(raw.calls) == 1
+        await guarded.get_screen_size()
 
 
 # ------------------------------------------------------------ agent wiring
@@ -471,3 +505,84 @@ async def test_an_agent_that_presses_enter_is_stopped_by_the_guard(tmp_path: Pat
     assert not any("TICKET READY" in m for m in messages), (
         "a blocked submit must not still report a ready ticket"
     )
+
+
+# ------------------------------------------------- reading on the read-only rung
+
+
+class RecordingVision:
+    def __init__(self, reply: str) -> None:
+        self.reply = reply
+        self.calls: list[dict] = []
+
+    def __call__(self, **kwargs):
+        self.calls.append(kwargs)
+        return {"choices": [{"message": {"content": self.reply}}]}
+
+
+def read_only_executor(tmp_path: Path, reply: str):
+    from egx_advisor.execution.thndr import ThndrExecutor, ThndrUiMap
+
+    bus, raw, guarded = build(tmp_path, mode=ExecutionMode.LIVE_READ_ONLY)
+    vision = RecordingVision(reply)
+    executor = ThndrExecutor(
+        interface=guarded, bus=bus, ui=ThndrUiMap(), agent=object(),
+        vision_completion=vision, vision_model="test/vision",
+    )
+    return executor, bus, raw, vision
+
+
+async def test_the_portfolio_is_read_without_a_single_input(tmp_path: Path) -> None:
+    """Read-only reads the screen as the operator left it, and looks at it.
+
+    The earlier read asked a computer-use agent, in text alone, to navigate and
+    then to transcribe a screen it was never shown.
+    """
+    executor, _, raw, vision = read_only_executor(
+        tmp_path,
+        '{"positions": [{"symbol": "PHAR", "quantity": "902", "market_value": "99310.20"}],'
+        ' "cash_egp": "5000", "unsettled_cash_egp": null}',
+    )
+    portfolio = await executor.read_portfolio()
+
+    assert raw.calls == [], "nothing may be clicked, typed or pressed on this rung"
+    content = vision.calls[0]["messages"][0]["content"]
+    assert any(part.get("type") == "image_url" for part in content), (
+        "the model must be shown the screenshot it is asked to read"
+    )
+    assert vision.calls[0]["model"] == "test/vision"
+    assert "PHAR.CA" in portfolio.positions
+
+
+async def test_the_read_prompt_offers_no_numbers_to_echo(tmp_path: Path) -> None:
+    """An example portfolio in the prompt can come back as the answer."""
+    executor, _, _, vision = read_only_executor(
+        tmp_path, '{"positions": [], "cash_egp": "1", "unsettled_cash_egp": null}'
+    )
+    await executor.read_portfolio()
+    prompt = vision.calls[0]["messages"][0]["content"][0]["text"]
+    assert not any(ch.isdigit() for ch in prompt), prompt
+
+
+async def test_cash_that_is_not_on_screen_is_reported_not_assumed(tmp_path: Path) -> None:
+    executor, bus, _, _ = read_only_executor(
+        tmp_path,
+        '{"positions": [{"symbol": "NIPH", "quantity": "276", "market_value": "88734"}],'
+        ' "cash_egp": null, "unsettled_cash_egp": null}',
+    )
+    await executor.read_portfolio()
+    messages = [e.message for e in bus.recent_events(limit=20)]
+    assert any("cash balance not visible" in m for m in messages)
+    assert bus.get("portfolio")["payload"]["cash_visible"] is False
+
+
+async def test_the_wrong_window_in_front_is_named(tmp_path: Path) -> None:
+    from egx_advisor.execution.thndr import PortfolioReadError
+
+    executor, _, _, _ = read_only_executor(
+        tmp_path,
+        '{"positions": [], "cash_egp": null, "unsettled_cash_egp": null,'
+        ' "not_positions_screen": true}',
+    )
+    with pytest.raises(PortfolioReadError, match="bring Thndr X to the front"):
+        await executor.read_portfolio()

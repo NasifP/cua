@@ -443,16 +443,28 @@ python run_agent.py --mode live_prepare_only   # fill tickets, YOU press submit
 | Mode | A real account is | Order tickets | Submits |
 |---|---|---|---|
 | `simulator_only` | a hard stop — halts and latches the kill switch | permitted | yes, on the simulator |
-| `live_read_only` | observed | **refused at the guard** | no |
+| `live_read_only` | read from a screenshot; **no click, key or typing at all** | **refused at the guard** | no |
 | `live_prepare_only` | observed and filled in | permitted | **never — you do** |
 
 `live_read_only` exists to answer one question: *does the bot reason correctly
 about my actual portfolio?* It reads genuine holdings, prices them, and publishes
-a genuine plan to the dashboard — with nothing at stake, because **no path
-reachable in this mode can place an order.** That is enforced at the proxy, not
-requested of the caller: every order-critical primitive is refused, the order
-block declines to open, and `submit_order` raises before it looks at anything
-else. `tests/test_modes.py` comes at that claim from four directions.
+a genuine plan to the dashboard — with nothing at stake, because **the bot
+sends no input at all.** Every click, key, hotkey, drag, scroll and typed
+character is refused at the proxy; only screenshots and other reads pass. You
+leave Thndr X in front on the `Positions` tab, and the bot reads that screen as
+it is with a vision model (`EGX_VISION_MODEL`, else `EGX_CHAT_MODEL`). The
+order block declines to open, and `submit_order` raises before it looks at
+anything else.
+
+An earlier version refused only typing and let clicks and keys through as
+"navigation". That was not safe: a click opens a ticket, digit keys fill its
+quantity, Enter submits it, and a click on the Orders tab cancels one. On a real
+account the only input set that provably cannot reach an order is the empty one.
+`tests/test_modes.py` checks each primitive.
+
+Every start of `run_agent.py` is a halted start, whatever state the previous run
+left behind, and a read that fails is retried on the next cycle rather than
+halting the bot for a day.
 
 `AgentConfig` also forces `execute_orders` off in this mode, so two settings can
 never disagree about whether trading is possible.

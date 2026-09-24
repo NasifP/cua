@@ -12,12 +12,13 @@ Three modes, all fully enforced
     assertion is a hard stop.
 
 ``LIVE_READ_ONLY``
-    A real account may be *observed*. The bot may look and navigate, so it can
-    read genuine holdings, price them, and publish a genuine plan to the
-    dashboard. It may not open an order ticket, and every order-critical
-    primitive is refused at the proxy. Nothing on this rung can place an order,
-    which is the point: it answers "is the bot reasoning correctly about my real
-    portfolio?" without putting anything at stake.
+    A real account may be *observed*, and only observed. The bot reads the
+    screen the operator left in front, prices the holdings, and publishes a
+    genuine plan to the dashboard. Every input -- click, key, hotkey, drag,
+    scroll, typed text -- is refused at the proxy, because a click can open a
+    ticket and keys can fill and submit one. Nothing on this rung can place an
+    order, which is the point: it answers "is the bot reasoning correctly about
+    my real portfolio?" without putting anything at stake.
 
 ``LIVE_PREPARE_ONLY``
     A real account, and the bot may fill an order ticket -- symbol, side,

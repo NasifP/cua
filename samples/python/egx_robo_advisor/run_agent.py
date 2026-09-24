@@ -206,9 +206,9 @@ async def main() -> None:
     if mode.permits_live_account and not mode.permits_order_tickets:
         print(
             f"!! {mode.banner}\n"
-            "   The bot will look at a real account and publish real plans.\n"
-            "   It cannot open an order ticket: the guard refuses every\n"
-            "   order-critical primitive in this mode.\n"
+            "   The bot reads a real account and publishes real plans. It sends no\n"
+            "   input at all: every click, key and typed character is refused at\n"
+            "   the guard. Leave Thndr X in front on the Positions tab.\n"
         )
     elif mode.permits_live_account:
         print(
