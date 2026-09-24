@@ -309,3 +309,47 @@ def test_direction_is_chosen_by_dominant_script_not_first_letter() -> None:
     assert 'class="body" dir="${direction(text)}"' in source, (
         "the computed direction must reach the markup"
     )
+
+
+# ------------------------------------------------------------ .env loading
+
+
+def test_env_example_documents_only_variables_the_code_reads() -> None:
+    """`.env.example` is instructions. Instructions that lie are worse than none.
+
+    It told operators to copy it to `.env` while nothing in the package ever
+    called `load_dotenv`, so the first command they ran failed on a token they
+    had just set.
+    """
+    # Provider credentials are read by litellm inside its own client, never by
+    # this package, so grepping our sources for them proves nothing. Everything
+    # else in the file is a knob this code is supposed to honour.
+    READ_BY_LITELLM = {"ANTHROPIC_API_KEY", "GEMINI_API_KEY", "OPENAI_API_KEY"}
+
+    root = Path(__file__).resolve().parent.parent
+    example = (root / ".env.example").read_text(encoding="utf-8")
+    declared = {
+        line.split("=", 1)[0].strip()
+        for line in example.splitlines()
+        if "=" in line and not line.lstrip().startswith("#")
+    } - READ_BY_LITELLM
+    sources = "\n".join(
+        p.read_text(encoding="utf-8")
+        for p in [root / "run_agent.py", root / "dashboard" / "app.py"]
+        + list((root / "egx_advisor").rglob("*.py"))
+    )
+    for name in declared:
+        assert name in sources, (
+            f"{name} is in .env.example but no code reads it; remove it or wire it"
+        )
+
+
+def test_both_entry_points_load_dotenv_and_never_at_import() -> None:
+    """Loading at import would make a test inherit the developer's real .env."""
+    root = Path(__file__).resolve().parent.parent
+    for path in (root / "run_agent.py", root / "dashboard" / "app.py"):
+        source = path.read_text(encoding="utf-8")
+        assert "_load_env_file" in source, f"{path.name} never reads .env"
+        assert "load_dotenv" not in source.split("def _load_env_file")[0], (
+            f"{path.name} must not load .env at import scope"
+        )

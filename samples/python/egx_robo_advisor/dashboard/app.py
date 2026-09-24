@@ -378,11 +378,35 @@ def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def _load_env_file() -> None:
+    """Read .env into the environment, if one is there.
+
+    Called from `main()`, never at import: this module promises no import-time
+    side effects, and a test importing it must not pick up a developer's .env.
+    Real environment variables win over the file.
+    """
+    env_path = Path(__file__).resolve().parent.parent / ".env"
+    if not env_path.exists():
+        return
+    try:
+        from dotenv import load_dotenv
+    except ImportError:
+        logger.warning(
+            "%s exists but python-dotenv is not installed, so it was ignored. "
+            "Install it, or set EGX_DASHBOARD_TOKEN in your shell.",
+            env_path,
+        )
+        return
+    load_dotenv(env_path, override=False)
+    logger.info("loaded %s", env_path)
+
+
 def main() -> None:
     """Entry point. Refuses a public bind unless explicitly acknowledged."""
     import uvicorn
 
     logging.basicConfig(level=logging.INFO)
+    _load_env_file()
     host = os.environ.get("EGX_DASHBOARD_HOST", "127.0.0.1")
     port = int(os.environ.get("EGX_DASHBOARD_PORT", "8787"))
     if host not in ("127.0.0.1", "::1", "localhost") and os.environ.get(

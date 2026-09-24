@@ -39,6 +39,30 @@ from egx_advisor.safety.demo_guard import DemoGuard  # noqa: E402
 from egx_advisor.safety.modes import ExecutionMode  # noqa: E402
 
 
+def _load_env_file() -> str:
+    """Read .env into the environment, if one is there and python-dotenv is installed.
+
+    Called from `main()` rather than at import, because this module promises to
+    have no import-time side effects -- a test that imports it must not pick up
+    whatever happens to be in the developer's .env.
+
+    Real environment variables win over the file: an operator who exports a
+    token for one run should not have it silently overridden by a stale file.
+    """
+    env_path = Path(__file__).resolve().parent / ".env"
+    if not env_path.exists():
+        return ""
+    try:
+        from dotenv import load_dotenv
+    except ImportError:
+        return (
+            f"{env_path} exists but python-dotenv is not installed, so it was "
+            f"ignored. Install it, or set the variables in your shell."
+        )
+    load_dotenv(env_path, override=False)
+    return f"loaded {env_path}"
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="EGX robo-advisor agent")
     parser.add_argument(
@@ -91,6 +115,7 @@ def parse_args() -> argparse.Namespace:
 
 async def main() -> None:
     args = parse_args()
+    env_note = _load_env_file()
     logging.basicConfig(
         level=logging.DEBUG if args.verbose else logging.INFO,
         format="%(asctime)s %(levelname)-7s %(name)s: %(message)s",
@@ -197,7 +222,8 @@ async def main() -> None:
         f"{'DRY RUN' if args.dry_run else 'EXECUTION ARMED'}, "
         f"{'calibrated' if ui.calibration_complete else 'UNCALIBRATED -- orders refused'})\n"
         f"UI labels from: {ui_source}\n"
-        f"the bot is HALTED until you arm it from the dashboard"
+        + (f"env: {env_note}\n" if env_note else "")
+        + "the bot is HALTED until you arm it from the dashboard"
     )
     await agent.run_forever()
 

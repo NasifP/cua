@@ -648,7 +648,7 @@ duty rate in particular has changed repeatedly and must be confirmed.
 ```bash
 cd samples/python/egx_robo_advisor
 pip install -e '.[test]'
-python -m pytest        # 273 tests, no network, broker or GPU needed
+python -m pytest        # 275 tests, no network, broker or GPU needed
 ```
 
 `ruff check --select E,F,B,I` is clean.
