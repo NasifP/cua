@@ -17,9 +17,12 @@ click.
 from __future__ import annotations
 
 import logging
+import os
 import re
+import shutil
 import unicodedata
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Mapping, Optional, Protocol, Sequence
 
 from .pngutil import RgbImage, decode_png
@@ -148,6 +151,45 @@ class TextProbe(Protocol):
 # --------------------------------------------------------------------------- #
 
 
+#: Where Windows installers put Tesseract. It is rarely on PATH afterwards, and
+#: asking an operator to edit PATH was one of the steps most likely to go wrong.
+_WINDOWS_TESSERACT = (
+    r"C:\Program Files\Tesseract-OCR\tesseract.exe",
+    r"C:\Program Files (x86)\Tesseract-OCR\tesseract.exe",
+    os.path.expandvars(r"%LOCALAPPDATA%\Programs\Tesseract-OCR\tesseract.exe"),
+)
+
+#: Language packs setup.ps1 downloads into the project, so the Arabic pack needs
+#: no administrator rights to install.
+PROJECT_TESSDATA = Path(__file__).resolve().parents[2] / "state" / "tessdata"
+
+
+def configure_tesseract() -> Optional[str]:
+    """Point pytesseract at a Tesseract binary and language data. Idempotent.
+
+    Returns the binary in use, or None when none can be found. Order: the
+    EGX_TESSERACT_CMD override, then PATH, then the Windows install locations.
+    Language data comes from state/tessdata when it holds both packs and
+    TESSDATA_PREFIX is not already set.
+    """
+    try:
+        import pytesseract
+    except ImportError:
+        return None
+    cmd = os.environ.get("EGX_TESSERACT_CMD") or shutil.which("tesseract")
+    if not cmd:
+        cmd = next((c for c in _WINDOWS_TESSERACT if c and os.path.isfile(c)), None)
+    if cmd:
+        pytesseract.pytesseract.tesseract_cmd = cmd
+    if (
+        "TESSDATA_PREFIX" not in os.environ
+        and (PROJECT_TESSDATA / "ara.traineddata").is_file()
+        and (PROJECT_TESSDATA / "eng.traineddata").is_file()
+    ):
+        os.environ["TESSDATA_PREFIX"] = str(PROJECT_TESSDATA)
+    return cmd
+
+
 class TesseractTextProbe:
     """Local OCR. Preferred: no network, no per-call cost, fast enough to re-run
     immediately before every order-critical click."""
@@ -165,6 +207,7 @@ class TesseractTextProbe:
                 import pytesseract  # noqa: F401
                 from PIL import Image  # noqa: F401
 
+                configure_tesseract()
                 self._ready = True
             except Exception as exc:  # noqa: BLE001
                 logger.info("tesseract probe unavailable: %s", exc)
@@ -231,6 +274,7 @@ def ocr_screen_lines(
         from PIL import Image
     except ImportError as exc:
         return [], f"pytesseract/Pillow not installed ({exc})"
+    configure_tesseract()
     try:
         image = Image.open(io.BytesIO(screenshot)).convert("RGB")
         data = pytesseract.image_to_data(

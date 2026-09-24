@@ -247,9 +247,13 @@ Return a JSON array and nothing else.
 #: Any litellm-supported identifier: "gemini/...", "anthropic/...", and so on.
 #: Provider model IDs move faster than this file will be updated, so check your
 #: provider's current list rather than trusting this default.
-DEFAULT_CLASSIFIER_MODEL = os.environ.get(
-    "EGX_CLASSIFIER_MODEL", "gemini/gemini-2.5-pro"
-)
+def default_classifier_model() -> str:
+    """EGX_CLASSIFIER_MODEL, read when a classifier is built.
+
+    It used to be read at import, which happens before run_agent.py loads
+    `.env`, so a model set there was silently ignored.
+    """
+    return os.environ.get("EGX_CLASSIFIER_MODEL", "gemini/gemini-2.5-pro")
 
 
 @dataclass
@@ -262,7 +266,7 @@ class LlmClassifier:
     """
 
     name: str = "llm"
-    model: str = DEFAULT_CLASSIFIER_MODEL
+    model: str = field(default_factory=default_classifier_model)
     completion: Optional[Callable[..., Any]] = None
     timeout: float = 30.0
     max_headlines: int = 40

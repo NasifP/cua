@@ -73,8 +73,18 @@ class AgentConfig:
     bus_path: str = "state/egx_bus.db"
     #: Seconds between cycles while the market is open.
     cycle_interval: float = 300.0
-    #: Seconds between polls while halted or out of session.
+    #: Seconds between polls while out of session or after an error.
     idle_interval: float = 120.0
+    #: Seconds between checks for an arm while halted. Short, so the bot
+    #: answers the dashboard's START within a couple of seconds rather than
+    #: after a full idle interval.
+    halted_poll_interval: float = 1.0
+    #: Seconds between being armed and the first screenshot, so the operator
+    #: can bring the broker window to the front -- pressing START leaves the
+    #: dashboard there. Halting during the countdown cancels it.
+    arm_delay: float = field(
+        default_factory=lambda: float(os.environ.get("EGX_ARM_DELAY", "10"))
+    )
     #: Cap on orders per cycle, independent of the turnover cap. A second
     #: backstop against a runaway plan, expressed in clicks rather than EGP.
     max_orders_per_cycle: int = 4
@@ -146,6 +156,8 @@ class EgxCuaAgent:
         self._last_traded: dict[str, date] = {}
         self._last_feed_ok: Optional[datetime] = None
         self._stop = asyncio.Event()
+        #: False until the post-arm countdown has run; reset whenever halted.
+        self._screen_ready = False
 
     # ------------------------------------------------------------------ lifecycle
 
@@ -196,6 +208,13 @@ class EgxCuaAgent:
                 self.bus.publish(EventKind.ERROR, f"unhandled: {exc!r}", phase="error")
                 phase = AgentPhase.ERROR
 
+            # Wake early only when the bus itself is halted. A cycle can also end
+            # in HALTED with the bus armed (a guard refusal that did not latch
+            # the kill switch); waking early there would re-run the cycle at
+            # once, in a tight loop against the screen and the model.
+            if phase is AgentPhase.HALTED and self.bus.is_halted():
+                await self._wait_for_arm(self.config.idle_interval)
+                continue
             delay = (
                 self.config.cycle_interval
                 if phase in (AgentPhase.EXECUTING, AgentPhase.PLANNING)
@@ -203,6 +222,47 @@ class EgxCuaAgent:
             )
             with suppress(asyncio.TimeoutError):
                 await asyncio.wait_for(self._stop.wait(), timeout=delay)
+
+    async def _wait_for_arm(self, timeout: float) -> None:
+        """Sleep while halted, waking as soon as the bus is armed or stop is set."""
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + timeout
+        while not self._stop.is_set() and loop.time() < deadline:
+            if not self.bus.is_halted():
+                return
+            with suppress(asyncio.TimeoutError):
+                await asyncio.wait_for(
+                    self._stop.wait(), timeout=self.config.halted_poll_interval
+                )
+
+    async def _arm_countdown(self) -> bool:
+        """Give the operator time to bring the broker to the front. False if halted."""
+        delay = max(0.0, self.config.arm_delay)
+        if delay <= 0:
+            return True
+        self.bus.publish(
+            EventKind.CONTROL,
+            f"armed: first screenshot in {delay:.0f} s -- bring Thndr X to the front "
+            f"and keep the dashboard out of view",
+            phase="countdown",
+        )
+        self.bus.put(
+            "status",
+            {"phase": "countdown", "reason": f"first screenshot in {delay:.0f} s"},
+        )
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + delay
+        while loop.time() < deadline:
+            if self.bus.is_halted() or self._stop.is_set():
+                self.bus.publish(
+                    EventKind.CONTROL, "countdown cancelled: halted", phase="halted"
+                )
+                return False
+            with suppress(asyncio.TimeoutError):
+                await asyncio.wait_for(
+                    self._stop.wait(), timeout=min(0.5, deadline - loop.time())
+                )
+        return not self.bus.is_halted()
 
     def request_stop(self) -> None:
         self._stop.set()
@@ -286,6 +346,8 @@ class EgxCuaAgent:
         )
 
         if self.bus.is_halted():
+            # The next arm must count down again before the screen is read.
+            self._screen_ready = False
             state = self.bus.control_state()
             self.bus.put("status", {"phase": AgentPhase.HALTED.value, "reason": state.reason})
             return AgentPhase.HALTED
@@ -321,6 +383,12 @@ class EgxCuaAgent:
             )
             self.bus.put("status", {"phase": AgentPhase.HALTED.value, "reason": "regime ALL_HALTED"})
             return AgentPhase.HALTED
+
+        # --- Countdown: the first screenshot after an arm waits for the operator.
+        if not self._screen_ready:
+            if not await self._arm_countdown():
+                return AgentPhase.HALTED
+            self._screen_ready = True
 
         # --- Gate 4: demo assertion --------------------------------------------
         self.bus.put("status", {"phase": AgentPhase.ASSERTING_DEMO.value})

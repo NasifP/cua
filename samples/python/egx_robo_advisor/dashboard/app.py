@@ -48,6 +48,7 @@ from pydantic import BaseModel
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from egx_advisor.bus import StateBus  # noqa: E402
+from egx_advisor.paths import bus_path  # noqa: E402
 
 logger = logging.getLogger(__name__)
 
@@ -101,7 +102,9 @@ class DashboardConfig:
     @classmethod
     def from_env(cls) -> "DashboardConfig":
         return cls(
-            bus_path=os.environ.get("EGX_BUS_PATH", "state/egx_bus.db"),
+            # Anchored at the project root, so this watches the same bus as the
+            # agent whatever directory either process was started from.
+            bus_path=str(bus_path()),
             token=os.environ.get("EGX_DASHBOARD_TOKEN", ""),
             # Off unless asked for: enabling it sends your holdings to a model
             # provider, which should be a choice rather than a default.

@@ -163,6 +163,7 @@ def build(tmp_path: Path, *, titles=(), execute=True, calibrated=True):
             bus_path=str(tmp_path / "state.db"),
             execute_orders=execute,
             ui=ThndrUiMap(calibration_complete=calibrated),
+            arm_delay=0,
         ),
         computer=computer,
         market_data=market,
@@ -444,3 +445,87 @@ async def test_an_unreadable_input_is_retried_not_latched(tmp_path: Path) -> Non
     assert not agent.regime_filter.panicking
     messages = [e.message for e in bus.recent_events(limit=20)]
     assert any("will retry next cycle" in m for m in messages)
+
+
+async def _run_until(agent, predicate, timeout: float = 5.0) -> None:
+    import asyncio
+
+    task = asyncio.create_task(agent.run_forever())
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + timeout
+    try:
+        while loop.time() < deadline and not predicate():
+            await asyncio.sleep(0.05)
+    finally:
+        agent.request_stop()
+        await asyncio.wait_for(task, timeout=5)
+
+
+async def test_an_arm_is_answered_within_seconds(tmp_path: Path) -> None:
+    """While halted the loop used to sleep a full idle interval (120 s) between
+    checks, so pressing START on the dashboard did nothing for up to two minutes."""
+    import asyncio
+
+    agent, bus, computer, *_ = build(tmp_path)
+    agent.config.idle_interval = 120.0
+    agent.config.arm_delay = 0.2
+
+    async def arm_soon():
+        await asyncio.sleep(0.3)
+        bus.resume(actor="test", reason="armed")
+
+    asyncio.get_running_loop().create_task(arm_soon())
+    await _run_until(agent, lambda: computer.interface_accesses > 0, timeout=4.0)
+    assert computer.interface_accesses > 0, "the arm was not answered within seconds"
+
+
+async def test_halting_during_the_countdown_touches_nothing(tmp_path: Path) -> None:
+    """Pressing START leaves the dashboard in front. The countdown is the operator's
+    time to bring the broker forward, and halting inside it must cancel the read."""
+    import asyncio
+
+    agent, bus, computer, *_ = build(tmp_path)
+    agent.config.arm_delay = 3.0
+    agent.config.halted_poll_interval = 0.05
+
+    async def arm_then_halt():
+        await asyncio.sleep(0.2)
+        bus.resume(actor="test", reason="armed")
+        await asyncio.sleep(0.8)
+        bus.halt(actor="test", reason="changed my mind")
+
+    asyncio.get_running_loop().create_task(arm_then_halt())
+
+    def cancelled() -> bool:
+        return any("countdown cancelled" in e.message for e in bus.recent_events(limit=20))
+
+    await _run_until(agent, cancelled, timeout=4.0)
+    assert cancelled()
+    assert computer.interface_accesses == 0
+    messages = [e.message for e in bus.recent_events(limit=30)]
+    assert any("first screenshot in 3 s" in m for m in messages)
+
+
+async def test_a_guard_refusal_with_the_bus_armed_does_not_spin(tmp_path: Path) -> None:
+    """A cycle can end HALTED while the bus stays armed. Waking early there, as an
+    arm does, would re-run the cycle at once against the screen and the model."""
+    import asyncio
+
+    agent, bus, computer, *_ = build(tmp_path)
+    agent.config.arm_delay = 0
+    agent.config.idle_interval = 30.0
+    cycles = 0
+
+    async def refused_cycle():
+        nonlocal cycles
+        cycles += 1
+        return AgentPhase.HALTED
+
+    agent._run_cycle = refused_cycle
+    agent._announce_startup = lambda: None
+    task = asyncio.create_task(agent.run_forever())
+    await asyncio.sleep(0.5)
+    agent.request_stop()
+    await asyncio.wait_for(task, timeout=5)
+    assert not bus.is_halted()
+    assert cycles == 1, f"re-ran {cycles} times in half a second"
