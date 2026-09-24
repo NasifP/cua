@@ -211,6 +211,14 @@ class StateBus:
             conn.close()
             self._local.conn = None
 
+    def __enter__(self) -> "StateBus":
+        return self
+
+    def __exit__(self, *exc: object) -> None:
+        # Windows refuses to delete a file SQLite still holds open, so a bus in
+        # a temporary directory has to be closed before the directory goes.
+        self.close()
+
     # ------------------------------------------------------------------- events
 
     def publish(
