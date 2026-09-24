@@ -33,6 +33,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from egx_advisor.bus import StateBus  # noqa: E402
+from egx_advisor.cua_runtime import require_cua_python  # noqa: E402
 from egx_advisor.execution.thndr import ThndrUiMap  # noqa: E402
 from egx_advisor.safety.demo_guard import (  # noqa: E402
     DEMO_TOKENS,
@@ -58,6 +59,7 @@ async def main() -> int:
     parser.add_argument("--max-labels", type=int, default=120)
     args = parser.parse_args()
 
+    require_cua_python(Path(__file__).resolve().parent)
     try:
         from computer import Computer
     except ImportError as exc:
