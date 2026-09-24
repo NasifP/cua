@@ -321,10 +321,17 @@ def test_env_example_documents_only_variables_the_code_reads() -> None:
     called `load_dotenv`, so the first command they ran failed on a token they
     had just set.
     """
-    # Provider credentials are read by litellm inside its own client, never by
-    # this package, so grepping our sources for them proves nothing. Everything
-    # else in the file is a knob this code is supposed to honour.
-    READ_BY_LITELLM = {"ANTHROPIC_API_KEY", "GEMINI_API_KEY", "OPENAI_API_KEY"}
+    # Provider credentials are read by the provider clients, never by this
+    # package, so grepping our sources for them proves nothing: litellm reads
+    # the first three, and cua-agent's Gemini loop reads GOOGLE_API_KEY through
+    # Google's SDK. Everything else in the file is a knob this code is supposed
+    # to honour.
+    READ_BY_PROVIDER_CLIENTS = {
+        "ANTHROPIC_API_KEY",
+        "GEMINI_API_KEY",
+        "OPENAI_API_KEY",
+        "GOOGLE_API_KEY",
+    }
 
     root = Path(__file__).resolve().parent.parent
     example = (root / ".env.example").read_text(encoding="utf-8")
@@ -332,7 +339,7 @@ def test_env_example_documents_only_variables_the_code_reads() -> None:
         line.split("=", 1)[0].strip()
         for line in example.splitlines()
         if "=" in line and not line.lstrip().startswith("#")
-    } - READ_BY_LITELLM
+    } - READ_BY_PROVIDER_CLIENTS
     sources = "\n".join(
         p.read_text(encoding="utf-8")
         for p in [root / "run_agent.py", root / "dashboard" / "app.py"]

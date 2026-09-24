@@ -412,6 +412,12 @@ Three places take a model, and they are not interchangeable:
 | `EGX_CLASSIFIER_MODEL` | news circuit breaker | composes with `max()`, so it can only escalate — a wrong answer cannot unblock trading |
 | `EGX_AGENT_MODEL` | driving the screen | needs **computer-use** support; not every model has it |
 
+For a Gemini agent model, set `EGX_AGENT_MODEL` to a computer-use ID with no
+`gemini/` prefix (for example `gemini-2.5-computer-use-preview-10-2025`), set
+`GOOGLE_API_KEY`, and install `cua-agent[gemini]`. cua-agent drives Gemini
+through Google's SDK rather than litellm, and that SDK does not read
+`GEMINI_API_KEY`. The same AI Studio key works for both.
+
 Provider model IDs move faster than this README, so check your provider's
 current list rather than trusting the defaults.
 
