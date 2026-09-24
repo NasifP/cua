@@ -43,6 +43,7 @@ from .doctor import (
     check_token,
     render,
 )
+from .login_link import make_login_path
 from .paths import PROJECT_ROOT, bus_path
 
 LOG_DIR = PROJECT_ROOT / "state" / "logs"
@@ -217,8 +218,10 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     if not wait_until_up(launcher.probe, port, "/healthz"):
         print("  the dashboard did not come up; see state/logs/dashboard.log")
     else:
-        url = f"http://127.0.0.1:{port}/?token={env['EGX_DASHBOARD_TOKEN']}"
-        webbrowser.open(url)
+        # A two-minute, single-use link: the password itself never enters the
+        # browser's history.
+        link = make_login_path(env["EGX_DASHBOARD_TOKEN"])
+        webbrowser.open(f"http://127.0.0.1:{port}{link}")
         print(f"\n  Dashboard opened in your browser (http://127.0.0.1:{port}).")
     print(
         "\n  The bot is HALTED. To start it:\n"

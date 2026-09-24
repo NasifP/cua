@@ -73,13 +73,49 @@ def test_bearer_token_grants_access(client) -> None:
     assert "control" in response.json()
 
 
-def test_index_swaps_a_url_token_for_a_cookie(client) -> None:
-    """So the token stops appearing in history and the phone's address bar."""
+def test_index_swaps_a_url_token_for_a_cookie_and_leaves_the_url(client) -> None:
+    """So the token stops appearing in the address bar and the phone's screen."""
     api, _ = client
-    response = api.get(f"/?token={TOKEN}")
-    assert response.status_code == 200
+    response = api.get(f"/?token={TOKEN}", follow_redirects=False)
+    assert response.status_code == 303
+    assert response.headers["location"] == "/"
     cookie = response.cookies.get("egx_session")
     assert cookie and cookie != TOKEN, "the cookie must not be the token itself"
+
+
+def test_the_launcher_link_signs_in_without_the_password_in_it(client) -> None:
+    """start.cmd used to open /?token=<password>, leaving it in browser history."""
+    from egx_advisor.login_link import make_login_path
+
+    api, _ = client
+    link = make_login_path(TOKEN)
+    assert TOKEN not in link
+    response = api.get(link, follow_redirects=False)
+    assert response.status_code == 303
+    assert response.cookies.get("egx_session")
+
+
+def test_a_login_link_works_once(client) -> None:
+    from egx_advisor.login_link import make_login_path
+
+    api, _ = client
+    link = make_login_path(TOKEN)
+    assert api.get(link, follow_redirects=False).status_code == 303
+    api.cookies.clear()
+    assert api.get(link, follow_redirects=False).status_code == 401
+
+
+def test_an_expired_or_forged_login_link_is_refused(client) -> None:
+    import time
+
+    from egx_advisor.login_link import make_login_path
+
+    api, _ = client
+    old = make_login_path(TOKEN, now=time.time() - 600)
+    assert api.get(old, follow_redirects=False).status_code == 401
+    forged = make_login_path("someone-elses-password-long-enough")
+    assert api.get(forged, follow_redirects=False).status_code == 401
+    assert api.get("/login?ts=abc&sig=", follow_redirects=False).status_code == 401
 
 
 def test_kill_switch_halts_the_agent(client) -> None:
