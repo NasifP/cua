@@ -37,12 +37,15 @@ from dataclasses import dataclass, field, fields
 from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
-from typing import Any, Mapping, Optional, Sequence
+from typing import TYPE_CHECKING, Any, Mapping, Optional
 
 from ..bus import EventKind, StateBus
-from ..safety.demo_guard import ActionRisk, DemoModeViolation, DemoState
+from ..safety.demo_guard import DemoModeViolation, DemoState
 from ..safety.guarded_interface import GuardedInterface
 from ..types import Portfolio, Position, ProposedOrder, Side
+
+if TYPE_CHECKING:
+    from ..safety.guarded_interface import SubmitFence
 
 logger = logging.getLogger(__name__)
 
@@ -346,7 +349,9 @@ class ThndrExecutor:
             '{"cash_egp": "0.00", "unsettled_cash_egp": "0.00", "positions": '
             '[{"symbol": "COMI", "quantity": "100", "market_value": "8500.00"}]}. '
             "Use the ticker exactly as the table shows it. quantity is the Qty "
-            "column and market_value is the Market Value column, in EGP. "
+            "column and market_value is the Market Value column, in EGP; the "
+            "header may be abbreviated (Thndr X shows 'Mkt. Val...'). Do not "
+            "use AvgCost, Weight or P/L for either. "
             "If a number is not legible, omit that position rather than guessing.",
             read_only=True,
         )

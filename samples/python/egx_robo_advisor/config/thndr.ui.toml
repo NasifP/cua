@@ -3,7 +3,7 @@
 # Partially filled from a screenshot of x.thndr.app. Every value still needs
 # checking on YOUR screen, on the screen each control actually lives on:
 #
-#   python calibrate_ui.py --target host --os macos
+#   python calibrate_ui.py --target host --os windows   (or macos / linux)
 #
 # prints the labels the live page exposes (read-only: it screenshots and reads,
 # never clicks). Order submission stays blocked until calibration_complete = true.
@@ -20,19 +20,24 @@ web_url = ""
 # and every symbol read back off it is re-tagged.
 broker_symbol_suffix = ".CA"
 
-# --- observed in the screenshot -------------------------------------------
+# --- confirmed by calibrate_ui.py OCR on Windows, 2026-09-24 ---------------
+# Trade view, real account. The bottom panel's tabs read "Positions Orders
+# Alerts" and the table header "Day Ch.. Ent... Qty AvgCost Mkt. Val... Weight
+# P/L P/L%". There is no "Portfolio" tab: holdings live under Positions, so the
+# portfolio read opens that.
 positions_tab_label  = "Positions"
 orders_tab_label     = "Orders"
+portfolio_tab_label  = "Positions"
+# Not seen yet: the market was open. Confirm on a screen after the close.
 market_closed_label  = "Market Closed"
 
-# --- NOT yet confirmed: still placeholders ---------------------------------
-# The screenshot showed no visible simulator/virtual badge. Find what Thndr X
-# uses to distinguish the paper account from the real one before arming
-# anything; if it is not text, the guard needs a different probe. See README.
-account_switcher_label  = "Account"
-simulator_option_label  = "Simulator"
-portfolio_tab_label     = "Portfolio"
-search_label            = "Search"
+# --- NOT confirmed: still placeholders ---------------------------------------
+# calibrate_ui.py reported "Sell" and "Quantity" as matched, but on the wrong
+# screen: "Quantity 276" is the read-only "Your Position" box, and "Sell" sits in
+# a tab row ("Sell History Transactions"). Neither is the order-ticket control.
+# The ticket is most likely behind the "Trade" tab of the right-hand panel
+# ("Overview Trade"). Open it and run calibrate_ui.py there before trusting any
+# ticket label below.
 buy_button_label        = "Buy"
 sell_button_label       = "Sell"
 quantity_field_label    = "Quantity"
@@ -40,6 +45,16 @@ limit_price_field_label = "Limit price"
 review_button_label     = "Review"
 confirm_button_label    = "Confirm"
 order_placed_label      = "Order placed"
+# No search text on the trade view; only an icon. Confirm what the field reads
+# once it is open.
+search_label            = "Search"
+
+# Simulator switching. Unused on the live rungs, and this operator has no paper
+# account. For the record: on the real account the guard reads INDETERMINATE,
+# because Thndr X prints no "real account" text for LIVE_TOKENS to match. That
+# is expected, and the live rungs do not gate on it (see _assert_permits).
+account_switcher_label  = "Account"
+simulator_option_label  = "Simulator"
 
 calibration_complete = false
 
