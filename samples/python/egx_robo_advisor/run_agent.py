@@ -125,6 +125,15 @@ async def main() -> None:
         from computer import Computer
         from cua_agent import ComputerAgent
     except ImportError as exc:
+        if sys.version_info >= (3, 14):
+            # pip on 3.14 installs cua-agent 0.5.x, the last release without an
+            # upper Python bound. It imports as `agent`, so "not installed" would
+            # send the operator to reinstall the same wrong version.
+            raise SystemExit(
+                f"cua does not support Python {sys.version_info.major}."
+                f"{sys.version_info.minor} yet ({exc}).\n"
+                f"Use Python 3.12 or 3.13, then: pip install -e '.[agent]'"
+            ) from exc
         raise SystemExit(
             f"cua is not installed: {exc}\n"
             f"Install the agent extra: pip install -e '.[agent]'"

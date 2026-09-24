@@ -326,6 +326,10 @@ a dependency the kill switch does not need.
 
 ## Running it
 
+Needs Python 3.12 or 3.13 for the `agent` extra. cua does not support 3.14 yet,
+and pip refuses to install this sample there. The core package and the tests
+also run on 3.11.
+
 ```bash
 pip install -e '.[agent,ocr,dashboard,marketdata,test]'
 cp .env.example .env    # then fill it in
