@@ -15,9 +15,10 @@ tab signed into the real account. Prefer a dedicated browser profile at minimum,
 and a VM if you can. ``cloud`` drives an isolated container instead, which is
 slower to set up and much harder to damage anything with.
 
-The bot always starts HALTED. Arming is done from the dashboard, deliberately:
-starting an automated order-placer should be a conscious act with a typed
-confirmation, not a side effect of running a command.
+The bot always starts HALTED, on every start. Arming is done from the
+dashboard, with two presses, the second naming the account: starting an
+automated order-placer should be a conscious act, not a side effect of running
+a command. On Windows, start.cmd runs this together with the dashboard.
 """
 
 from __future__ import annotations
@@ -101,7 +102,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--mode",
         choices=[m.value for m in ExecutionMode],
-        default=ExecutionMode.SIMULATOR_ONLY.value,
+        # EGX_MODE in .env sets this, so the launcher and a bare
+        # `python run_agent.py` agree on which account is being driven.
+        default=os.environ.get("EGX_MODE") or ExecutionMode.SIMULATOR_ONLY.value,
         help="what the bot may do, and on whose account (see safety/modes.py)",
     )
     # Resolved after .env is loaded, against the project root, so the agent and

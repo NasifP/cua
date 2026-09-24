@@ -6,7 +6,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "egx-robo-advisor"
 version = "0.1.0"
-description = "Safety-gated EGX robo-advisor driving the Thndr simulator through Cua"
+description = "Safety-gated EGX robo-advisor for the Thndr X broker app, through Cua"
 readme = "README.md"
 # Capped below 3.14 because cua-agent and cua-computer are. Without the cap, pip
 # on 3.14 silently falls back to cua-agent 0.5.x, which imports as `agent`
@@ -24,7 +24,15 @@ marketdata = ["yfinance>=0.2.40"]
 chat = ["litellm>=1.0.0"]
 # cua-agent 0.8.1 is the first release importable as `cua_agent`; cua-computer
 # 0.5 is the line it is built against, and needs Python 3.12+.
-agent = ["cua-computer>=0.5.0,<0.6.0", "cua-agent>=0.8.1", "litellm>=1.0.0", "python-dotenv>=1.0.0"]
+# tzdata: Windows ships no time zone database, and without it the clock falls
+# back to UTC+2 -- an hour off during Cairo summer time.
+agent = [
+    "cua-computer>=0.5.0,<0.6.0",
+    "cua-agent>=0.8.1",
+    "litellm>=1.0.0",
+    "python-dotenv>=1.0.0",
+    "tzdata; sys_platform == 'win32'",
+]
 dashboard = ["fastapi>=0.110", "uvicorn[standard]>=0.29", "jinja2>=3.1", "pydantic>=2.0"]
 test = ["pytest>=8.0.0", "pytest-asyncio>=0.23"]
 
