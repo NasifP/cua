@@ -28,14 +28,26 @@ You need Windows 10 or 11, Chrome, and a Gemini API key (free at
    anything, is left.
 3. **Your key.** Open `.env` in Notepad and paste your Gemini key after
    `GEMINI_API_KEY=`. Nothing else in the file needs changing to start.
-4. **Start.** Double-click **`start.cmd`** (or the desktop shortcut). One window
-   starts all three parts of the bot and opens the dashboard in your browser.
-5. **Run it.** Open Thndr X in its own Chrome window on the **Positions** tab.
-   On the dashboard press **START THE BOT**, then **CONFIRM**, then switch to
-   Thndr X within the 10-second countdown and leave the mouse alone.
+4. **Open the app.** Double-click **`desktop.cmd`** (or the desktop shortcut).
+   One window opens with two tabs: **Dashboard** (plan, log, chat, START) and
+   **Thndr X**, a browser built into the app.
+5. **Sign in** to Thndr X in its tab and open **Positions**. The app remembers
+   the sign-in in `state/browser`.
+6. **Run it.** On the Dashboard tab press **START THE BOT**, then **CONFIRM**.
+   The bot reads the Thndr X tab through a channel that can only read, so it
+   cannot click or type anything, and you can keep using your computer.
 
-To stop: press **Ctrl+C** in the start window. That halts the bot first, then
-closes everything. The dashboard's red button halts it too, at any time.
+To stop: the red **HALT** button at the top, or **Ctrl+Shift+H**. Closing the
+window halts the bot first, then stops everything.
+
+To chat with the bot about its plan, set `EGX_CHAT_ENABLED=true` in `.env`.
+Chat explains; it cannot press anything. It sends your holdings to the model
+provider you chose, which is why it is off until you turn it on. Any litellm
+model works for chat and for reading the page: `gemini/...`, `anthropic/...`,
+`openai/...`, `xai/...` and others, each with its own key in `.env`.
+
+`start.cmd` is the older way: it drives your whole screen instead of the app's
+browser, and needs Thndr X in front in Chrome.
 
 If something is wrong, run `.venv\Scripts\python.exe doctor.py`. It checks
 Python, packages, Tesseract, keys, ports and settings, and prints the exact fix

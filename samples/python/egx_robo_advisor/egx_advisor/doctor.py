@@ -43,6 +43,7 @@ REQUIRED_MODULES: tuple[tuple[str, str], ...] = (
     ("pytesseract", "pytesseract"),
     ("PIL", "Pillow"),
     ("yfinance", "yfinance"),
+    ("PySide6", "PySide6"),
 )
 
 
@@ -62,8 +63,8 @@ def _venv_python(root: Path) -> Path:
 
 def install_command(root: Path = PROJECT_ROOT) -> str:
     return (
-        f'"{_venv_python(root)}" -m pip install -e ".[agent,ocr,dashboard,marketdata,chat]" '
-        "cua-computer-server"
+        f'"{_venv_python(root)}" -m pip install -e '
+        '".[agent,ocr,dashboard,marketdata,chat,desktop]" cua-computer-server'
     )
 
 
@@ -79,7 +80,8 @@ def check_python(root: Path = PROJECT_ROOT) -> Check:
         return Check("Python", OK, f"Python {version}")
     return Check(
         "Python", FAIL, problem.splitlines()[0],
-        "install Python 3.13 (winget install Python.Python.3.13), then: double-click install.cmd (or: py -3.13 install.py)",
+        "install Python 3.13 (winget install Python.Python.3.13), then "
+        "double-click install.cmd",
     )
 
 
@@ -134,7 +136,7 @@ def check_cua_agent_version(version: Optional[str] = None) -> Check:
 def check_env_file(root: Path = PROJECT_ROOT) -> Check:
     if (root / ".env").is_file():
         return Check(".env", OK, str(root / ".env"))
-    return Check(".env", FAIL, "no .env file", "double-click install.cmd (or: py -3.13 install.py)   (creates it for you)")
+    return Check(".env", FAIL, "no .env file", "double-click install.cmd (it creates one)")
 
 
 def check_token(env: Mapping[str, str]) -> Check:
@@ -244,26 +246,38 @@ def check_api_keys(env: Mapping[str, str]) -> list[Check]:
     return checks
 
 
-def check_tesseract(run: Callable[..., subprocess.CompletedProcess] = subprocess.run) -> Check:
+def check_tesseract(
+    run: Callable[..., subprocess.CompletedProcess] = subprocess.run,
+    env: Optional[Mapping[str, str]] = None,
+) -> Check:
+    """Needed by calibrate_ui.py and the simulator rung's guard, not by reading.
+
+    The read-only rung reads with a model, from a screenshot or from the desktop
+    app's browser, so a missing Tesseract is a warning there, not a failure.
+    """
     from .safety.vision import configure_tesseract
 
+    mode = (env or {}).get("EGX_MODE", "")
+    severity = WARN if mode == "live_read_only" else FAIL
+    fix = "double-click install.cmd (or: py -3.13 install.py)"
     cmd = configure_tesseract()
     if not cmd:
         return Check(
-            "Tesseract OCR", FAIL,
-            "not found. On Windows it is the only way the bot can read Thndr X's text",
-            "double-click install.cmd (or: py -3.13 install.py)   (or: winget install UB-Mannheim.TesseractOCR)",
+            "Tesseract OCR", severity,
+            "not found. Screen calibration and the simulator rung need it; the "
+            "desktop app's read-only mode does not",
+            fix + "   or: winget install UB-Mannheim.TesseractOCR",
         )
     try:
         result = run([cmd, "--list-langs"], capture_output=True, text=True, timeout=20)
     except Exception as exc:  # noqa: BLE001
-        return Check("Tesseract OCR", FAIL, f"{cmd} did not run: {exc}", "double-click install.cmd (or: py -3.13 install.py)")
+        return Check("Tesseract OCR", severity, f"{cmd} did not run: {exc}", fix)
     langs = set((result.stdout + result.stderr).split())
     missing = [lang for lang in ("eng", "ara") if lang not in langs]
     if missing:
         return Check(
-            "Tesseract OCR", FAIL, f"{cmd} has no {'/'.join(missing)} language data",
-            "double-click install.cmd (or: py -3.13 install.py)   (downloads it into state\\tessdata)",
+            "Tesseract OCR", severity, f"{cmd} has no {'/'.join(missing)} language data",
+            fix + "   (downloads it into state\\tessdata)",
         )
     return Check("Tesseract OCR", OK, f"{cmd} (eng, ara)")
 
@@ -386,7 +400,7 @@ def run_checks(root: Path = PROJECT_ROOT) -> list[Check]:
         checks.append(check_cua_agent_version())
     checks += [check_env_file(root), check_token(env), check_mode(env)]
     checks += check_api_keys(env)
-    checks.append(check_tesseract())
+    checks.append(check_tesseract(env=env))
     checks += check_ports(env)
     checks.append(check_timezone())
     scaling = check_display_scaling()

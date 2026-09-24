@@ -148,11 +148,11 @@ class Launcher:
                 child.log.close()
 
 
-def _halt_bus(reason: str) -> None:
+def _halt_bus(reason: str, actor: str = "launcher") -> None:
     from .bus import StateBus
 
     with StateBus(bus_path()) as bus:
-        bus.halt(actor="launcher", reason=reason)
+        bus.halt(actor=actor, reason=reason)
 
 
 def _os_name() -> str:
@@ -184,7 +184,7 @@ def preflight(env: Mapping[str, str]) -> list[Check]:
     """The doctor checks that would stop a start, run before anything is spawned."""
     checks = [check_python(), check_packages(), check_token(env), check_mode(env)]
     checks += check_api_keys(env)
-    checks.append(check_tesseract())
+    checks.append(check_tesseract(env=env))
     return checks
 
 

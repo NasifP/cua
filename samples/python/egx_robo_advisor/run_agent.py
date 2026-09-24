@@ -87,10 +87,11 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--target",
-        choices=("host", "cloud"),
+        choices=("host", "cloud", "browser"),
         default="host",
         help="'host' drives this machine via a local cua-computer-server; "
-        "'cloud' drives an isolated cua container",
+        "'cloud' drives an isolated cua container; 'browser' reads Thndr X from "
+        "the desktop app's own browser (started by desktop.cmd)",
     )
     parser.add_argument(
         "--os",
@@ -131,21 +132,42 @@ async def main() -> None:
         format="%(asctime)s %(levelname)-7s %(name)s: %(message)s",
     )
 
+    os_type = args.os_type or _detect_os()
+    mode = ExecutionMode.parse(args.mode)
+    computer = None
+    agent_factory = None
+    executor_factory = None
+    if args.target == "browser":
+        # No cua on this path: the desktop app owns the browser, and the agent
+        # reaches it only through the app's read-only bridge.
+        from egx_advisor.desktop.bridge import BridgeClient, BridgeError
+        from egx_advisor.execution.browser import BrowserExecutor
+
+        try:
+            bridge = BridgeClient.from_env(os.environ)
+        except BridgeError as exc:
+            raise SystemExit(str(exc)) from exc
+
+        def executor_factory(bus):  # noqa: F811 - replaces the None above
+            return BrowserExecutor(bridge=bridge, bus=bus, mode=mode, ui=ui)
+
     # Before the import: on an unsupported Python, pip installs an old cua that
     # imports fine and then fails later on something that does not mention
     # Python at all.
-    require_cua_python(Path(__file__).resolve().parent)
-    try:
-        from computer import Computer
-        from cua_agent import ComputerAgent
-    except ImportError as exc:
-        raise SystemExit(
-            f"cua is not installed: {exc}\n"
-            f"Install the agent extra: pip install -e '.[agent]'"
-        ) from exc
+    if args.target != "browser":
+        require_cua_python(Path(__file__).resolve().parent)
+        try:
+            from computer import Computer
+            from cua_agent import ComputerAgent
+        except ImportError as exc:
+            raise SystemExit(
+                f"cua is not installed: {exc}\n"
+                f"Install the agent extra: pip install -e '.[agent]'"
+            ) from exc
 
-    os_type = args.os_type or _detect_os()
-    if args.target == "host":
+    if args.target == "browser":
+        pass
+    elif args.target == "host":
         # Targets localhost; requires `python -m computer_server` (or the
         # cua-computer-server entry point) running on this machine.
         computer = Computer(use_host_computer_server=True, os_type=os_type)
@@ -161,7 +183,7 @@ async def main() -> None:
             os_type=os_type, provider_type="cloud", name=container, api_key=api_key
         )
 
-    def agent_factory(guarded_computer: object) -> ComputerAgent:
+    def cua_agent_factory(guarded_computer: object) -> "ComputerAgent":
         # Note the argument: the *guarded* computer, never the raw one. This is
         # what keeps model-chosen clicks inside the safety gates.
         return ComputerAgent(
@@ -187,7 +209,8 @@ async def main() -> None:
         ui = replace(ui, calibration_complete=True)
         ui_source += " + --calibrated override"
 
-    mode = ExecutionMode.parse(args.mode)
+    if args.target != "browser":
+        agent_factory = cua_agent_factory
     agent = EgxCuaAgent(
         config=AgentConfig(
             bus_path=args.bus,
@@ -204,6 +227,7 @@ async def main() -> None:
         ),
         agent_factory=agent_factory,
         demo_guard=DemoGuard.default(),
+        executor_factory=executor_factory,
     )
     agent.install_signal_handlers()
 
@@ -217,7 +241,12 @@ async def main() -> None:
             f"!! {mode.banner}\n"
             "   The bot reads a real account and publishes real plans. It sends no\n"
             "   input at all: every click, key and typed character is refused at\n"
-            "   the guard. Leave Thndr X in front on the Positions tab.\n"
+            + (
+                "   the app's bridge, which only reads. Keep the app's Thndr X tab\n"
+                "   on Positions.\n"
+                if args.target == "browser"
+                else "   the guard. Leave Thndr X in front on the Positions tab.\n"
+            )
         )
     elif mode.permits_live_account:
         print(

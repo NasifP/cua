@@ -130,8 +130,12 @@ class EgxCuaAgent:
         demo_guard: Optional[DemoGuard] = None,
         bus: Optional[StateBus] = None,
         vision_completion: Optional[Any] = None,
+        executor_factory: Optional[Any] = None,
     ) -> None:
         self.config = config
+        #: Builds the executor from the bus instead of from `computer`. The desktop
+        #: app's browser target uses it; the screen targets leave it None.
+        self._executor_factory = executor_factory
         self._vision_completion = vision_completion
         self._computer = computer
         self._market_data = market_data
@@ -580,6 +584,10 @@ class EgxCuaAgent:
         it is lazy rather than set up in __init__.
         """
         if self._executor is not None:
+            return self._executor
+        if self._executor_factory is not None:
+            self._executor = self._executor_factory(self.bus)
+            self.bus.publish(EventKind.LIFECYCLE, "browser bridge attached", phase="idle")
             return self._executor
 
         if getattr(self._computer, "_initialized", False) is False:
