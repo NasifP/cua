@@ -38,7 +38,7 @@ from datetime import datetime, timezone
 from decimal import Decimal
 from enum import Enum
 from pathlib import Path
-from typing import Any, Iterator, Optional, Sequence
+from typing import Any, Callable, Iterator, Optional, Sequence
 
 logger = logging.getLogger(__name__)
 
@@ -275,6 +275,23 @@ class StateBus:
                 "ON CONFLICT(key) DO UPDATE SET ts=excluded.ts, payload=excluded.payload",
                 (key, _now_iso(), _dumps(payload)),
             )
+
+    def update(self, key: str, change: Callable[[Any], Any]) -> Any:
+        """Read-modify-write a snapshot atomically, across processes.
+
+        `change` receives the current payload (None if absent) and returns the
+        new one. BEGIN IMMEDIATE holds the write lock for the whole step, so two
+        processes counting into the same snapshot cannot lose an increment.
+        """
+        with self._write() as conn:
+            row = conn.execute("SELECT payload FROM snapshot WHERE key = ?", (key,)).fetchone()
+            new = change(json.loads(row["payload"]) if row else None)
+            conn.execute(
+                "INSERT INTO snapshot (key, ts, payload) VALUES (?, ?, ?) "
+                "ON CONFLICT(key) DO UPDATE SET ts=excluded.ts, payload=excluded.payload",
+                (key, _now_iso(), _dumps(new)),
+            )
+        return new
 
     def get(self, key: str) -> Optional[dict[str, Any]]:
         row = self._conn.execute(

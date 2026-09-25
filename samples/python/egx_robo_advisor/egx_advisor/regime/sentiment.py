@@ -276,7 +276,9 @@ class LlmClassifier:
             try:
                 from litellm import completion
 
-                self.completion = completion
+                from ..spend import metered
+
+                self.completion = metered(completion, purpose="news classifier")
             except Exception as exc:  # noqa: BLE001
                 logger.info("llm classifier unavailable: %s", exc)
                 return None

@@ -175,6 +175,10 @@ def _litellm_key(model: str) -> Optional[str]:
         "gemini": "GEMINI_API_KEY",
         "anthropic": "ANTHROPIC_API_KEY",
         "openai": "OPENAI_API_KEY",
+        "xai": "XAI_API_KEY",
+        "deepseek": "DEEPSEEK_API_KEY",
+        "mistral": "MISTRAL_API_KEY",
+        "openrouter": "OPENROUTER_API_KEY",
     }.get(provider)
 
 
@@ -183,6 +187,10 @@ _KEY_SOURCES = {
     "GOOGLE_API_KEY": "aistudio.google.com -- the same key as GEMINI_API_KEY works",
     "ANTHROPIC_API_KEY": "console.anthropic.com",
     "OPENAI_API_KEY": "platform.openai.com",
+    "XAI_API_KEY": "console.x.ai",
+    "DEEPSEEK_API_KEY": "platform.deepseek.com",
+    "MISTRAL_API_KEY": "console.mistral.ai",
+    "OPENROUTER_API_KEY": "openrouter.ai",
 }
 
 
@@ -241,7 +249,8 @@ def check_api_keys(env: Mapping[str, str]) -> list[Check]:
         else:
             checks.append(Check(
                 key, severity[key], "missing, needed for " + "; ".join(purposes),
-                f"add {key}=... to .env (get one at {_KEY_SOURCES.get(key, 'your provider')})",
+                f"add it in the app's Settings tab, or {key}=... in .env "
+                f"(get one at {_KEY_SOURCES.get(key, 'your provider')})",
             ))
     return checks
 
@@ -389,7 +398,13 @@ def load_env(root: Path = PROJECT_ROOT) -> dict[str, str]:
             values.update({k: v for k, v in dotenv_values(env_file).items() if v is not None})
         except ImportError:
             pass
-    values.update(os.environ)
+    # Keys saved from the Settings page are in the OS credential store.
+    from .settings import SecretStore
+
+    values.update(SecretStore().all())
+    # The shell wins, but an empty variable (a .env placeholder loaded earlier
+    # in this process) must not hide a stored key.
+    values.update({k: v for k, v in os.environ.items() if v or k not in values})
     return values
 
 

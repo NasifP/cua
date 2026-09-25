@@ -173,7 +173,9 @@ class Assistant:
             try:
                 from litellm import completion
 
-                self.completion = completion
+                from .spend import metered
+
+                self.completion = metered(completion, purpose="chat")
             except Exception as exc:  # noqa: BLE001
                 logger.info("chat model unavailable: %s", exc)
                 return None

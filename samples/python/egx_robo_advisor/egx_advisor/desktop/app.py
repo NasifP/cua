@@ -48,12 +48,14 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from .. import settings, spend
 from ..doctor import FAIL, Check, check_api_keys, check_token, load_env, render
 from ..launcher import Launcher, ProcessSpec, _halt_bus, _probe_port
 from ..login_link import make_login_path
 from ..paths import PROJECT_ROOT, bus_path
 from ..safety.modes import ExecutionMode
 from .bridge import BridgeServer
+from .settings_tab import SettingsTab
 
 DEFAULT_THNDR_URL = "https://x.thndr.app"
 BROWSER_PROFILE_DIR = PROJECT_ROOT / "state" / "browser"
@@ -136,7 +138,8 @@ def _chrome_user_agent(profile: QWebEngineProfile) -> str:
 
 
 class MainWindow(QMainWindow):
-    def __init__(self, env: dict[str, str], dashboard_port: int) -> None:
+    def __init__(self, env: dict[str, str], dashboard_port: int,
+                 notice: str = "") -> None:
         super().__init__()
         self.env = env
         self.dashboard_port = dashboard_port
@@ -176,9 +179,16 @@ class MainWindow(QMainWindow):
         self.thndr.loadFinished.connect(lambda ok: setattr(self.thndr, "egx_loading", False))
         self.thndr.load(QUrl(env.get("EGX_THNDR_URL") or DEFAULT_THNDR_URL))
 
+        self.settings_tab = SettingsTab(on_saved=self.restart_processes)
+
         self.tabs = QTabWidget()
         self.tabs.addTab(self.dashboard, "لوحة التحكم  |  Dashboard")
         self.tabs.addTab(self.thndr, "Thndr X")
+        self.tabs.addTab(self.settings_tab, "الإعدادات  |  Settings")
+        if notice:
+            # Something needs setting before the bot can read anything: open there.
+            self.tabs.setCurrentWidget(self.settings_tab)
+            self.settings_tab._say(notice, error=True)
 
         body = QWidget()
         layout = QVBoxLayout(body)
@@ -198,8 +208,9 @@ class MainWindow(QMainWindow):
 
     # ----------------------------------------------------------------- lifecycle
 
-    def start_processes(self) -> None:
-        self.bridge = BridgeServer(self.page).start()
+    def start_processes(self, bridge_running: bool = False) -> None:
+        if not bridge_running:
+            self.bridge = BridgeServer(self.page).start()
         child_env = dict(os.environ)
         child_env.update(self.bridge.env())
         # No window to bring forward here: the agent reads the app's own browser.
@@ -221,6 +232,19 @@ class MainWindow(QMainWindow):
 
     def _say(self, message: str) -> None:
         print(message, flush=True)
+
+    def restart_processes(self) -> None:
+        """Pick up saved settings: halt, stop the dashboard and agent, start again.
+
+        The bridge and the Thndr X session stay as they are.
+        """
+        if self.launcher is not None:
+            self.launcher.stop_all()  # halts the bus first
+            self.launcher = None
+        os.environ.update(settings.effective_values())
+        self._dashboard_loaded = False
+        self.dashboard.setHtml("<p style='font-family:sans-serif'>Restarting ...</p>")
+        self.start_processes(bridge_running=True)
 
     @Slot()
     def halt(self) -> None:
@@ -246,12 +270,15 @@ class MainWindow(QMainWindow):
             with StateBus(bus_path()) as bus:
                 control = bus.control_state()
                 status = (bus.get("status") or {}).get("payload") or {}
+                spent = spend.describe(spend.today(bus))
         except Exception as exc:  # noqa: BLE001
             self.status.setText(f"bus unavailable: {exc}")
             return
         state = "HALTED" if control.halted else "ARMED"
         phase = status.get("phase") or "-"
-        self.status.setText(f"{state}   ·   {phase}   ·   {control.reason or ''}")
+        self.status.setText(
+            f"{state}   ·   {phase}   ·   {control.reason or ''}   ·   models {spent}"
+        )
         color = "#c62828" if control.halted else "#2e7d32"
         self.status.setStyleSheet(f"font-size:15px; padding:0 12px; color:{color};")
 
@@ -274,7 +301,28 @@ class MainWindow(QMainWindow):
 # --------------------------------------------------------------------------- #
 
 
+def ensure_dashboard_password(env: dict[str, str]) -> None:
+    """Generate the dashboard password into .env if it is missing or short.
+
+    The app signs in to its own dashboard with a one-time link, so the operator
+    never needs to see or type this.
+    """
+    if check_token(env).status != FAIL:
+        return
+    import secrets as _secrets
+
+    token = _secrets.token_urlsafe(32)
+    text = settings.ENV_FILE.read_text(encoding="utf-8") if settings.ENV_FILE.exists() else ""
+    settings.ENV_FILE.write_text(
+        settings.set_env_values(text, {"EGX_DASHBOARD_TOKEN": token}), encoding="utf-8"
+    )
+    env["EGX_DASHBOARD_TOKEN"] = token
+    os.environ["EGX_DASHBOARD_TOKEN"] = token
+
+
 def preflight(env: dict[str, str]) -> list[Check]:
+    """Problems that stop the app. Missing API keys are not among them: the app
+    opens on Settings instead, where they can be entered."""
     checks = [check_token(env)]
     mode_raw = env.get("EGX_MODE") or "live_read_only"
     try:
@@ -287,15 +335,21 @@ def preflight(env: dict[str, str]) -> list[Check]:
             f"EGX_MODE={mode_raw}: the desktop app runs live_read_only for now",
             "set EGX_MODE=live_read_only in .env",
         ))
-    checks += [c for c in check_api_keys({**env, "EGX_MODE": "live_read_only"})
-               if "screen agent" not in c.detail]
     return checks
+
+
+def missing_keys(env: dict[str, str]) -> list[Check]:
+    return [
+        c for c in check_api_keys({**env, "EGX_MODE": "live_read_only"})
+        if c.status == FAIL and "screen agent" not in c.detail
+    ]
 
 
 def main(argv: Optional[list[str]] = None) -> int:
     env = load_env()
-    os.environ.update({k: v for k, v in env.items() if k not in os.environ})
+    os.environ.update({k: v for k, v in env.items() if v or k not in os.environ})
     app = QApplication(argv if argv is not None else sys.argv)
+    ensure_dashboard_password(env)
 
     problems = [c for c in preflight(env) if c.status == FAIL]
     if problems:
@@ -305,7 +359,15 @@ def main(argv: Optional[list[str]] = None) -> int:
         )
         return 1
 
-    window = MainWindow(env, int(env.get("EGX_DASHBOARD_PORT", "8787")))
+    missing = missing_keys(env)
+    notice = ""
+    if missing:
+        notice = (
+            "Before the bot can read your portfolio: "
+            + "; ".join(f"{c.name} is {c.detail}" for c in missing)
+            + ". Enter the key below and press Save."
+        )
+    window = MainWindow(env, int(env.get("EGX_DASHBOARD_PORT", "8787")), notice=notice)
     window.show()
     window.start_processes()
     return app.exec()

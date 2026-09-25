@@ -642,7 +642,9 @@ async def extract_positions(
             raise PortfolioReadError(
                 f"litellm is not installed, so the portfolio cannot be read: {exc}"
             ) from exc
-        completion = litellm_completion
+        from ..spend import metered
+
+        completion = metered(litellm_completion, purpose="portfolio read")
 
     content: list[Mapping[str, Any]] = [{"type": "text", "text": prompt}]
     if attachment is not None:

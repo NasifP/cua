@@ -36,8 +36,9 @@ agent = [
 dashboard = ["fastapi>=0.110", "uvicorn[standard]>=0.29", "jinja2>=3.1", "pydantic>=2.0"]
 # The desktop app: one window with the dashboard and Thndr X in its own
 # Chromium (Qt WebEngine). Needs litellm to read the page and python-dotenv
-# for .env, which the agent extra also brings.
-desktop = ["PySide6>=6.7", "litellm>=1.0.0", "python-dotenv>=1.0.0"]
+# for .env, which the agent extra also brings; keyring keeps API keys in the
+# OS credential store (Windows Credential Manager).
+desktop = ["PySide6>=6.7", "litellm>=1.0.0", "python-dotenv>=1.0.0", "keyring>=24"]
 test = ["pytest>=8.0.0", "pytest-asyncio>=0.23"]
 
 [tool.setuptools.packages.find]
