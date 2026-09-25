@@ -23,6 +23,19 @@ from ..types import ProposedOrder, Side
 
 #: kind -> (label, parameter names with defaults and bounds)
 RULE_KINDS: dict[str, dict] = {
+    # All four together: trend, momentum, volume and volatility. A buy goes
+    # ahead only when every one of them agrees; any one objecting skips it.
+    "confluence": {
+        "label": "Buy only when trend, momentum, volume and volatility all agree",
+        "params": {
+            "trend_days": (100, 20, 250),      # close above its N-day average
+            "momentum_days": (20, 5, 120),     # positive return over N days
+            "volume_days": (20, 10, 60),       # 5-day volume vs N-day average ...
+            "volume_ratio": (100, 50, 300),    # ... at least this % of it
+            "vol_days": (20, 10, 60),          # daily volatility over N days ...
+            "max_vol_pct": (3, 1, 10),         # ... at most this % a day
+        },
+    },
     "sma": {
         "label": "Skip buys below the N-day moving average",
         "params": {"days": (200, 5, 400)},
@@ -64,23 +77,33 @@ class BuyFilter:
     @property
     def lookback(self) -> int:
         """Closes the rule needs before it can say anything."""
+        if self.kind == "confluence":
+            return max(int(self.param("trend_days")), int(self.param("momentum_days")) + 1,
+                       int(self.param("volume_days")), int(self.param("vol_days")) + 1) + 1
         return int(self.param("days")) + 1
 
     def describe(self, lang: str = "en") -> str:
         from ..i18n import tr
 
+        if self.kind == "confluence":
+            return tr("rule.confluence", lang=lang,
+                      **{name: f"{self.param(name):.0f}" for name in RULE_KINDS["confluence"]
+                         ["params"]})
         return tr(f"rule.{self.kind}", lang=lang, days=f"{self.param('days'):.0f}",
                   above=f"{self.param('above'):.0f}" if self.kind == "rsi" else "",
                   fall=f"{self.param('fall_pct'):.0f}" if self.kind == "momentum" else "")
 
-    def blocks(self, closes: Sequence[Decimal]) -> Optional[str]:
-        """A reason to skip buying, from closes oldest-first up to yesterday.
+    def blocks(self, closes: Sequence[Decimal],
+               volumes: Optional[Sequence[Decimal]] = None) -> Optional[str]:
+        """A reason to skip buying, from closes (and volumes) oldest-first up to yesterday.
 
         Too little history is itself a reason: a rule that cannot evaluate
         errs towards not buying, like every other gate here.
         """
         if len(closes) < self.lookback:
             return f"{self.describe()}: only {len(closes)} of {self.lookback} days of prices"
+        if self.kind == "confluence":
+            return self._confluence(closes, volumes or ())
         days = int(self.param("days"))
         last = float(closes[-1])
         if self.kind == "sma":
@@ -97,6 +120,50 @@ class BuyFilter:
             if change < -self.param("fall_pct"):
                 return f"fell {-change:.0f}% over {days} days"
         return None
+
+
+    def _confluence(self, closes: Sequence[Decimal], volumes: Sequence[Decimal]) -> Optional[str]:
+        """Every factor that objects, so the reason says which ones did."""
+        prices = [float(c) for c in closes]
+        last = prices[-1]
+        objections = []
+
+        trend_days = int(self.param("trend_days"))
+        average = sum(prices[-trend_days:]) / trend_days
+        if last <= average:
+            objections.append(f"trend: close {last:.2f} not above {trend_days}-day average "
+                              f"{average:.2f}")
+
+        momentum_days = int(self.param("momentum_days"))
+        start = prices[-(momentum_days + 1)]
+        change = (last / start - 1) * 100 if start else 0.0
+        if change <= 0:
+            objections.append(f"momentum: {change:+.1f}% over {momentum_days} days")
+
+        volume_days = int(self.param("volume_days"))
+        recent = [float(v) for v in volumes[-volume_days:]]
+        if len(recent) < volume_days or sum(recent) <= 0:
+            objections.append("volume: no volume data")
+        else:
+            ratio = (sum(recent[-RECENT_VOLUME_DAYS:]) / RECENT_VOLUME_DAYS) / (
+                sum(recent) / volume_days) * 100
+            if ratio < self.param("volume_ratio"):
+                objections.append(f"volume: 5-day volume {ratio:.0f}% of the {volume_days}-day "
+                                  f"average, below {self.param('volume_ratio'):.0f}%")
+
+        vol_days = int(self.param("vol_days"))
+        window = prices[-(vol_days + 1):]
+        returns = [(b / a - 1) * 100 for a, b in zip(window, window[1:], strict=False) if a]
+        mean = sum(returns) / len(returns)
+        volatility = (sum((r - mean) ** 2 for r in returns) / len(returns)) ** 0.5
+        if volatility > self.param("max_vol_pct"):
+            objections.append(f"volatility: {volatility:.1f}% a day over {vol_days} days, above "
+                              f"{self.param('max_vol_pct'):.0f}%")
+        return "; ".join(objections) or None
+
+
+#: The "recent" side of the volume check: the last trading week.
+RECENT_VOLUME_DAYS = 5
 
 
 def _rsi(closes: Sequence[float]) -> float:
@@ -116,6 +183,7 @@ def apply_buy_filters(
     orders: Sequence[ProposedOrder],
     filters: Sequence[BuyFilter],
     closes: Mapping[str, Sequence[Decimal]],
+    volumes: Optional[Mapping[str, Sequence[Decimal]]] = None,
 ) -> tuple[list[ProposedOrder], list[tuple[ProposedOrder, str]]]:
     """Drop buys any filter objects to. Sells and everything else pass untouched."""
     kept: list[ProposedOrder] = []
@@ -124,7 +192,8 @@ def apply_buy_filters(
         reason = None
         if order.side is Side.BUY:
             for rule in filters:
-                reason = rule.blocks(closes.get(order.symbol, ()))
+                reason = rule.blocks(closes.get(order.symbol, ()),
+                                     (volumes or {}).get(order.symbol, ()))
                 if reason:
                     break
         if reason:
