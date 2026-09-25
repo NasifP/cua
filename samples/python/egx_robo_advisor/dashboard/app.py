@@ -415,6 +415,9 @@ def _load_env_file() -> None:
     side effects, and a test importing it must not pick up a developer's .env.
     Real environment variables win over the file.
     """
+    from egx_advisor.settings import load_secrets_into_environ
+
+    load_secrets_into_environ()
     env_path = Path(__file__).resolve().parent.parent / ".env"
     if not env_path.exists():
         return

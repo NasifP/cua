@@ -52,6 +52,11 @@ def _load_env_file() -> str:
     Real environment variables win over the file: an operator who exports a
     token for one run should not have it silently overridden by a stale file.
     """
+    # Keys saved from the Settings page live in the OS credential store, not in
+    # .env; fill them first so .env's blank placeholders cannot hide them.
+    from egx_advisor.settings import load_secrets_into_environ
+
+    load_secrets_into_environ()
     env_path = Path(__file__).resolve().parent / ".env"
     if not env_path.exists():
         return ""
@@ -116,7 +121,11 @@ def parse_args() -> argparse.Namespace:
         default="yahoo",
         help="'yahoo' for the live provider, or a path to a JSON snapshot file",
     )
-    parser.add_argument("--interval", type=float, default=300.0)
+    parser.add_argument(
+        "--interval", type=float,
+        default=max(60.0, float(os.environ.get("EGX_CYCLE_SECONDS") or 300.0)),
+        help="seconds between cycles while the market is open (EGX_CYCLE_SECONDS)",
+    )
     parser.add_argument("--verbose", action="store_true")
     return parser.parse_args()
 
