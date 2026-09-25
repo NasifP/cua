@@ -336,8 +336,11 @@ them can create, enlarge or flip an order.
   with no logins; check each site's terms first. A source marked *Official*
   (the exchange or a regulator) that fails during a session stops buys.
   Feed changes apply after the bot restarts.
-- **Strategy Lab** tab. Test an indicator idea (price under an N-day average,
-  RSI above a level, a sharp N-day fall) as a reason to *skip* buys, on real
+- **Strategy Lab** tab. Test an indicator idea as a reason to *skip* buys:
+  price under an N-day average, RSI above a level, a sharp N-day fall, or
+  **Trend + Momentum + Volume + Volatility together** (a buy goes ahead only
+  when the close is above its average, rising, on healthy volume, and not
+  swinging more than a set % a day). Tested on real
   EGX history from Yahoo, with trading costs. It is adoptable only if
   it beats the plain policy after costs over the whole history with an
   interval that excludes zero, *and* in each half of the history on its own.

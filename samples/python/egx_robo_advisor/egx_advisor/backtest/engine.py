@@ -92,6 +92,7 @@ def run_backtest(history: PriceHistory, config: BacktestConfig) -> BacktestResul
     #: Closes up to the previous session, for buy filters. Appended after each
     #: day's decisions, so a rule never sees the day it is deciding on.
     closes: dict[str, list[Decimal]] = {}
+    volumes: dict[str, list[Decimal]] = {}
     result.starting_value = _value(quantities, history.bars_on(days[0]), cash)
 
     for day in days:
@@ -141,7 +142,7 @@ def run_backtest(history: PriceHistory, config: BacktestConfig) -> BacktestResul
                 orders, _ = regime_filter.apply(orders, regime)
 
             if config.buy_filters:
-                orders, _ = apply_buy_filters(orders, config.buy_filters, closes)
+                orders, _ = apply_buy_filters(orders, config.buy_filters, closes, volumes)
 
             for order in orders:
                 instrument = policy.instrument(order.symbol)
@@ -173,6 +174,7 @@ def run_backtest(history: PriceHistory, config: BacktestConfig) -> BacktestResul
         for symbol, bar in bars.items():
             previous_close[symbol] = bar.close
             closes.setdefault(symbol, []).append(bar.close)
+            volumes.setdefault(symbol, []).append(bar.volume)
 
         total = _value(quantities, bars, cash, previous_close)
         weights = {

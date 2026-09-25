@@ -151,6 +151,7 @@ class EgxCuaAgent:
         self.events_path: Optional[Path] = config_path("events.toml")
         self.rules_path: Optional[Path] = config_path("rules.toml")
         self._closes: dict[str, list[Decimal]] = {}
+        self._volumes: dict[str, list[Decimal]] = {}
         self._closes_day: Optional[date] = None
         self._closes_days = 0
         self.classifiers: tuple[Classifier, ...] = tuple(
@@ -535,7 +536,7 @@ class EgxCuaAgent:
             return tuple(allowed), tuple(suppressed)
         rules = [a.rule for a in adopted]
         closes = await self._recent_closes(now, max(r.lookback for r in rules))
-        kept, dropped = apply_buy_filters(list(allowed), rules, closes)
+        kept, dropped = apply_buy_filters(list(allowed), rules, closes, self._volumes)
         return tuple(kept), tuple(suppressed) + tuple(
             (o, f"lab rule: {why}") for o, why in dropped
         )
@@ -546,12 +547,17 @@ class EgxCuaAgent:
             return self._closes
         fetch = getattr(self._market_data, "history", None)
         closes: dict[str, list[Decimal]] = {}
+        volumes: dict[str, list[Decimal]] = {}
         if fetch is not None:
             try:
                 # Calendar days, with room for weekends and holidays.
                 rows = await fetch(self.config.policy.universe, days=int(days * 1.6) + 10)
                 closes = {
                     symbol: [r.close for r in series if r.day < day]
+                    for symbol, series in rows.items()
+                }
+                volumes = {
+                    symbol: [getattr(r, "volume", Decimal(0)) for r in series if r.day < day]
                     for symbol, series in rows.items()
                 }
             except Exception as exc:  # noqa: BLE001
@@ -561,6 +567,7 @@ class EgxCuaAgent:
                     phase="planning",
                 )
         self._closes, self._closes_day, self._closes_days = closes, day, days
+        self._volumes = volumes
         return closes
 
     def _scheduled_events(self, now: datetime) -> tuple[str, ...]:

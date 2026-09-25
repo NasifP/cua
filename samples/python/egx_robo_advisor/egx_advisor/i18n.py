@@ -118,12 +118,20 @@ STRINGS: dict[str, tuple[str, str]] = {
     "lab.not_adopted": ("Not adoptable: {verdict}", "مش هتتعتمد: {verdict}"),
     "lab.adopted": ("Adopted. The bot applies it from its next cycle.",
                     "اتعتمدت. البوت هيطبّقها من الدورة الجاية."),
+    "lab.kind.confluence": ("Trend + Momentum + Volume + Volatility, all together",
+                            "الاتجاه + الزخم + الحجم + التذبذب، مع بعض"),
     "lab.kind.sma": ("Skip buys when the price is below its N-day average",
                      "منع الشراء لو السعر تحت متوسط N يوم"),
     "lab.kind.rsi": ("Skip buys when RSI is above a level (overbought)",
                      "منع الشراء لو RSI فوق مستوى معيّن (تشبّع شراء)"),
     "lab.kind.momentum": ("Skip buys after a sharp fall over N days",
                           "منع الشراء بعد نزول حاد في N يوم"),
+    "lab.param.trend_days": ("Trend: average of N days", "الاتجاه: متوسط N يوم"),
+    "lab.param.momentum_days": ("Momentum: over N days", "الزخم: على مدى N يوم"),
+    "lab.param.volume_days": ("Volume: compared with N days", "الحجم: مقارنة بـ N يوم"),
+    "lab.param.volume_ratio": ("Volume: at least % of average", "الحجم: على الأقل % من المتوسط"),
+    "lab.param.vol_days": ("Volatility: over N days", "التذبذب: على مدى N يوم"),
+    "lab.param.max_vol_pct": ("Volatility: at most % a day", "التذبذب: بحد أقصى % في اليوم"),
     "lab.param.days": ("Days", "عدد الأيام"),
     "lab.param.above": ("RSI level", "مستوى RSI"),
     "lab.param.fall_pct": ("Fall %", "نسبة النزول %"),
@@ -212,6 +220,14 @@ STRINGS: dict[str, tuple[str, str]] = {
                                    "شراء مفتوح لما تضغط املأ. عمرها ما بتضغط شراء."),
 
     # --- rule descriptions (strategy/filters.py) ---
+    "rule.confluence": ("buy only when all agree: close above its {trend_days}-day average, "
+                        "rising over {momentum_days} days, 5-day volume at least "
+                        "{volume_ratio}% of {volume_days}-day, daily volatility at most "
+                        "{max_vol_pct}% over {vol_days} days",
+                        "شراء بس لما الأربعة يتفقوا: السعر فوق متوسط {trend_days} يوم، وطالع "
+                        "في آخر {momentum_days} يوم، وحجم آخر 5 أيام على الأقل {volume_ratio}% "
+                        "من متوسط {volume_days} يوم، والتذبذب اليومي بحد أقصى {max_vol_pct}% "
+                        "في آخر {vol_days} يوم"),
     "rule.sma": ("no buys below the {days}-day average", "مفيش شراء تحت متوسط {days} يوم"),
     "rule.rsi": ("no buys when RSI({days}) > {above}", "مفيش شراء لو RSI({days}) أكبر من {above}"),
     "rule.momentum": ("no buys after a {fall}% fall over {days} days",
