@@ -11,7 +11,7 @@ if not exist "%PY%" (
 )
 echo Installing the build tools ...
 "%PY%" -m pip install --quiet --upgrade "pyinstaller>=6.10" Pillow || goto :fail
-"%PY%" -m pip install --quiet -e ".[desktop,dashboard,marketdata]" || goto :fail
+"%PY%" -m pip install --quiet -e ".[desktop,dashboard,marketdata]" -c packaging\constraints.txt || goto :fail
 "%PY%" packaging\build.py %* || goto :fail
 echo.
 echo The app is in: %~dp0dist\EGX Robo-Advisor\EGX Robo-Advisor.exe
