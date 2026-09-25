@@ -49,9 +49,10 @@ STRINGS: dict[str, tuple[str, str]] = {
     "page.dashboard.sub": ("Plan, holdings, log and chat. Start the bot here.",
                            "الخطة والمحفظة والسجل والشات. من هنا بتشغّل البوت."),
     "page.thndr": ("Thndr X", "Thndr X"),
-    "page.thndr.sub": ("Your broker in the app's own browser. The bot can only read this page.",
-                       "حسابك في متصفح البرنامج. البوت يقدر يقرا الصفحة دي بس، "
-                       "ومش بيضغط على حاجة."),
+    "page.thndr.sub": ("Your broker in the app's own browser. The bot only reads it; the "
+                       "panel fills a buy ticket when you press Fill, and you press Buy.",
+                       "حسابك في متصفح البرنامج. البوت بيقراه بس؛ واللوحة بتملى أمر الشراء "
+                       "لما تضغط املأ، وانت اللي بتضغط شراء."),
     "page.chart": ("Chart", "الشارت"),
     "page.chart.sub": ("TradingView chart for your holdings. Nothing here reaches the bot.",
                        "شارت TradingView لأسهمك. اللي هنا ليك انت، ومش بيوصل للبوت."),
@@ -126,6 +127,89 @@ STRINGS: dict[str, tuple[str, str]] = {
     "lab.param.days": ("Days", "عدد الأيام"),
     "lab.param.above": ("RSI level", "مستوى RSI"),
     "lab.param.fall_pct": ("Fall %", "نسبة النزول %"),
+
+    # --- ticket filling (desktop/ticket_panel.py) ---
+    "ticket.title": ("Fill a buy ticket", "تجهيز أمر شراء"),
+    "ticket.intro": ("The app writes the quantity and price into the open Thndr ticket. It "
+                     "never presses Buy: you check the numbers and press it yourself.",
+                     "البرنامج بيكتب الكمية والسعر في أمر الشراء المفتوح في Thndr. عمره ما "
+                     "بيضغط شراء: انت اللي بتراجع الأرقام وتضغط بنفسك."),
+    "ticket.steps": ("1. In Thndr, open the stock's buy ticket and choose a limit order.\n"
+                     "2. Pick the order below and press Fill.\n"
+                     "3. Check the numbers in Thndr, then press Buy there yourself.",
+                     "1. في Thndr افتح أمر شراء السهم واختار أمر بسعر محدد (Limit).\n"
+                     "2. اختار الأمر من القائمة تحت واضغط املأ.\n"
+                     "3. راجع الأرقام في Thndr، وبعدين اضغط شراء هناك بنفسك."),
+    "ticket.teach_box": ("Ticket boxes", "خانات الأمر"),
+    "ticket.field.quantity": ("quantity box", "خانة الكمية"),
+    "ticket.field.price": ("price box", "خانة السعر"),
+    "ticket.taught": ("taught", "متعلّمة"),
+    "ticket.not_taught": ("not taught", "مش متعلّمة"),
+    "ticket.teach": ("Teach", "علّمها"),
+    "ticket.cancel": ("Cancel teaching", "إلغاء التعليم"),
+    "ticket.picking": ("Click the {field} in the open Thndr ticket. The click only selects it; "
+                       "Thndr does not receive it.",
+                       "اضغط على {field} في أمر Thndr المفتوح. الضغطة بتحددها بس، وThndr "
+                       "مش بيستلمها."),
+    "ticket.picked": ("The {field} is taught.", "{field} اتعلّمت."),
+    "ticket.not_a_box": ("That is not a number box. Click inside the box itself.",
+                         "دي مش خانة أرقام. اضغط جوّه الخانة نفسها."),
+    "ticket.orders_box": ("Buy orders in the plan", "أوامر الشراء في الخطة"),
+    "ticket.no_orders": ("No buy orders in the current plan.", "مفيش أوامر شراء في الخطة الحالية."),
+    "ticket.order_line": ("{symbol}  ·  {quantity} shares  ·  limit {price}",
+                          "{symbol}  ·  {quantity} سهم  ·  بسعر {price}"),
+    "ticket.fill": ("Fill the ticket", "املأ الأمر"),
+    "ticket.filled": ("Written: {quantity} shares of {symbol} at {price}. Check the ticket in "
+                      "Thndr and press Buy yourself.",
+                      "اتكتب: {quantity} سهم من {symbol} بسعر {price}. راجع الأمر في Thndr "
+                      "واضغط شراء بنفسك."),
+    "ticket.off": ("Ticket filling is off. Turn it on in Settings.",
+                   "تجهيز الأوامر مقفول. شغّله من الإعدادات."),
+    "ticket.halted": ("The bot is halted, so no ticket is filled. Start it from the Dashboard "
+                      "first.",
+                      "البوت متوقف، فمفيش تجهيز أوامر. شغّله من لوحة التحكم الأول."),
+    "ticket.buys_only": ("Only buy tickets are filled for now.",
+                         "حالياً بيجهّز أوامر الشراء بس."),
+    "ticket.bad_quantity": ("The quantity {quantity} is not a whole number of shares.",
+                            "الكمية {quantity} مش عدد أسهم صحيح."),
+    "ticket.bad_price": ("The limit price {price} is not valid.", "السعر {price} مش صحيح."),
+    "ticket.no_plan": ("There is no plan yet.", "لسه مفيش خطة."),
+    "ticket.stale": ("The plan is {minutes} minutes old, and prices older than {limit} minutes "
+                     "are not used. Wait for the next cycle.",
+                     "الخطة عمرها {minutes} دقيقة، والأسعار الأقدم من {limit} دقيقة مش "
+                     "بتتستخدم. استنى الدورة الجاية."),
+    "ticket.plan_changed": ("A new plan arrived. Check the order again and press Fill.",
+                            "وصلت خطة جديدة. راجع الأمر تاني واضغط املأ."),
+    "ticket.teach_first": ("Teach the quantity and price boxes first.",
+                           "علّم خانة الكمية وخانة السعر الأول."),
+    "ticket.symbol_not_on_page": ("{ticker} is not on the Thndr page. Open that stock's buy "
+                                  "ticket first.",
+                                  "{ticker} مش ظاهر في صفحة Thndr. افتح أمر شراء السهم ده الأول."),
+    "ticket.field_missing": ("The {field} is not on the page. Open the buy ticket, or teach "
+                             "the box again.",
+                             "{field} مش موجودة في الصفحة. افتح أمر الشراء، أو علّم الخانة "
+                             "تاني."),
+    "ticket.not_a_text_box": ("The taught {field} is not a number box any more. Teach it again.",
+                              "{field} اللي اتعلّمت مابقتش خانة أرقام. علّمها تاني."),
+    "ticket.field_locked": ("The {field} is locked on the page.", "{field} مقفولة في الصفحة."),
+    "ticket.same_box": ("Quantity and price point to the same box. Teach them again.",
+                        "الكمية والسعر بيشاوروا على نفس الخانة. علّمهم تاني."),
+    "ticket.page_error": ("The page did not answer. Try again.", "الصفحة ماردّتش. جرّب تاني."),
+    "ticket.readback_failed": ("Could not read the boxes back ({reason}). Check the ticket by "
+                               "eye before pressing Buy.",
+                               "ماقدرتش أقرا الخانات تاني ({reason}). راجع الأمر بعينك قبل "
+                               "ما تضغط شراء."),
+    "ticket.mismatch": ("The boxes show quantity {quantity} and price {price}, which is not the "
+                        "order. Correct them or press Fill again, and do not press Buy until "
+                        "they match.",
+                        "الخانات فيها كمية {quantity} وسعر {price}، ودول مش الأمر. صلّحهم أو "
+                        "اضغط املأ تاني، وماتضغطش شراء غير لما يطابقوا."),
+    "field.EGX_TICKET_FILL": ("Fill buy tickets in Thndr X", "تجهيز أوامر الشراء في Thndr X"),
+    "field.EGX_TICKET_FILL.help": ("When on, the Thndr X page can write an order's quantity and "
+                                   "price into an open buy ticket when you press Fill. It never "
+                                   "presses Buy.",
+                                   "لما يكون شغّال، صفحة Thndr X تقدر تكتب الكمية والسعر في أمر "
+                                   "شراء مفتوح لما تضغط املأ. عمرها ما بتضغط شراء."),
 
     # --- rule descriptions (strategy/filters.py) ---
     "rule.sma": ("no buys below the {days}-day average", "مفيش شراء تحت متوسط {days} يوم"),
@@ -247,10 +331,12 @@ STRINGS: dict[str, tuple[str, str]] = {
     "set.behaviour": ("Behaviour and limits", "السلوك والحدود"),
     "set.fixed": ("Not changed here", "حاجات مش بتتغير من هنا"),
     "set.fixed.mode": ("Mode", "الوضع"),
-    "set.fixed.mode_text": ("live_read_only -- reads your account, never clicks or types. "
-                            "Filling order tickets arrives in a later version.",
-                            "live_read_only -- بيقرا حسابك بس، عمره ما بيضغط أو يكتب. ملء "
-                            "أوامر الشراء والبيع جاي في نسخة بعدين."),
+    "set.fixed.mode_text": ("live_read_only -- the bot reads your account and never clicks or "
+                            "types. Ticket filling (above) writes a buy's quantity and price "
+                            "only when you press Fill in the Thndr X tab; you press Buy.",
+                            "live_read_only -- البوت بيقرا حسابك بس، عمره ما بيضغط أو يكتب. "
+                            "تجهيز الأوامر (فوق) بيكتب كمية وسعر أمر الشراء بس لما تضغط املأ "
+                            "في صفحة Thndr X، وانت اللي بتضغط شراء."),
     "set.fixed.calibration": ("Calibration", "المعايرة"),
     "set.fixed.calibration_text": ("{state}. Changed only after measuring the real screen.",
                                    "{state}. بتتغير بس بعد قياس الشاشة الحقيقية."),

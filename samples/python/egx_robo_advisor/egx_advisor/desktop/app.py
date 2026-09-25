@@ -58,6 +58,7 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QProgressBar,
     QPushButton,
+    QSplitter,
     QStackedWidget,
     QVBoxLayout,
     QWidget,
@@ -76,6 +77,7 @@ from .chart_tab import ChartTab
 from .lab_tab import LabTab
 from .settings_tab import SettingsTab
 from .sources_tab import SourcesTab
+from .ticket_panel import TicketPanel
 
 DEFAULT_THNDR_URL = "https://x.thndr.app"
 BROWSER_PROFILE_DIR = PROJECT_ROOT / "state" / "browser"
@@ -195,13 +197,22 @@ class MainWindow(QMainWindow):
         self.thndr.load(QUrl(env.get("EGX_THNDR_URL") or DEFAULT_THNDR_URL))
 
         self.settings_tab = SettingsTab(on_saved=self.restart_processes)
+        # Thndr X with the ticket panel beside it. The bridge still reads only
+        # the browser view; the panel writes to the page only on Fill.
+        self.ticket_panel = TicketPanel(page=lambda: self.thndr.page())
+        self.ticket_panel.setObjectName("SidePanel")
+        self.thndr_page = QSplitter(Qt.Horizontal)
+        self.thndr_page.addWidget(self.thndr)
+        self.thndr_page.addWidget(self.ticket_panel)
+        self.thndr_page.setStretchFactor(0, 1)
+        self.thndr_page.setCollapsible(0, False)
         self.chart_tab = ChartTab()
         self.lab_tab = LabTab()
         self.sources_tab = SourcesTab()
 
         pages = (
             (self.dashboard, "dashboard", "page.dashboard"),
-            (self.thndr, "browser", "page.thndr"),
+            (self.thndr_page, "browser", "page.thndr"),
             (self.chart_tab, "chart", "page.chart"),
             (self.lab_tab, "lab", "page.lab"),
             (self.sources_tab, "calendar", "page.sources"),
@@ -286,6 +297,9 @@ class MainWindow(QMainWindow):
         self.page_title.setObjectName("PageTitle")
         self.page_subtitle = QLabel()
         self.page_subtitle.setObjectName("PageSubtitle")
+        # Leading edge for both, even when the text is Latin ("Thndr X") in Arabic.
+        for label in (self.page_title, self.page_subtitle):
+            label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
         titles = QVBoxLayout()
         titles.setSpacing(2)
         titles.addWidget(self.page_title)
@@ -402,7 +416,8 @@ class MainWindow(QMainWindow):
         lang = i18n.set_language("en" if i18n.current() == "ar" else "ar")
         theme.apply(QApplication.instance(), theme.current())  # flips the layout direction
         self._retranslate_shell()
-        for page in (self.chart_tab, self.lab_tab, self.sources_tab, self.settings_tab):
+        for page in (self.chart_tab, self.lab_tab, self.sources_tab, self.settings_tab,
+                     self.ticket_panel):
             page.retranslate()
         self._sync_dashboard_theme(run_now=True)
         self._remember({"EGX_LANG": lang})
@@ -507,6 +522,7 @@ class MainWindow(QMainWindow):
             link = make_login_path(self.env["EGX_DASHBOARD_TOKEN"])
             self.dashboard.load(QUrl(f"http://127.0.0.1:{self.dashboard_port}{link}"))
         self._refresh_status()
+        self.ticket_panel.refresh()
 
     def _refresh_status(self) -> None:
         try:

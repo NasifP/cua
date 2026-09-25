@@ -321,6 +321,37 @@ them can create, enlarge or flip an order.
   policy universe, in a private browser profile apart from the Thndr X
   session. It is for you to look at; nothing on it reaches the bot.
 
+## Filling a buy ticket in the desktop app
+
+The bot itself stays read-only. The desktop app can write a buy order's
+quantity and limit price into a Thndr X ticket, and only when you ask it to.
+You always press Buy yourself.
+
+1. **Turn it on.** Settings -> *Fill buy tickets in Thndr X*. It is off by
+   default (`EGX_TICKET_FILL=false`).
+2. **Teach the two boxes, once.** Open any stock's buy ticket in the Thndr X
+   tab. In the panel beside it press *Teach* for the quantity box and click
+   that box, then do the same for the price box. The click only selects the
+   box; Thndr X never receives it. The result is kept in
+   `config/thndr.ticket.toml`. Delete that file to teach the boxes again.
+3. **Fill.** Open the buy ticket of the stock you want, choose a limit
+   order, pick the matching order in the panel and press *Fill*. The panel
+   then reads the boxes back and says whether they match.
+4. **Check, then press Buy in Thndr X yourself.**
+
+Before it writes anything, the app refuses when:
+
+- the bot is halted;
+- the order is not a buy, or its quantity is not a whole number of shares;
+- the plan is more than 15 minutes old;
+- the stock's ticker is not on the page;
+- a taught box is missing, is not a text box, or matches more than one box;
+- the plan changed after you selected the order.
+
+It writes two values and nothing else: no click, no key, no Enter, and it
+never looks for the Buy button. Every fill and every refusal is written to
+the bot's log.
+
 ## The loop, and why the gates are in this order
 
 Each cycle runs the cheap, safe, offline checks first and only then reaches for
