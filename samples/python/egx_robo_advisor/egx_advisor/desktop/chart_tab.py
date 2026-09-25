@@ -16,9 +16,11 @@ from PySide6.QtWebEngineCore import QWebEnginePage, QWebEngineProfile
 from PySide6.QtWebEngineWidgets import QWebEngineView
 from PySide6.QtWidgets import QComboBox, QHBoxLayout, QLabel, QPushButton, QVBoxLayout, QWidget
 
+from . import theme
+
 WIDGET_HTML = """<!doctype html><html><head><meta charset="utf-8">
-<style>html,body,#tv{{margin:0;height:100%;width:100%;background:#131722;color:#d1d4dc;
-font:16px sans-serif}} #tv p{{padding:24px}}</style></head>
+<style>html,body,#tv{{margin:0;height:100%;width:100%;background:{bg};color:{muted};
+font:15px system-ui,sans-serif}} #tv p{{padding:28px;line-height:1.7}}</style></head>
 <body><div id="tv"></div>
 <script src="https://s3.tradingview.com/tv.js"></script>
 <script>
@@ -28,7 +30,7 @@ if (!window.TradingView) {{
     "internet connection and try again.</p>";
 }} else new TradingView.widget({{
   container_id: "tv", autosize: true, symbol: {symbol}, interval: "D",
-  timezone: "Africa/Cairo", theme: "dark", style: "1", locale: "ar_AE",
+  timezone: "Africa/Cairo", theme: "{theme}", style: "1", locale: "ar_AE",
   allow_symbol_change: true, studies: ["MASimple@tv-basicstudies", "RSI@tv-basicstudies"]
 }});
 </script></body></html>"""
@@ -45,11 +47,13 @@ def tradingview_symbol(symbol: str) -> str:
     return "EGX:" + symbol.removesuffix(".CA")
 
 
-def widget_html(symbol: str) -> str:
+def widget_html(symbol: str, theme_name: str = "dark") -> str:
     # json.dumps quotes the symbol; escaping "<" as well means a typed
     # "</script>" cannot end the script block early.
     literal = json.dumps(tradingview_symbol(symbol)).replace("<", "\\u003c")
-    return WIDGET_HTML.format(symbol=literal)
+    name = theme_name if theme_name in theme.THEMES else theme.DEFAULT
+    t = theme.tokens(name)
+    return WIDGET_HTML.format(symbol=literal, theme=name, bg=t["chart_bg"], muted=t["muted"])
 
 
 def chart_symbols() -> list[str]:
@@ -78,18 +82,25 @@ class ChartTab(QWidget):
         self.symbol.activated.connect(lambda _i: self._show(self.symbol.currentText()))
         self.symbol.lineEdit().returnPressed.connect(
             lambda: self._show(self.symbol.currentText()))
-        refresh = QPushButton("حدّث القائمة  |  Refresh list")
+        self.symbol.setMinimumWidth(260)
+        self.symbol.lineEdit().setPlaceholderText("COMI.CA أو TVC:GOLD")
+        self.symbol.setToolTip("Pick a holding, or type any TradingView symbol and press Enter")
+        refresh = QPushButton("حدّث القائمة")
+        refresh.setToolTip("Reload your holdings and the policy universe")
         refresh.clicked.connect(self.reload_symbols)
         bar = QHBoxLayout()
-        bar.addWidget(QLabel("السهم  |  Symbol"))
-        bar.addWidget(self.symbol, 1)
+        bar.addWidget(QLabel("السهم"))
+        bar.addWidget(self.symbol)
         bar.addWidget(refresh)
+        bar.addStretch(1)
 
         # Off-the-record profile: no cookies shared with the Thndr X tab.
         self.profile = QWebEngineProfile(self)
         self.view = QWebEngineView()
         self.view.setPage(QWebEnginePage(self.profile, self.view))
         layout = QVBoxLayout(self)
+        layout.setContentsMargins(24, 16, 24, 20)
+        layout.setSpacing(12)
         layout.addLayout(bar)
         layout.addWidget(self.view, 1)
         self._shown = ""
@@ -116,7 +127,12 @@ class ChartTab(QWidget):
         symbol = symbol.strip()
         if symbol:
             self._shown = symbol
-            self.view.setHtml(widget_html(symbol), QUrl("https://egx-robo-advisor.invalid/chart"))
+            self.view.setHtml(widget_html(symbol, theme.current()),
+                              QUrl("https://egx-robo-advisor.invalid/chart"))
+
+    def set_theme(self, _name: str) -> None:
+        if self._shown:
+            self._show(self._shown)
 
     def release(self) -> None:
         """Drop the page before its profile; the main window calls this on close."""

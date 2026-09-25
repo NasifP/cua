@@ -13,7 +13,7 @@ import threading
 from datetime import date
 from typing import Any, Optional
 
-from PySide6.QtCore import QObject, Signal, Slot
+from PySide6.QtCore import QObject, Qt, Signal, Slot
 from PySide6.QtGui import QFont
 from PySide6.QtWidgets import (
     QComboBox,
@@ -33,8 +33,17 @@ from PySide6.QtWidgets import (
 from ..backtest.lab import LabReport, adopt, remove, run_lab
 from ..paths import PROJECT_ROOT, config_path
 from ..strategy.filters import RULE_KINDS, BuyFilter, load_rules
+from . import theme
 
 RULES_FILE = config_path("rules.toml")
+
+#: Arabic names for the rule kinds and their settings; RULE_KINDS keeps the English.
+RULE_LABELS = {
+    "sma": "منع الشراء لو السعر تحت متوسط N يوم",
+    "rsi": "منع الشراء لو RSI فوق مستوى معيّن (تشبّع شراء)",
+    "momentum": "منع الشراء بعد نزول حاد في N يوم",
+}
+PARAM_LABELS = {"days": "عدد الأيام", "above": "مستوى RSI", "fall_pct": "نسبة النزول %"}
 HISTORY_CACHE = PROJECT_ROOT / "state" / "history"
 
 
@@ -72,64 +81,83 @@ class LabTab(QWidget):
         self._param_widgets: dict[str, QDoubleSpinBox] = {}
 
         intro = QLabel(
-            "جرّب فكرة من أي موقع على تاريخ البورصة الحقيقي، بالعمولات. القاعدة تقدر "
-            "بس تمنع شراء، ومش هتتعتمد إلا لو كسبت بعد التكاليف في نصّي التاريخ.\n"
-            "Test an idea on real EGX history, with costs. A rule can only skip buys, "
-            "and can be adopted only if it wins after costs in both halves."
+            "القاعدة تقدر بس تمنع شراء، ومش هتتعتمد إلا لو كسبت بعد العمولات في التاريخ "
+            "كله وفي كل نص منه لوحده."
         )
+        intro.setToolTip("A rule can only skip buys, and can be adopted only if it wins "
+                         "after costs over the whole history and in each half.")
+        intro.setProperty("muted", "true")
         intro.setWordWrap(True)
 
         self.kind = QComboBox()
         for kind, spec in RULE_KINDS.items():
-            self.kind.addItem(spec["label"], kind)
+            self.kind.addItem(RULE_LABELS.get(kind, spec["label"]), kind)
+            self.kind.setItemData(self.kind.count() - 1, spec["label"], Qt.ToolTipRole)
         self.kind.currentIndexChanged.connect(self._rebuild_params)
         self.params_form = QFormLayout()
         self.years = QSpinBox()
         self.years.setRange(2, 20)
         self.years.setValue(8)
-        self.years.setSuffix(" years")
+        self.years.setSuffix(" سنين")
         self.source = QComboBox()
-        self.source.addItem("Real EGX prices (Yahoo)", False)
-        self.source.addItem("Synthetic (checks the engine; never adoptable)", True)
-        self.run_button = QPushButton("شغّل الاختبار  |  Run")
+        self.source.addItem("أسعار البورصة الحقيقية (Yahoo)", False)
+        self.source.addItem("أسعار وهمية: لاختبار البرنامج بس، ومش بتتعتمد", True)
+        self.run_button = QPushButton("شغّل الاختبار")
+        self.run_button.setProperty("variant", "primary")
+        self.run_button.setToolTip("Replay the policy with and without the rule")
         self.run_button.clicked.connect(self.run)
 
-        setup = QGroupBox("القاعدة  |  Rule")
+        setup = QGroupBox("القاعدة")
         form = QFormLayout(setup)
-        form.addRow("Rule", self.kind)
+        form.setSpacing(10)
+        form.addRow(intro)
+        form.addRow("القاعدة", self.kind)
         form.addRow(self.params_form)
-        form.addRow("History", self.years)
-        form.addRow("Prices", self.source)
+        form.addRow("التاريخ", self.years)
+        form.addRow("الأسعار", self.source)
         form.addRow(self.run_button)
 
+        self.verdict = QLabel("")
+        self.verdict.setWordWrap(True)
         self.output = QPlainTextEdit()
         self.output.setReadOnly(True)
         self.output.setFont(QFont("Consolas, Menlo, monospace", 10))
-        self.adopt_button = QPushButton("اعتمد القاعدة  |  Adopt")
+        self.output.setLayoutDirection(Qt.LeftToRight)  # the report is an English table
+        self.adopt_button = QPushButton("اعتمد القاعدة")
+        self.adopt_button.setProperty("variant", "primary")
+        self.adopt_button.setToolTip("Enabled only for a rule that passed")
         self.adopt_button.setEnabled(False)
         self.adopt_button.clicked.connect(self.adopt)
+        result_box = QGroupBox("النتيجة")
+        result_layout = QVBoxLayout(result_box)
+        result_layout.setSpacing(10)
+        result_layout.addWidget(self.verdict)
+        result_layout.addWidget(self.output, 1)
+        result_layout.addWidget(self.adopt_button)
 
         self.adopted = QListWidget()
-        remove_button = QPushButton("احذف المحدد  |  Remove selected")
+        remove_button = QPushButton("احذف المحددة")
+        remove_button.setProperty("variant", "ghost")
         remove_button.clicked.connect(self.remove_selected)
-        adopted_box = QGroupBox("قواعد معتمدة يستخدمها البوت  |  Rules the bot uses")
+        adopted_box = QGroupBox("القواعد اللي البوت بيستخدمها")
         adopted_layout = QVBoxLayout(adopted_box)
         adopted_layout.addWidget(self.adopted)
-        adopted_layout.addWidget(remove_button)
+        adopted_layout.addWidget(remove_button, 0, Qt.AlignRight)
 
         left = QVBoxLayout()
-        left.addWidget(intro)
+        left.setSpacing(4)
         left.addWidget(setup)
         left.addWidget(adopted_box, 1)
-        right = QVBoxLayout()
-        right.addWidget(self.output, 1)
-        right.addWidget(self.adopt_button)
         layout = QHBoxLayout(self)
+        layout.setContentsMargins(24, 8, 24, 20)
+        layout.setSpacing(18)
         layout.addLayout(left, 2)
-        layout.addLayout(right, 3)
+        layout.addWidget(result_box, 3)
 
         self._rebuild_params()
         self._refresh_adopted()
+        theme.say(self.verdict, "اختار قاعدة واضغط \"شغّل الاختبار\". النتيجة هتظهر هنا: "
+                  "العائد، وأقصى نزول، والعمولات، والحكم النهائي.", "info")
 
     def _rebuild_params(self) -> None:
         while self.params_form.rowCount():
@@ -140,7 +168,7 @@ class LabTab(QWidget):
             box.setRange(low, high)
             box.setDecimals(0)
             box.setValue(default)
-            self.params_form.addRow(name, box)
+            self.params_form.addRow(PARAM_LABELS.get(name, name), box)
             self._param_widgets[name] = box
 
     def _rule(self) -> BuyFilter:
@@ -154,6 +182,7 @@ class LabTab(QWidget):
         self.run_button.setEnabled(False)
         self.adopt_button.setEnabled(False)
         self.output.setPlainText(f"Fetching {years} years of prices and replaying ...")
+        theme.say(self.verdict, "بيجرّب ... ممكن ياخد دقيقة أول مرة.", "info")
 
         def work() -> None:
             try:
@@ -171,8 +200,14 @@ class LabTab(QWidget):
         self._report = report
         if report is None:
             self.output.setPlainText("The test could not run:\n" + error)
+            theme.say(self.verdict, "الاختبار ماشتغلش. التفاصيل تحت.", "bad")
             return
         self.output.setPlainText(report.render())
+        if report.passed:
+            theme.say(self.verdict, "نجحت: كسبت بعد العمولات في التاريخ كله وفي كل نص. "
+                      "تقدر تعتمدها.", "ok")
+        else:
+            theme.say(self.verdict, "مش هتتعتمد: " + report.verdict(), "bad")
         self.adopt_button.setEnabled(report.passed)
 
     @Slot()
@@ -186,6 +221,7 @@ class LabTab(QWidget):
             return
         self.adopt_button.setEnabled(False)
         self.output.appendPlainText("\nAdopted. The bot applies it from its next cycle.")
+        theme.say(self.verdict, "اتعتمدت. البوت هيطبّقها من الدورة الجاية.", "ok")
         self._refresh_adopted()
 
     @Slot()
@@ -206,4 +242,4 @@ class LabTab(QWidget):
         for a in rules:
             self.adopted.addItem(f"{a.rule.describe()}   (adopted {a.adopted_on}; {a.evidence})")
         if not rules:
-            self.adopted.addItem("none yet")
+            self.adopted.addItem("لسه مفيش قواعد معتمدة")

@@ -82,3 +82,29 @@ def test_feeds_keep_the_defaults_and_can_be_disabled(app, tmp_path, monkeypatch)
     tab.toggle_feed()
     assert "https://example.com/rss" not in {s.url for s in load_feeds(feeds)}
     assert len(read_feed_entries(feeds)) == defaults + 1
+
+
+def test_theme_name_falls_back_to_dark():
+    from egx_advisor.desktop import theme
+
+    assert theme.name_from_env({"EGX_THEME": "Light"}) == "light"
+    assert theme.name_from_env({"EGX_THEME": "neon"}) == "dark"
+    assert theme.name_from_env({}) == "dark"
+
+
+def test_both_themes_build_a_stylesheet_and_icons(app):
+    from egx_advisor.desktop import theme
+
+    for name in theme.THEMES:
+        sheet = theme.stylesheet(name)
+        assert theme.THEMES[name]["accent"] in sheet
+        assert "{" in sheet and "{{" not in sheet
+    theme.apply(app, "light")
+    assert theme.current() == "light"
+    assert not theme.icon("dashboard").isNull()
+    theme.apply(app, "dark")
+
+
+def test_chart_follows_the_theme():
+    assert 'theme: "light"' in chart_tab.widget_html("COMI.CA", "light")
+    assert 'theme: "dark"' in chart_tab.widget_html("COMI.CA", "unknown")

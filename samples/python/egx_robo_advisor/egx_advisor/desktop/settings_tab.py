@@ -30,6 +30,7 @@ from PySide6.QtWidgets import (
 from .. import settings
 from ..execution.thndr import ThndrUiMap
 from ..paths import ui_map_path
+from . import theme
 
 
 class _TestSignals(QObject):
@@ -63,8 +64,9 @@ class SettingsTab(QWidget):
         scroll.setWidgetResizable(True)
         scroll.setWidget(body)
 
-        self.save_button = QPushButton("حفظ  |  Save")
-        self.save_button.setStyleSheet("font-weight:bold; padding:8px 24px;")
+        self.save_button = QPushButton("حفظ الإعدادات")
+        self.save_button.setProperty("variant", "primary")
+        self.save_button.setMinimumWidth(160)
         self.save_button.clicked.connect(self.save)
         self.message = QLabel("")
         self.message.setWordWrap(True)
@@ -72,7 +74,11 @@ class SettingsTab(QWidget):
         footer.addWidget(self.message, 1)
         footer.addWidget(self.save_button)
 
+        column.setContentsMargins(24, 0, 24, 12)
+        column.setSpacing(4)
+        footer.setContentsMargins(24, 10, 24, 16)
         layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
         layout.addWidget(scroll, 1)
         layout.addLayout(footer)
         self.reload()
@@ -80,7 +86,7 @@ class SettingsTab(QWidget):
     # ------------------------------------------------------------------ building
 
     def _keys_box(self) -> QGroupBox:
-        box = QGroupBox("مفاتيح API  |  API keys")
+        box = QGroupBox("مفاتيح API")
         form = QFormLayout(box)
         if not self._store.available:
             where = ".env (no credential store on this system)"
@@ -88,8 +94,9 @@ class SettingsTab(QWidget):
             where = "Windows Credential Manager"
         else:
             where = "the system keyring"
-        note = QLabel(f"Keys are saved to {where}. A saved key is never shown again; "
-                      "type a new one to replace it.")
+        note = QLabel(f"المفاتيح بتتحفظ في {where}، ومش بتظهر تاني بعد الحفظ. "
+                      "لو عاوز تغيّر مفتاح، اكتب الجديد مكانه.")
+        note.setProperty("muted", "true")
         note.setWordWrap(True)
         form.addRow(note)
         for spec in settings.SECRET_FIELDS:
@@ -97,8 +104,10 @@ class SettingsTab(QWidget):
             edit.setEchoMode(QLineEdit.Password)
             edit.setPlaceholderText(spec.help)
             status = QLabel("")
-            status.setMinimumWidth(170)
+            status.setMinimumWidth(90)
+            status.setAlignment(Qt.AlignCenter)
             remove = QPushButton("حذف")
+            remove.setProperty("variant", "ghost")
             remove.setToolTip(f"Remove the stored {spec.key}")
             remove.clicked.connect(lambda _=False, k=spec.key: self._mark_remove(k))
             row = QHBoxLayout()
@@ -111,7 +120,7 @@ class SettingsTab(QWidget):
         return box
 
     def _models_box(self) -> QGroupBox:
-        box = QGroupBox("الموديلات  |  Models")
+        box = QGroupBox("الموديلات")
         form = QFormLayout(box)
         note = QLabel(settings.MODEL_FIELDS[1].help)
         note.setWordWrap(True)
@@ -123,7 +132,8 @@ class SettingsTab(QWidget):
             combo.setToolTip(spec.help)
             if not spec.default:
                 combo.lineEdit().setPlaceholderText("empty: same as the Chat model")
-            test = QPushButton("جرّب  |  Test")
+            test = QPushButton("جرّب")
+            test.setToolTip("Send one short request with the saved key")
             test.clicked.connect(lambda _=False, k=spec.key: self._test(k))
             row = QHBoxLayout()
             row.addWidget(combo, 1)
@@ -133,7 +143,7 @@ class SettingsTab(QWidget):
         return box
 
     def _behaviour_box(self) -> QGroupBox:
-        box = QGroupBox("السلوك والحدود  |  Behaviour and limits")
+        box = QGroupBox("السلوك والحدود")
         form = QFormLayout(box)
         for spec in settings.BEHAVIOUR_FIELDS:
             if spec.kind == "bool":
@@ -147,7 +157,7 @@ class SettingsTab(QWidget):
         return box
 
     def _fixed_box(self) -> QGroupBox:
-        box = QGroupBox("لا تتغير من هنا  |  Not editable here")
+        box = QGroupBox("حاجات مش بتتغير من هنا")
         form = QFormLayout(box)
         try:
             ui = ThndrUiMap.from_toml(ui_map_path())
@@ -176,8 +186,9 @@ class SettingsTab(QWidget):
         state = settings.load(store=self._store)
         for key, status in self._secret_status.items():
             source = state.secret_sources.get(key, "")
-            status.setText(f"saved in {source}" if source else "not set")
-            status.setStyleSheet("color:#2e7d32;" if source else "color:#888;")
+            status.setText("محفوظ" if source else "مش متسجل")
+            status.setToolTip(f"saved in {source}" if source else "not set")
+            theme.restyle_pill(status, "ok" if source else "muted")
             self._secret_inputs[key].clear()
         self._remove.clear()
         for key, widget in self._inputs.items():
@@ -195,8 +206,8 @@ class SettingsTab(QWidget):
     def _mark_remove(self, key: str) -> None:
         self._remove.add(key)
         self._secret_inputs[key].clear()
-        self._secret_status[key].setText("will be removed on Save")
-        self._secret_status[key].setStyleSheet("color:#c62828;")
+        self._secret_status[key].setText("هيتمسح لما تحفظ")
+        theme.restyle_pill(self._secret_status[key], "bad")
 
     def _collect(self) -> dict[str, str]:
         values = {}
@@ -259,5 +270,4 @@ class SettingsTab(QWidget):
         self._say(f"{model}: {message}", error=not ok)
 
     def _say(self, text: str, *, error: bool = False) -> None:
-        self.message.setText(text)
-        self.message.setStyleSheet("color:#c62828;" if error else "color:#2e7d32;")
+        theme.say(self.message, text, "bad" if error else "ok")
