@@ -89,6 +89,9 @@ QPushButton#NavButton {{
 QPushButton#NavButton:hover {{ background: {t['raised']}; color: {t['text']}; }}
 QPushButton#NavButton:checked {{ background: {t['accent_soft']}; color: {t['accent']}; }}
 
+QWidget#SidePanel {{ background: {t['surface']}; border-{start}: 1px solid {t['border']}; }}
+QSplitter::handle {{ background: {t['border']}; width: 1px; }}
+
 /* ---- page header ---- */
 QWidget#Header {{ background: {t['bg']}; border-bottom: 1px solid {t['border']}; }}
 QLabel#PageTitle {{ font-size: 17pt; font-weight: 700; }}

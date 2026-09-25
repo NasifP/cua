@@ -94,6 +94,9 @@ BEHAVIOUR_FIELDS: tuple[Field, ...] = (
     Field("EGX_DAILY_CALL_LIMIT", "Daily model call limit", "int",
           "A backstop that works even for models without a known price.",
           default="400", minimum=1, maximum=100000),
+    Field("EGX_TICKET_FILL", "Fill buy tickets in Thndr X", "bool",
+          "When on, the Thndr X tab can write an order's quantity and price into an open "
+          "buy ticket when you press Fill. It never presses Buy.", default="false"),
 )
 
 ALL_FIELDS: tuple[Field, ...] = SECRET_FIELDS + MODEL_FIELDS + BEHAVIOUR_FIELDS
