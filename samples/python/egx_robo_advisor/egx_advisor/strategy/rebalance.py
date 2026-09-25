@@ -91,6 +91,8 @@ def plan_rebalance(
     regime: Optional[RegimeState] = None,
     last_traded: Optional[Mapping[str, date]] = None,
     today: Optional[date] = None,
+    targets: Optional[Mapping[str, Decimal]] = None,
+    state: Optional[str] = None,
 ) -> RebalancePlan:
     """Produce the unfiltered rebalancing plan.
 
@@ -98,6 +100,10 @@ def plan_rebalance(
     it to decide what to buy. Suppression is the regime filter's job, applied to
     this plan afterwards, so that the two concerns stay separable and each stays
     testable. See regime/filter.py for why the ordering matters.
+
+    `targets` and `state` come from another strategy (strategy/four_factor.py)
+    in place of the policy's fixed allocation; everything after -- bands,
+    turnover cap, T+2 cash, lots -- is the same for both.
     """
     now = market.as_of
     today = today or now.date()
@@ -115,9 +121,11 @@ def plan_rebalance(
         )
 
     depreciation = market.egp_depreciation
-    targets = policy.target_weights(depreciation)
+    if targets is None:
+        targets = policy.target_weights(depreciation)
+    targets = dict(targets)
     current = {symbol: portfolio.weight_of(symbol) for symbol in targets}
-    policy_state = policy.describe(depreciation)
+    policy_state = state or policy.describe(depreciation)
 
     # --------------------------------------------------------------- drift pass
     candidates: list[tuple[Decimal, ProposedOrder]] = []

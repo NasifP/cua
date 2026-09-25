@@ -30,6 +30,7 @@ from ..clock import TradingCalendar
 from ..regime.filter import RegimeFilter
 from ..regime.sentiment import KeywordClassifier
 from ..strategy.filters import BuyFilter, apply_buy_filters
+from ..strategy.four_factor import FourFactorParams, decide
 from ..strategy.policy import AllocationPolicy
 from ..strategy.rebalance import plan_rebalance
 from ..types import (
@@ -60,6 +61,9 @@ class BacktestConfig:
     min_days_between_cycles: int = 1
     #: Indicator rules that may only skip buys (strategy/filters.py).
     buy_filters: Sequence[BuyFilter] = ()
+    #: Trend + Momentum + Volume + Volatility decide the holdings instead of the
+    #: policy's fixed allocation (strategy/four_factor.py). None: the policy.
+    four_factor: Optional[FourFactorParams] = None
     label: str = "policy"
 
     def fill_model(self) -> FillModel:
@@ -124,12 +128,22 @@ def run_backtest(history: PriceHistory, config: BacktestConfig) -> BacktestResul
                 demo_confirmed=True,
             )
 
+            targets, state = None, None
+            if config.four_factor is not None:
+                # closes/volumes hold sessions before today only.
+                decision = decide(
+                    policy.universe, closes, volumes,
+                    {s: portfolio.weight_of(s) for s in quantities}, config.four_factor,
+                )
+                targets, state = decision.targets, decision.describe()
             plan = plan_rebalance(
                 portfolio=portfolio,
                 market=market,
                 policy=policy,
                 last_traded=last_traded,
                 today=day,
+                targets=targets,
+                state=state,
             )
             orders = plan.orders
 

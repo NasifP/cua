@@ -40,6 +40,7 @@ from egx_advisor.marketdata import JsonFileMarketData, YahooMarketData  # noqa: 
 from egx_advisor.paths import bus_path, ui_map_path  # noqa: E402
 from egx_advisor.safety.demo_guard import DemoGuard  # noqa: E402
 from egx_advisor.safety.modes import ExecutionMode  # noqa: E402
+from egx_advisor.strategy.four_factor import FourFactorParams  # noqa: E402
 
 
 def _load_env_file() -> str:
@@ -232,6 +233,11 @@ async def main() -> None:
             execute_orders=not args.dry_run,
             mode=mode,
             ui=ui,
+            four_factor=(
+                FourFactorParams()
+                if os.environ.get("EGX_FOUR_FACTOR", "").strip().lower() == "true"
+                else None
+            ),
         ),
         computer=computer,
         market_data=(

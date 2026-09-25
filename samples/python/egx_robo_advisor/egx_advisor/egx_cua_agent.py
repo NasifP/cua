@@ -63,6 +63,7 @@ from .safety.demo_guard import DemoGuard, DemoModeViolation
 from .safety.guarded_interface import GuardedInterface, KillSwitchEngaged
 from .safety.modes import ExecutionMode, OrderTicketsForbidden
 from .strategy.filters import apply_buy_filters, load_rules
+from .strategy.four_factor import FourFactorDecision, FourFactorParams, decide
 from .strategy.policy import AllocationPolicy
 from .strategy.rebalance import plan_rebalance
 from .types import AgentPhase, RegimeState, RiskState, Side
@@ -99,6 +100,9 @@ class AgentConfig:
     ui: ThndrUiMap = field(default_factory=ThndrUiMap)
     policy: AllocationPolicy = field(default_factory=AllocationPolicy)
     holidays: frozenset[date] = frozenset()
+    #: Trend + Momentum + Volume + Volatility decide the holdings instead of the
+    #: policy's fixed allocation (strategy/four_factor.py). None: the policy.
+    four_factor: Optional[FourFactorParams] = None
 
     def __post_init__(self) -> None:
         # A mode that cannot touch an order at all must not be paired with
@@ -152,6 +156,7 @@ class EgxCuaAgent:
         self.rules_path: Optional[Path] = config_path("rules.toml")
         self._closes: dict[str, list[Decimal]] = {}
         self._volumes: dict[str, list[Decimal]] = {}
+        self._four_factor: Optional[FourFactorDecision] = None
         self._closes_day: Optional[date] = None
         self._closes_days = 0
         self.classifiers: tuple[Classifier, ...] = tuple(
@@ -418,6 +423,7 @@ class EgxCuaAgent:
 
         # --- Gate 5: plan, filter, execute -------------------------------------
         self.bus.put("status", {"phase": AgentPhase.PLANNING.value})
+        targets, state = await self._four_factor_targets(now, portfolio)
         plan = plan_rebalance(
             portfolio=portfolio,
             market=market,
@@ -425,6 +431,8 @@ class EgxCuaAgent:
             regime=regime,
             last_traded=self._last_traded,
             today=now.date(),
+            targets=targets,
+            state=state,
         )
         allowed, suppressed = self.regime_filter.apply(plan.orders, regime)
         allowed, suppressed = await self._apply_adopted_rules(now, allowed, suppressed)
@@ -541,6 +549,25 @@ class EgxCuaAgent:
             (o, f"lab rule: {why}") for o, why in dropped
         )
 
+    async def _four_factor_targets(
+        self, now: datetime, portfolio: Any
+    ) -> tuple[Optional[dict[str, Decimal]], Optional[str]]:
+        """Holdings from the four factors, when that strategy is chosen.
+
+        Missing prices keep a name where it is (see four_factor.decide), so a
+        data outage plans no trades rather than a sell-off.
+        """
+        params = self.config.four_factor
+        self._four_factor = None
+        if params is None:
+            return None, None
+        closes = await self._recent_closes(now, params.lookback)
+        universe = self.config.policy.universe
+        decision = decide(universe, closes, self._volumes,
+                          {i.symbol: portfolio.weight_of(i.symbol) for i in universe}, params)
+        self._four_factor = decision
+        return decision.targets, decision.describe()
+
     async def _recent_closes(self, now: datetime, days: int) -> dict[str, list[Decimal]]:
         day = now.date()
         if self._closes_day == day and self._closes_days >= days:
@@ -656,6 +683,11 @@ class EgxCuaAgent:
                     {"symbol": o.symbol, "side": o.side.value, "reason": reason}
                     for o, reason in suppressed
                 ],
+                "four_factor": {
+                    symbol: {"action": action, "reason": self._four_factor.reasons[symbol],
+                             "target": str(self._four_factor.targets.get(symbol, 0))}
+                    for symbol, action in self._four_factor.actions.items()
+                } if self._four_factor is not None else None,
                 "skipped": [
                     {"symbol": s.symbol, "side": s.side.value, "reason": s.reason}
                     for s in plan.skipped

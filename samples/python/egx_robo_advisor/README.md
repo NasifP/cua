@@ -348,6 +348,16 @@ them can create, enlarge or flip an order.
   and the bot applies it from its next cycle; without enough price history
   it skips the buy rather than guess. The lab tests one rule set at a time
   and never ranks parameter values (see `docs/NO_OVERFIT_CHARTER.md`).
+- **Four-factor strategy** (Settings -> *Four-factor strategy*, off by
+  default). Instead of the fixed allocation, trend, momentum, volume and
+  volatility decide what to hold: buy when all four agree, hold while trend
+  and momentum hold, sell when either breaks, and size each name inversely to
+  its volatility (capped per name; the rest stays in cash). Missing prices
+  keep a name where it is, never a sell-off. The news brake, lab rules,
+  turnover cap, T+2 cash and you pressing Buy all still apply. The Strategy
+  Lab's *Compare the full strategy with the current plan* replays both on
+  the same history with costs; switch only if it wins. It trades far more
+  often than the fixed allocation, so commissions are its main hurdle.
 - **Chart** tab. TradingView's embeddable chart for your holdings and the
   policy universe, in a private browser profile apart from the Thndr X
   session. It is for you to look at; nothing on it reaches the bot.
