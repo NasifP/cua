@@ -36,6 +36,7 @@ import urllib.request
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from typing import Iterable, Optional, Sequence
 
 from ..types import Headline
@@ -68,6 +69,84 @@ DEFAULT_SOURCES: tuple[FeedSource, ...] = (
     FeedSource("Mubasher Egypt", "https://www.mubasher.info/rss/news?market=EGX"),
     FeedSource("Enterprise MEA", "https://enterprise.press/feed/"),
 )
+
+
+def load_feeds(path: "Path") -> tuple[FeedSource, ...]:
+    """Feeds from config/feeds.toml; the built-in set when the file is absent.
+
+    The file existed but nothing read it, so editing it changed nothing. An
+    entry with `enabled = false` is kept in the file and skipped here.
+    """
+    import tomllib
+
+    if not path.exists():
+        return DEFAULT_SOURCES
+    raw = tomllib.loads(path.read_text(encoding="utf-8"))
+    sources = []
+    for entry in raw.get("source", []):
+        if not entry.get("enabled", True):
+            continue
+        url = str(entry.get("url", "")).strip()
+        if not url.startswith(("https://", "http://")):
+            raise ValueError(f"{path}: feed {entry.get('name')!r} has no http(s) url")
+        sources.append(
+            FeedSource(
+                name=str(entry.get("name") or url),
+                url=url,
+                authoritative=bool(entry.get("authoritative", False)),
+                min_interval=float(entry.get("min_interval", 120)),
+            )
+        )
+    return tuple(sources)
+
+
+def save_feeds(path: "Path", entries: Sequence[dict]) -> None:
+    """Write feeds.toml from [{name, url, authoritative, enabled}], keeping the header."""
+    header = []
+    if path.exists():
+        for line in path.read_text(encoding="utf-8").splitlines():
+            if line.startswith("#") or not line.strip():
+                header.append(line)
+            else:
+                break
+    lines = header or ["# News sources for the regime filter (circuit breaker).", ""]
+    if lines[-1].strip():
+        lines.append("")
+
+    def quote(value: str) -> str:
+        return '"' + value.replace("\\", "\\\\").replace('"', '\\"').replace("\n", " ") + '"'
+
+    for entry in entries:
+        lines += [
+            "[[source]]",
+            f"name = {quote(str(entry['name']))}",
+            f"url = {quote(str(entry['url']))}",
+            f"authoritative = {'true' if entry.get('authoritative') else 'false'}",
+            f"enabled = {'true' if entry.get('enabled', True) else 'false'}",
+            f"min_interval = {int(entry.get('min_interval', 120))}",
+            "",
+        ]
+    path.write_text("\n".join(lines), encoding="utf-8")
+
+
+def read_feed_entries(path: "Path") -> list[dict]:
+    """Every entry in feeds.toml, enabled or not, for the Settings page."""
+    import tomllib
+
+    if not path.exists():
+        return [
+            {"name": s.name, "url": s.url, "authoritative": s.authoritative,
+             "enabled": True, "min_interval": s.min_interval}
+            for s in DEFAULT_SOURCES
+        ]
+    raw = tomllib.loads(path.read_text(encoding="utf-8"))
+    return [
+        {"name": e.get("name", ""), "url": e.get("url", ""),
+         "authoritative": bool(e.get("authoritative", False)),
+         "enabled": bool(e.get("enabled", True)),
+         "min_interval": e.get("min_interval", 120)}
+        for e in raw.get("source", [])
+    ]
 
 
 @dataclass

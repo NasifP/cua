@@ -41,6 +41,7 @@ from contextlib import suppress
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
+from pathlib import Path
 from typing import Any, Mapping, Optional, Sequence
 
 from .bus import EventKind, StateBus
@@ -53,15 +54,18 @@ from .execution.thndr import (
     ThndrUiMap,
 )
 from .marketdata import MarketDataError, MarketDataProvider
+from .paths import config_path
+from .regime.events import EventCalendarError, active_events, load_events, upcoming
 from .regime.filter import RegimeFilter
 from .regime.sentiment import Classifier, KeywordClassifier, LlmClassifier, combine
-from .regime.sources import NewsFetcher
+from .regime.sources import NewsFetcher, load_feeds
 from .safety.demo_guard import DemoGuard, DemoModeViolation
-from .safety.modes import ExecutionMode, OrderTicketsForbidden
 from .safety.guarded_interface import GuardedInterface, KillSwitchEngaged
+from .safety.modes import ExecutionMode, OrderTicketsForbidden
+from .strategy.filters import apply_buy_filters, load_rules
 from .strategy.policy import AllocationPolicy
 from .strategy.rebalance import plan_rebalance
-from .types import AgentPhase, RegimeState, RiskState
+from .types import AgentPhase, RegimeState, RiskState, Side
 
 logger = logging.getLogger(__name__)
 
@@ -141,7 +145,14 @@ class EgxCuaAgent:
         self._market_data = market_data
         self._agent_factory = agent_factory
         self.bus = bus or StateBus(config.bus_path)
-        self.news = news_fetcher or NewsFetcher()
+        self.news = news_fetcher or NewsFetcher(load_feeds(config_path("feeds.toml")))
+        #: Re-read each cycle, so an event added in Settings applies without a
+        #: restart. None in tests that do not care.
+        self.events_path: Optional[Path] = config_path("events.toml")
+        self.rules_path: Optional[Path] = config_path("rules.toml")
+        self._closes: dict[str, list[Decimal]] = {}
+        self._closes_day: Optional[date] = None
+        self._closes_days = 0
         self.classifiers: tuple[Classifier, ...] = tuple(
             classifiers
             if classifiers is not None
@@ -415,6 +426,7 @@ class EgxCuaAgent:
             today=now.date(),
         )
         allowed, suppressed = self.regime_filter.apply(plan.orders, regime)
+        allowed, suppressed = await self._apply_adopted_rules(now, allowed, suppressed)
         self._publish_plan(plan, allowed, suppressed)
 
         if not allowed:
@@ -483,16 +495,92 @@ class EgxCuaAgent:
         feed_age = (
             (now - self._last_feed_ok).total_seconds() if self._last_feed_ok else None
         )
+        failed = tuple(name for name, _ in poll.failures)
+        official = {s.name for s in getattr(self.news, "sources", ()) if s.authoritative}
         regime = self.regime_filter.evaluate(
             assessments,
             now=now,
             feed_age_seconds=feed_age,
-            sources_failed=tuple(name for name, _ in poll.failures),
+            sources_failed=failed,
             in_session=in_session,
+            authoritative_failed=tuple(n for n in failed if n in official),
+            scheduled=self._scheduled_events(now),
         )
         self._regime = regime
         self._publish_regime(poll_failures=poll.failures, headline_count=len(poll.headlines))
         return regime
+
+    async def _apply_adopted_rules(
+        self, now: datetime, allowed: Sequence[Any], suppressed: Sequence[Any]
+    ) -> tuple[tuple[Any, ...], tuple[Any, ...]]:
+        """Skip buys that a rule adopted from the Strategy Lab objects to.
+
+        Closes come from the market-data provider once per Cairo day. When they
+        cannot be had, every rule reports too little history, so buys are
+        skipped with that reason: a rule that cannot evaluate does not wave
+        orders through.
+        """
+        if self.rules_path is None:
+            return tuple(allowed), tuple(suppressed)
+        try:
+            adopted = load_rules(self.rules_path)
+        except Exception as exc:  # noqa: BLE001 - a broken rules file stops buys
+            reason = f"rules file unreadable: {exc}"
+            buys = [o for o in allowed if o.side is Side.BUY]
+            return (
+                tuple(o for o in allowed if o.side is not Side.BUY),
+                tuple(suppressed) + tuple((o, reason) for o in buys),
+            )
+        if not adopted:
+            return tuple(allowed), tuple(suppressed)
+        rules = [a.rule for a in adopted]
+        closes = await self._recent_closes(now, max(r.lookback for r in rules))
+        kept, dropped = apply_buy_filters(list(allowed), rules, closes)
+        return tuple(kept), tuple(suppressed) + tuple(
+            (o, f"lab rule: {why}") for o, why in dropped
+        )
+
+    async def _recent_closes(self, now: datetime, days: int) -> dict[str, list[Decimal]]:
+        day = now.date()
+        if self._closes_day == day and self._closes_days >= days:
+            return self._closes
+        fetch = getattr(self._market_data, "history", None)
+        closes: dict[str, list[Decimal]] = {}
+        if fetch is not None:
+            try:
+                # Calendar days, with room for weekends and holidays.
+                rows = await fetch(self.config.policy.universe, days=int(days * 1.6) + 10)
+                closes = {
+                    symbol: [r.close for r in series if r.day < day]
+                    for symbol, series in rows.items()
+                }
+            except Exception as exc:  # noqa: BLE001
+                self.bus.publish(
+                    EventKind.ERROR,
+                    f"price history for lab rules unavailable, buys skipped: {exc}",
+                    phase="planning",
+                )
+        self._closes, self._closes_day, self._closes_days = closes, day, days
+        return closes
+
+    def _scheduled_events(self, now: datetime) -> tuple[str, ...]:
+        """Titles of listed events around today. An unreadable file halts buys."""
+        if self.events_path is None:
+            return ()
+        try:
+            events = load_events(self.events_path)
+        except EventCalendarError as exc:
+            return (f"events file unreadable, buys stopped until fixed: {exc}",)
+        self.bus.put(
+            "events",
+            {"upcoming": [
+                {"date": e.day.isoformat(), "title": e.title, "impact": e.impact}
+                for e in upcoming(events, now)
+            ]},
+        )
+        return tuple(
+            f"{e.title} ({e.day.isoformat()}, {e.impact})" for e in active_events(events, now)
+        )
 
     def _classify_safely(self, classifier: Classifier, headlines: Sequence[Any]):
         """A classifier that raises must not take the regime layer down with it."""

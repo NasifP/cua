@@ -29,6 +29,7 @@ from typing import Mapping, Optional, Sequence
 from ..clock import TradingCalendar
 from ..regime.filter import RegimeFilter
 from ..regime.sentiment import KeywordClassifier
+from ..strategy.filters import BuyFilter, apply_buy_filters
 from ..strategy.policy import AllocationPolicy
 from ..strategy.rebalance import plan_rebalance
 from ..types import (
@@ -42,7 +43,7 @@ from ..types import (
     Tradability,
 )
 from .fills import FillModel
-from .types import Bar, BacktestResult, CostModel, DaySnapshot, PriceHistory
+from .types import BacktestResult, Bar, CostModel, DaySnapshot, PriceHistory
 
 
 @dataclass
@@ -57,6 +58,8 @@ class BacktestConfig:
     headlines: Mapping[date, Sequence[Headline]] = field(default_factory=dict)
     #: Rebalance at most this often. None means every session the bands allow.
     min_days_between_cycles: int = 1
+    #: Indicator rules that may only skip buys (strategy/filters.py).
+    buy_filters: Sequence[BuyFilter] = ()
     label: str = "policy"
 
     def fill_model(self) -> FillModel:
@@ -86,6 +89,9 @@ def run_backtest(history: PriceHistory, config: BacktestConfig) -> BacktestResul
         raise ValueError("history contains no session days")
 
     previous_close: dict[str, Decimal] = {}
+    #: Closes up to the previous session, for buy filters. Appended after each
+    #: day's decisions, so a rule never sees the day it is deciding on.
+    closes: dict[str, list[Decimal]] = {}
     result.starting_value = _value(quantities, history.bars_on(days[0]), cash)
 
     for day in days:
@@ -134,6 +140,9 @@ def run_backtest(history: PriceHistory, config: BacktestConfig) -> BacktestResul
                 risk_state = regime.risk_state
                 orders, _ = regime_filter.apply(orders, regime)
 
+            if config.buy_filters:
+                orders, _ = apply_buy_filters(orders, config.buy_filters, closes)
+
             for order in orders:
                 instrument = policy.instrument(order.symbol)
                 lot = instrument.lot_size if instrument else 1
@@ -163,6 +172,7 @@ def run_backtest(history: PriceHistory, config: BacktestConfig) -> BacktestResul
 
         for symbol, bar in bars.items():
             previous_close[symbol] = bar.close
+            closes.setdefault(symbol, []).append(bar.close)
 
         total = _value(quantities, bars, cash, previous_close)
         weights = {

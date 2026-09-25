@@ -55,7 +55,10 @@ from ..login_link import make_login_path
 from ..paths import PROJECT_ROOT, bus_path
 from ..safety.modes import ExecutionMode
 from .bridge import BridgeServer
+from .chart_tab import ChartTab
+from .lab_tab import LabTab
 from .settings_tab import SettingsTab
+from .sources_tab import SourcesTab
 
 DEFAULT_THNDR_URL = "https://x.thndr.app"
 BROWSER_PROFILE_DIR = PROJECT_ROOT / "state" / "browser"
@@ -180,10 +183,16 @@ class MainWindow(QMainWindow):
         self.thndr.load(QUrl(env.get("EGX_THNDR_URL") or DEFAULT_THNDR_URL))
 
         self.settings_tab = SettingsTab(on_saved=self.restart_processes)
+        self.chart_tab = ChartTab()
+        self.lab_tab = LabTab()
+        self.sources_tab = SourcesTab()
 
         self.tabs = QTabWidget()
         self.tabs.addTab(self.dashboard, "لوحة التحكم  |  Dashboard")
         self.tabs.addTab(self.thndr, "Thndr X")
+        self.tabs.addTab(self.chart_tab, "الشارت  |  Chart")
+        self.tabs.addTab(self.lab_tab, "معمل الاستراتيجيات  |  Strategy Lab")
+        self.tabs.addTab(self.sources_tab, "الأحداث والأخبار  |  Events && news")
         self.tabs.addTab(self.settings_tab, "الإعدادات  |  Settings")
         if notice:
             # Something needs setting before the bot can read anything: open there.
@@ -295,6 +304,7 @@ class MainWindow(QMainWindow):
         page = self.thndr.page()
         self.thndr.setPage(QWebEnginePage(self.thndr))
         page.deleteLater()
+        self.chart_tab.release()
         super().closeEvent(event)
 
 
