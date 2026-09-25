@@ -32,3 +32,8 @@ def bus_path() -> Path:
 
 def ui_map_path() -> Path:
     return project_path(DEFAULT_UI)
+
+
+def config_path(name: str) -> Path:
+    """config/<name>, anchored at the project root."""
+    return PROJECT_ROOT / "config" / name

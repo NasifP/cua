@@ -106,8 +106,15 @@ class RegimeFilter:
         feed_age_seconds: Optional[float] = None,
         sources_failed: Sequence[str] = (),
         in_session: bool = True,
+        authoritative_failed: Sequence[str] = (),
+        scheduled: Sequence[str] = (),
     ) -> RegimeState:
-        """Fold this poll's assessments into a RiskState."""
+        """Fold this poll's assessments into a RiskState.
+
+        `authoritative_failed` names official sources (the exchange's own
+        disclosures) that failed this poll; `scheduled` names listed market
+        events whose window covers today. Both can only add restriction.
+        """
         now = now or datetime.now(timezone.utc)
         # Kept separate and concatenated market-first at the end. `drivers[0]` is
         # what the dashboard headlines and what `_veto_reason` cites, so a
@@ -161,7 +168,9 @@ class RegimeFilter:
                 f"{len(elevated)} elevated items in one poll "
                 f"(threshold {self.config.elevated_items_for_halt})"
             )
-        else:
+        elif not sources_failed:
+            # A poll with failing sources saw less than it should have; it is
+            # not evidence that things are calm.
             self._clean_polls += 1
 
         # 4. Staleness and coverage. Only enforced in-session: outside trading
@@ -204,6 +213,22 @@ class RegimeFilter:
 
         if stale:
             risk_state = _max_restrictive(risk_state, RiskState.BUYS_HALTED)
+
+        # 6. The exchange's own disclosures are how halts and suspensions are
+        #    announced. Without them, in session, we cannot see the one kind of
+        #    news that matters most, so we stop buying.
+        if in_session and authoritative_failed:
+            risk_state = _max_restrictive(risk_state, RiskState.BUYS_HALTED)
+            market_drivers.insert(
+                0, f"official source unavailable: {', '.join(authoritative_failed)}"
+            )
+
+        # 7. Scheduled events (rate decisions, inflation prints): no new buys
+        #    around them. A bet on the outcome is not this bot's business.
+        if scheduled:
+            risk_state = _max_restrictive(risk_state, RiskState.BUYS_HALTED)
+            for title in scheduled:
+                market_drivers.insert(0, f"scheduled event: {title}")
 
         self._expire_symbol_blocks(now)
         blocked = frozenset(self._blocked_until)

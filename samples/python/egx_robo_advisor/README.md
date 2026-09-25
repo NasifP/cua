@@ -29,8 +29,9 @@ You need Windows 10 or 11, Chrome, and a Gemini API key (free at
 3. **Your key.** Open `.env` in Notepad and paste your Gemini key after
    `GEMINI_API_KEY=`. Nothing else in the file needs changing to start.
 4. **Open the app.** Double-click **`desktop.cmd`** (or the desktop shortcut).
-   One window opens with two tabs: **Dashboard** (plan, log, chat, START) and
-   **Thndr X**, a browser built into the app.
+   One window opens with these tabs: **Dashboard** (plan, log, chat, START),
+   **Thndr X** (a browser built into the app), **Chart** (TradingView),
+   **Strategy Lab**, **Events & news**, and **Settings**.
 5. **Sign in** to Thndr X in its tab and open **Positions**. The app remembers
    the sign-in in `state/browser`.
 6. **Run it.** On the Dashboard tab press **START THE BOT**, then **CONFIRM**.
@@ -287,6 +288,34 @@ URLs in `config/feeds.toml` actually resolve: a feed that 404s quietly is a
 coverage hole in the breaker.
 
 ---
+
+## Calendar, news sources, the Strategy Lab and the chart
+
+Trading sites are useful here in four ways, each kept subtractive: none of
+them can create, enlarge or flip an order.
+
+- **Economic calendar** (`config/events.toml`, **Events & news** tab). Add a
+  central bank rate decision or an inflation print with its date. No new buys
+  the day before, the day of and the day after a `high` event, and on the day
+  of a `medium` one. The file ships empty on purpose: dates are copied from
+  cbe.org.eg, CAPMAS or an economic calendar such as Investing.com's, never
+  guessed or scraped. An unreadable file stops buys until it is fixed.
+- **News sources** (`config/feeds.toml`, same tab). RSS or Atom feeds only,
+  with no logins; check each site's terms first. A source marked *Official*
+  (the exchange or a regulator) that fails during a session stops buys.
+  Feed changes apply after the bot restarts.
+- **Strategy Lab** tab. Test an indicator idea (price under an N-day average,
+  RSI above a level, a sharp N-day fall) as a reason to *skip* buys, on real
+  EGX history from Yahoo, with trading costs. It is adoptable only if
+  it beats the plain policy after costs over the whole history with an
+  interval that excludes zero, *and* in each half of the history on its own.
+  Synthetic prices never pass. An adopted rule goes to `config/rules.toml`
+  and the bot applies it from its next cycle; without enough price history
+  it skips the buy rather than guess. The lab tests one rule set at a time
+  and never ranks parameter values (see `docs/NO_OVERFIT_CHARTER.md`).
+- **Chart** tab. TradingView's embeddable chart for your holdings and the
+  policy universe, in a private browser profile apart from the Thndr X
+  session. It is for you to look at; nothing on it reaches the bot.
 
 ## The loop, and why the gates are in this order
 

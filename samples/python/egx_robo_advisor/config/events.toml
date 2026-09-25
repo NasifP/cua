@@ -1,0 +1,8 @@
+# Scheduled events that stop new buys around them (see egx_advisor/regime/events.py).
+# Edited from the desktop app's Settings tab, or by hand:
+#   [[event]]  date = 2026-11-20  title = "CBE MPC rate decision"  impact = "high"
+# high: no buys the day before, the day of, and the day after. medium: day of only.
+#
+# Deliberately empty: dates are not guessed. Add the Central Bank of Egypt's
+# MPC meeting dates from cbe.org.eg, and CAPMAS inflation release dates, or
+# copy them from an economic calendar such as Investing.com's.
