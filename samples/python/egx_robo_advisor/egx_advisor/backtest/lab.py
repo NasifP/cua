@@ -23,6 +23,7 @@ from datetime import date
 from pathlib import Path
 from typing import Optional, Sequence
 
+from ..i18n import tr
 from ..strategy.filters import BuyFilter
 from .engine import BacktestConfig, run_backtest, run_buy_and_hold
 from .metrics import Comparison, Metrics, compare, compute, sample_size_warning
@@ -54,16 +55,18 @@ class LabReport:
             and self.second_half.difference > 0
         )
 
-    def verdict(self) -> str:
+    def verdict(self, lang: str = "en") -> str:
         if self.synthetic:
-            return "not adoptable: tested on synthetic prices, which say nothing about EGX"
-        if self.passed:
-            return "passed: beats the plain policy after costs, in both halves"
-        if not self.full.conclusive:
-            return "no evidence it helps: the difference is indistinguishable from noise"
-        if self.full.difference <= 0:
-            return "it hurts: the plain policy did better after costs"
-        return "not consistent: it helped in one half of the history and not the other"
+            key = "verdict.synthetic"
+        elif self.passed:
+            key = "verdict.passed"
+        elif not self.full.conclusive:
+            key = "verdict.noise"
+        elif self.full.difference <= 0:
+            key = "verdict.hurts"
+        else:
+            key = "verdict.inconsistent"
+        return tr(key, lang=lang)
 
     def evidence(self) -> str:
         """One line kept with an adopted rule."""
@@ -73,29 +76,32 @@ class LabReport:
             f"{self.first_half.difference:+.2%} / {self.second_half.difference:+.2%}"
         )
 
-    def render(self) -> str:
+    def render(self, lang: str = "en") -> str:
+        def t(key: str) -> str:
+            return tr(key, lang=lang)
+
         rows = [
-            ("", "with rules", "policy", "buy & hold"),
-            ("total return", *(f"{m.total_return:+.1%}" for m in self._all())),
-            ("max drawdown", *(f"{m.max_drawdown:.1%}" for m in self._all())),
-            ("costs paid", *(f"{m.total_costs:,.0f}" for m in self._all())),
-            ("fills", *(str(m.fills) for m in self._all())),
+            ("", t("report.with_rules"), t("report.policy"), t("report.hold")),
+            (t("report.total_return"), *(f"{m.total_return:+.1%}" for m in self._all())),
+            (t("report.max_drawdown"), *(f"{m.max_drawdown:.1%}" for m in self._all())),
+            (t("report.costs"), *(f"{m.total_costs:,.0f}" for m in self._all())),
+            (t("report.fills"), *(str(m.fills) for m in self._all())),
         ]
         table = "\n".join(f"  {a:<14}{b:>14}{c:>14}{d:>14}" for a, b, c, d in rows)
         parts = [
-            "Rules: " + "; ".join(r.describe() for r in self.rules),
+            t("report.rules") + ": " + "; ".join(r.describe(lang) for r in self.rules),
             table,
             "",
-            "With rules vs plain policy (annualised):",
-            f"  whole history  {self.full.difference:+.2%}  "
-            f"95% interval [{self.full.ci_low:+.2%}, {self.full.ci_high:+.2%}]",
-            f"  first half     {self.first_half.difference:+.2%}",
-            f"  second half    {self.second_half.difference:+.2%}",
+            t("report.versus"),
+            f"  {t('report.whole'):<14} {self.full.difference:+.2%}  "
+            f"{t('report.interval')} [{self.full.ci_low:+.2%}, {self.full.ci_high:+.2%}]",
+            f"  {t('report.first'):<14} {self.first_half.difference:+.2%}",
+            f"  {t('report.second'):<14} {self.second_half.difference:+.2%}",
             "",
-            "Verdict: " + self.verdict(),
+            t("report.verdict") + ": " + self.verdict(lang),
         ]
         if self.warning:
-            parts += ["", "Note: " + self.warning]
+            parts += ["", t("report.note") + ": " + self.warning]
         return "\n".join(parts)
 
     def _all(self) -> tuple[Metrics, Metrics, Metrics]:

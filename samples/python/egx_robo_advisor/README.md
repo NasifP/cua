@@ -32,8 +32,10 @@ You need Windows 10 or 11, Chrome, and a Gemini API key (free at
    One window opens, in Arabic, with a sidebar: **Dashboard** (plan, log,
    chat, START), **Thndr X** (a browser built into the app), **Chart**
    (TradingView), **Strategy Lab**, **Events & news**, and **Settings**. The
-   header shows whether the bot is running and today's model spend; the
-   button above HALT switches between the dark and light theme.
+   header shows whether the bot is running and today's model spend. The
+   buttons above HALT switch the language (Arabic or English, everywhere in
+   the app including the dashboard) and the theme (dark or light). On a
+   phone, the dashboard has its own language button in the corner.
 5. **Sign in** to Thndr X in its tab and open **Positions**. The app remembers
    the sign-in in `state/browser`.
 6. **Run it.** On the Dashboard tab press **START THE BOT**, then **CONFIRM**.

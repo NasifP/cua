@@ -66,13 +66,12 @@ class BuyFilter:
         """Closes the rule needs before it can say anything."""
         return int(self.param("days")) + 1
 
-    def describe(self) -> str:
-        if self.kind == "sma":
-            return f"no buys below the {self.param('days'):.0f}-day average"
-        if self.kind == "rsi":
-            return f"no buys when RSI({self.param('days'):.0f}) > {self.param('above'):.0f}"
-        return (f"no buys after a {self.param('fall_pct'):.0f}% fall over "
-                f"{self.param('days'):.0f} days")
+    def describe(self, lang: str = "en") -> str:
+        from ..i18n import tr
+
+        return tr(f"rule.{self.kind}", lang=lang, days=f"{self.param('days'):.0f}",
+                  above=f"{self.param('above'):.0f}" if self.kind == "rsi" else "",
+                  fall=f"{self.param('fall_pct'):.0f}" if self.kind == "momentum" else "")
 
     def blocks(self, closes: Sequence[Decimal]) -> Optional[str]:
         """A reason to skip buying, from closes oldest-first up to yesterday.

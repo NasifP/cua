@@ -29,6 +29,7 @@ from PySide6.QtWidgets import (
 
 from .. import settings
 from ..execution.thndr import ThndrUiMap
+from ..i18n import tr
 from ..paths import ui_map_path
 from . import theme
 
@@ -51,6 +52,7 @@ class SettingsTab(QWidget):
         self._inputs: dict[str, QWidget] = {}
         self._signals = _TestSignals()
         self._signals.finished.connect(self._show_test_result)
+        self._texts: list[Callable[[], None]] = []
 
         body = QWidget()
         column = QVBoxLayout(body)
@@ -64,7 +66,7 @@ class SettingsTab(QWidget):
         scroll.setWidgetResizable(True)
         scroll.setWidget(body)
 
-        self.save_button = QPushButton("حفظ الإعدادات")
+        self.save_button = QPushButton()
         self.save_button.setProperty("variant", "primary")
         self.save_button.setMinimumWidth(160)
         self.save_button.clicked.connect(self.save)
@@ -81,116 +83,181 @@ class SettingsTab(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.addWidget(scroll, 1)
         layout.addLayout(footer)
-        self.reload()
+        self._text(lambda: self.save_button.setText(tr("set.save")))
+        self.retranslate()
 
     # ------------------------------------------------------------------ building
 
+    def _text(self, apply: Callable[[], None]) -> None:
+        """Register a text setter; retranslate() runs them all again."""
+        self._texts.append(apply)
+
+    def retranslate(self) -> None:
+        """Relabel in the current language. Values typed but not saved are kept."""
+        first = not hasattr(self, "_sources")
+        for apply in self._texts:
+            apply()
+        if first:
+            self.reload()
+        else:
+            self._paint_statuses()
+        self._say("")
+
+    @staticmethod
+    def _field(key: str, fallback: str) -> str:
+        return tr(f"field.{key}", fallback)
+
     def _keys_box(self) -> QGroupBox:
-        box = QGroupBox("مفاتيح API")
+        box = QGroupBox()
         form = QFormLayout(box)
         if not self._store.available:
-            where = ".env (no credential store on this system)"
+            where_key = "set.where_env"
         elif os.name == "nt":
-            where = "Windows Credential Manager"
+            where_key = "set.where_windows"
         else:
-            where = "the system keyring"
-        note = QLabel(f"المفاتيح بتتحفظ في {where}، ومش بتظهر تاني بعد الحفظ. "
-                      "لو عاوز تغيّر مفتاح، اكتب الجديد مكانه.")
+            where_key = "set.where_keyring"
+        note = QLabel()
         note.setProperty("muted", "true")
         note.setWordWrap(True)
         form.addRow(note)
+        self._text(lambda: box.setTitle(tr("set.keys")))
+        self._text(lambda: note.setText(tr("set.keys_note", where=tr(where_key))))
         for spec in settings.SECRET_FIELDS:
             edit = QLineEdit()
             edit.setEchoMode(QLineEdit.Password)
-            edit.setPlaceholderText(spec.help)
             status = QLabel("")
             status.setMinimumWidth(90)
             status.setAlignment(Qt.AlignCenter)
-            remove = QPushButton("حذف")
+            remove = QPushButton()
             remove.setProperty("variant", "ghost")
-            remove.setToolTip(f"Remove the stored {spec.key}")
             remove.clicked.connect(lambda _=False, k=spec.key: self._mark_remove(k))
             row = QHBoxLayout()
             row.addWidget(edit, 1)
             row.addWidget(status)
             row.addWidget(remove)
             form.addRow(spec.label, row)
+            label = form.labelForField(row)
+
+            def texts(spec=spec, edit=edit, remove=remove, label=label) -> None:
+                edit.setPlaceholderText(tr(f"field.{spec.key}.help", spec.help))
+                remove.setText(tr("set.remove"))
+                remove.setToolTip(tr("set.remove_tip", key=spec.key))
+                label.setText(self._field(spec.key, spec.label))
+
+            self._text(texts)
             self._secret_inputs[spec.key] = edit
             self._secret_status[spec.key] = status
         return box
 
     def _models_box(self) -> QGroupBox:
-        box = QGroupBox("الموديلات")
+        box = QGroupBox()
         form = QFormLayout(box)
-        note = QLabel(settings.MODEL_FIELDS[1].help)
+        note = QLabel()
         note.setWordWrap(True)
+        note.setProperty("muted", "true")
         form.addRow(note)
+        self._text(lambda: box.setTitle(tr("set.models")))
+        self._text(lambda: note.setText(tr("set.models_note")))
         for spec in settings.MODEL_FIELDS:
             combo = QComboBox()
             combo.setEditable(True)
             combo.addItems(list(spec.suggestions))
             combo.setToolTip(spec.help)
-            if not spec.default:
-                combo.lineEdit().setPlaceholderText("empty: same as the Chat model")
-            test = QPushButton("جرّب")
-            test.setToolTip("Send one short request with the saved key")
+            # Model ids read left to right in either language.
+            combo.setLayoutDirection(Qt.LeftToRight)
+            test = QPushButton()
             test.clicked.connect(lambda _=False, k=spec.key: self._test(k))
             row = QHBoxLayout()
             row.addWidget(combo, 1)
             row.addWidget(test)
             form.addRow(spec.label, row)
+            label = form.labelForField(row)
+
+            def texts(spec=spec, combo=combo, test=test, label=label) -> None:
+                if not spec.default:
+                    combo.lineEdit().setPlaceholderText(tr("set.same_as_chat"))
+                test.setText(tr("set.test"))
+                test.setToolTip(tr("set.test_tip"))
+                label.setText(self._field(spec.key, spec.label))
+
+            self._text(texts)
             self._inputs[spec.key] = combo
         return box
 
     def _behaviour_box(self) -> QGroupBox:
-        box = QGroupBox("السلوك والحدود")
+        box = QGroupBox()
         form = QFormLayout(box)
+        self._text(lambda: box.setTitle(tr("set.behaviour")))
         for spec in settings.BEHAVIOUR_FIELDS:
             if spec.kind == "bool":
-                widget: QWidget = QCheckBox(spec.help)
+                widget: QWidget = QCheckBox()
             else:
                 widget = QLineEdit()
-                widget.setToolTip(spec.help)
                 widget.setPlaceholderText(spec.default)
             form.addRow(spec.label, widget)
+            label = form.labelForField(widget)
+
+            def texts(spec=spec, widget=widget, label=label) -> None:
+                help_text = tr(f"field.{spec.key}.help", spec.help)
+                if isinstance(widget, QCheckBox):
+                    widget.setText(help_text)
+                else:
+                    widget.setToolTip(help_text)
+                label.setText(self._field(spec.key, spec.label))
+
+            self._text(texts)
             self._inputs[spec.key] = widget
         return box
 
     def _fixed_box(self) -> QGroupBox:
-        box = QGroupBox("حاجات مش بتتغير من هنا")
+        box = QGroupBox()
         form = QFormLayout(box)
+        self._text(lambda: box.setTitle(tr("set.fixed")))
         try:
             ui = ThndrUiMap.from_toml(ui_map_path())
-            calibrated = "complete" if ui.calibration_complete else "not complete"
-            fence = "measured" if ui.submit_fence() else "not measured"
+            calibrated_key = ("set.fixed.complete" if ui.calibration_complete
+                              else "set.fixed.incomplete")
+            fence_key = "set.fixed.measured" if ui.submit_fence() else "set.fixed.unmeasured"
+            error = ""
         except Exception as exc:  # noqa: BLE001
-            calibrated = fence = f"config unreadable: {exc}"
+            calibrated_key = fence_key = "set.fixed.unreadable"
+            error = str(exc)
+
+        def calibration() -> str:
+            return tr("set.fixed.calibration_text", state=tr(calibrated_key, error=error))
+
+        def fence() -> str:
+            return tr("set.fixed.fence_text", state=tr(fence_key, error=error))
+
         rows = (
-            ("Mode", "live_read_only -- reads your account, never clicks or types. "
-                     "Filling order tickets arrives in a later version."),
-            ("Calibration", f"{calibrated}. Changed only after measuring the real screen."),
-            ("Submit-button fence", f"{fence}. A coordinate on a real account is not a "
-                                    "text box setting."),
-            ("Strategy targets", "config/policy.egx.toml, under the no-overfit charter."),
+            ("set.fixed.mode", lambda: tr("set.fixed.mode_text")),
+            ("set.fixed.calibration", calibration),
+            ("set.fixed.fence", fence),
+            ("set.fixed.targets", lambda: tr("set.fixed.targets_text")),
         )
-        for label, text in rows:
-            value = QLabel(text)
+        for label_key, text in rows:
+            value = QLabel()
             value.setWordWrap(True)
             value.setTextInteractionFlags(Qt.TextSelectableByMouse)
+            label = QLabel()
             form.addRow(label, value)
+
+            def texts(value=value, label=label, label_key=label_key, text=text) -> None:
+                value.setText(text())
+                label.setText(tr(label_key))
+
+            self._text(texts)
         return box
 
     # ------------------------------------------------------------------ actions
 
     def reload(self) -> None:
         state = settings.load(store=self._store)
-        for key, status in self._secret_status.items():
-            source = state.secret_sources.get(key, "")
-            status.setText("محفوظ" if source else "مش متسجل")
-            status.setToolTip(f"saved in {source}" if source else "not set")
-            theme.restyle_pill(status, "ok" if source else "muted")
-            self._secret_inputs[key].clear()
+        self._sources = dict(state.secret_sources)
         self._remove.clear()
+        for edit in self._secret_inputs.values():
+            edit.clear()
+        self._paint_statuses()
         for key, widget in self._inputs.items():
             value = state.values.get(key, "")
             if isinstance(widget, QComboBox):
@@ -203,10 +270,21 @@ class SettingsTab(QWidget):
             else:
                 widget.setText(value)
 
+    def _paint_statuses(self) -> None:
+        for key, status in self._secret_status.items():
+            source = self._sources.get(key, "")
+            if key in self._remove:
+                status.setText(tr("set.will_remove"))
+                theme.restyle_pill(status, "bad")
+                continue
+            status.setText(tr("set.saved_pill") if source else tr("set.not_set"))
+            status.setToolTip(source or "")
+            theme.restyle_pill(status, "ok" if source else "muted")
+
     def _mark_remove(self, key: str) -> None:
         self._remove.add(key)
         self._secret_inputs[key].clear()
-        self._secret_status[key].setText("هيتمسح لما تحفظ")
+        self._secret_status[key].setText(tr("set.will_remove"))
         theme.restyle_pill(self._secret_status[key], "bad")
 
     def _collect(self) -> dict[str, str]:
@@ -230,33 +308,32 @@ class SettingsTab(QWidget):
                 store=self._store,
             )
         except ValueError as exc:
-            self._say(f"Not saved: {exc}", error=True)
+            self._say(tr("set.not_saved", error=exc), error=True)
             return
         except Exception as exc:  # noqa: BLE001 - credential store refused, disk full
-            self._say(f"Not saved: {exc}", error=True)
+            self._say(tr("set.not_saved", error=exc), error=True)
             return
         # This process too: a Test right after Save must use the saved key.
         os.environ.update(settings.effective_values(store=self._store))
-        note = "Saved."
+        note = tr("set.saved")
         if result.secrets_in_env_file:
-            note += " Keys went to .env because no credential store is available."
+            note += tr("set.keys_in_env")
         self.reload()
         answer = QMessageBox.question(
             self, "EGX Robo-Advisor",
-            "Saved. Restart the bot so the new settings take effect?\n\n"
-            "The bot is halted first and has to be started again from the Dashboard.",
+            tr("set.restart_q"),
         )
         if answer == QMessageBox.Yes:
             self._on_saved()
-            note += " The bot restarted halted."
+            note += tr("set.restarted")
         else:
-            note += " Takes effect the next time the app starts."
+            note += tr("set.next_start")
         self._say(note)
 
     def _test(self, key: str) -> None:
         widget = self._inputs[key]
         model = widget.currentText().strip() if isinstance(widget, QComboBox) else ""
-        self._say(f"Testing {model} ...")
+        self._say(tr("set.testing", model=model))
 
         def run() -> None:
             # Keys typed but not yet saved are not used: test what will run.

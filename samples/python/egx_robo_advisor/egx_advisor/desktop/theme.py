@@ -20,6 +20,8 @@ from PySide6.QtGui import QColor, QFont, QIcon, QPainter, QPalette, QPixmap
 from PySide6.QtSvg import QSvgRenderer
 from PySide6.QtWidgets import QApplication, QLabel, QWidget
 
+from .. import i18n
+
 THEMES: dict[str, dict[str, str]] = {
     "dark": {
         "bg": "#020618", "surface": "#0f172a", "raised": "#162033", "border": "#1e2939",
@@ -56,8 +58,10 @@ def tokens(name: Optional[str] = None) -> dict[str, str]:
     return THEMES[name or _current]
 
 
-def stylesheet(name: str) -> str:
+def stylesheet(name: str, rtl: bool = True) -> str:
     t = THEMES[name]
+    # Stylesheets are not mirrored for right-to-left layouts, so these are.
+    edge, start = ("left", "right") if rtl else ("right", "left")
     return f"""
 * {{ outline: 0; }}
 QWidget {{ color: {t['text']}; font-size: 10pt; }}
@@ -71,7 +75,7 @@ QToolTip {{
 }}
 
 /* ---- sidebar ---- */
-QWidget#Sidebar {{ background: {t['surface']}; border-left: 1px solid {t['border']}; }}
+QWidget#Sidebar {{ background: {t['surface']}; border-{edge}: 1px solid {t['border']}; }}
 QLabel#BrandMark {{
     background: {t['accent']}; color: {t['on_accent']}; border-radius: 10px;
     font-weight: 800; font-size: 10pt;
@@ -79,7 +83,7 @@ QLabel#BrandMark {{
 QLabel#BrandName {{ font-size: 12pt; font-weight: 700; }}
 QLabel#BrandSub, QLabel#Hint {{ color: {t['faint']}; font-size: 8.5pt; }}
 QPushButton#NavButton {{
-    text-align: right; padding: 10px 12px; border: none; border-radius: 10px;
+    text-align: {start}; padding: 10px 12px; border: none; border-radius: 10px;
     background: transparent; color: {t['muted']}; font-size: 10.5pt; font-weight: 600;
 }}
 QPushButton#NavButton:hover {{ background: {t['raised']}; color: {t['text']}; }}
@@ -141,7 +145,7 @@ QGroupBox {{
     margin-top: 26px; padding: 12px 14px 14px 14px; font-weight: 700;
 }}
 QGroupBox::title {{
-    subcontrol-origin: margin; subcontrol-position: top right; right: 4px; top: 2px;
+    subcontrol-origin: margin; subcontrol-position: top {start}; {start}: 4px; top: 2px;
     padding: 0 2px; color: {t['text']}; font-size: 10.5pt;
 }}
 QGroupBox QLabel {{ font-weight: 400; }}
@@ -204,9 +208,10 @@ def apply(app: QApplication, name: str) -> None:
     if os.name == "nt":
         app.setFont(QFont("Segoe UI", 10))
     app.setStyle("Fusion")  # the native Windows style ignores parts of a stylesheet
-    # Arabic first: the sidebar sits on the right and forms read right to left.
+    # Arabic: the sidebar sits on the right and forms read right to left.
     # English text inside a widget still runs left to right.
-    app.setLayoutDirection(Qt.RightToLeft)
+    rtl = i18n.is_rtl()
+    app.setLayoutDirection(Qt.RightToLeft if rtl else Qt.LeftToRight)
     palette = QPalette()
     for role, key in (
         (QPalette.Window, "bg"), (QPalette.Base, "input"), (QPalette.AlternateBase, "raised"),
@@ -218,7 +223,7 @@ def apply(app: QApplication, name: str) -> None:
     ):
         palette.setColor(role, QColor(t[key]))
     app.setPalette(palette)
-    app.setStyleSheet(stylesheet(_current))
+    app.setStyleSheet(stylesheet(_current, rtl))
 
 
 def restyle(widget: QWidget) -> None:

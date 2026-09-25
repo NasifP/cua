@@ -208,7 +208,7 @@ summary { cursor: pointer; font-size: 12px; font-weight: 600; color: var(--muted
   font-size: 10px; font-weight: 650; letter-spacing: .06em; text-transform: uppercase;
   color: var(--muted); display: block; margin-bottom: 2px;
 }
-.msg.you { padding-left: 9px; border-left: 2px solid var(--border); }
+.msg.you { padding-inline-start: 9px; border-inline-start: 2px solid var(--border); }
 .msg.bot { white-space: pre-wrap; }
 /* Its own block so the computed direction applies to the whole message rather
    than to individual character runs inside the row. */
@@ -217,6 +217,25 @@ summary { cursor: pointer; font-size: 12px; font-weight: 600; color: var(--muted
 .phase-stale { color: var(--faint); text-decoration: line-through; opacity: .75; }
 .phase-note { font-size: 10px; color: var(--faint); margin: 2px 0 0; letter-spacing: 0; text-transform: none; font-weight: 500; }
 .hidden { display: none !important; }
+
+/* Language. Arabic letters join, so letter-spacing and upper-casing break them.
+   Figures, tickers and prices are isolated so they keep their order inside
+   right-to-left text. */
+.lang-btn { font: 600 12px var(--sans); color: var(--muted); background: transparent;
+            border: 1px solid var(--border); border-radius: 8px; padding: 3px 9px;
+            cursor: pointer; margin-inline-end: 6px; }
+.lang-btn:hover { color: var(--text); }
+:root[data-lang] .lang-btn { display: none; } /* the desktop app switches the language */
+[dir="rtl"] .label, [dir="rtl"] .msg .who, [dir="rtl"] #power-btn, [dir="rtl"] h1 {
+  letter-spacing: 0; text-transform: none; }
+[dir="rtl"] .label { font-size: 12px; }
+[dir="rtl"] body { font-family: "Segoe UI", Tahoma, var(--sans); }
+/* Monospace has no Arabic letters of its own; these lines mix words and figures. */
+[dir="rtl"] #feed-age, [dir="rtl"] #demo-sources, [dir="rtl"] #cash-line,
+[dir="rtl"] #total-value { font-family: "Segoe UI", Tahoma, var(--sans); }
+.mono, .hnum, .hsym, #total-value, #feed-age, #demo-sources, #cash-line, .chip, .withheld {
+  unicode-bidi: isolate; }
+.hnum, .hsym, .withheld strong, #phase { direction: ltr; }
 
 /* A desktop window, including the app's own: plan on the left, chat and log on
    the right, so nothing important sits below the fold. Phones keep one column. */
@@ -245,15 +264,18 @@ summary { cursor: pointer; font-size: 12px; font-weight: 600; color: var(--muted
   <header>
     <div>
       <h1>EGX Robo-Advisor</h1>
-      <p class="sub" id="subtitle">Thndr simulator &middot; paper trading</p>
+      <p class="sub" id="subtitle" data-i18n="subtitle.sim">Thndr simulator &middot; paper trading</p>
     </div>
-    <div class="conn"><span class="dot" id="conn-dot"></span><span id="conn-text">connecting</span></div>
+    <div class="conn">
+      <button id="lang-btn" class="lang-btn" type="button">العربية</button>
+      <span class="dot" id="conn-dot"></span><span id="conn-text">connecting</span>
+    </div>
   </header>
 
   <!-- Mode banner: which account, and whether orders are possible at all.
        Hidden on the simulator, where it would be noise; loud on a real one. -->
   <section class="card state-warn hidden" id="mode-card" style="padding:11px 14px">
-    <p class="label" style="color:var(--warn)">Execution mode</p>
+    <p class="label" style="color:var(--warn)" data-i18n="mode.label">Execution mode</p>
     <p class="med" id="mode-banner" style="font-size:15px"></p>
     <p class="note" id="mode-detail"></p>
   </section>
@@ -263,27 +285,27 @@ summary { cursor: pointer; font-size: 12px; font-weight: 600; color: var(--muted
   <section class="card" id="control-card">
     <div class="row">
       <div style="min-width:0">
-        <p class="label">Bot state</p>
+        <p class="label" data-i18n="state.label">Bot state</p>
         <p class="big" id="control-state">&mdash;</p>
         <p class="note" id="control-reason"></p>
       </div>
-      <div style="text-align:right;flex-shrink:0">
-        <p class="label">Phase</p>
+      <div style="text-align:end;flex-shrink:0">
+        <p class="label" data-i18n="phase.label">Phase</p>
         <p class="med mono" id="phase" style="font-size:14px">idle</p>
-        <p class="phase-note hidden" id="phase-note">last seen before halt</p>
+        <p class="phase-note hidden" id="phase-note" data-i18n="phase.note">last seen before halt</p>
       </div>
     </div>
   </section>
 
   <div class="grid2">
     <section class="card" style="margin:0">
-      <p class="label">Risk regime</p>
+      <p class="label" data-i18n="risk.label">Risk regime</p>
       <p class="med" id="risk-state">&mdash;</p>
       <p class="note" id="risk-driver"></p>
       <p class="tiny mono" id="feed-age"></p>
     </section>
     <section class="card" style="margin:0">
-      <p class="label">Account guard</p>
+      <p class="label" data-i18n="guard.label">Account guard</p>
       <p class="med" id="demo-state">&mdash;</p>
       <p class="note" id="demo-detail"></p>
       <p class="tiny mono" id="demo-sources"></p>
@@ -291,13 +313,13 @@ summary { cursor: pointer; font-size: 12px; font-weight: 600; color: var(--muted
   </div>
 
   <section class="card state-warn hidden" id="blocked-card">
-    <p class="label" style="color:var(--warn)">News-blocked symbols</p>
+    <p class="label" style="color:var(--warn)" data-i18n="blocked.label">News-blocked symbols</p>
     <div class="chips" id="blocked-list"></div>
   </section>
 
   <section class="card">
     <div class="head">
-      <h2>Holdings &amp; drift</h2>
+      <h2 data-i18n="holdings.title">Holdings &amp; drift</h2>
       <span class="mono" id="total-value" style="font-size:13px;font-weight:650"></span>
     </div>
     <p class="note" id="policy-state"></p>
@@ -306,10 +328,10 @@ summary { cursor: pointer; font-size: 12px; font-weight: 600; color: var(--muted
   </section>
 
   <section class="card">
-    <h2>Current plan</h2>
+    <h2 data-i18n="plan.title">Current plan</h2>
     <div id="orders"></div>
     <details id="suppressed-wrap" class="hidden">
-      <summary>Withheld orders</summary>
+      <summary data-i18n="plan.withheld">Withheld orders</summary>
       <div id="suppressed"></div>
     </details>
   </section>
@@ -319,16 +341,16 @@ summary { cursor: pointer; font-size: 12px; font-weight: 600; color: var(--muted
   <!-- Ask: explains the bot. Deliberately has no controls in it. -->
   <section class="card hidden" id="chat-card">
     <div class="head">
-      <h2>Ask about the bot</h2>
+      <h2 data-i18n="chat.title">Ask about the bot</h2>
       <span class="tiny" id="chat-model" style="margin:0"></span>
     </div>
     <div id="chat-log"></div>
     <div class="input-row" style="margin-top:10px">
       <input id="chat-input" type="text" autocomplete="off" dir="auto"
-             placeholder="Why was AZG.CA not bought?">
-      <button id="chat-send">Ask</button>
+             placeholder="Why was AZG.CA not bought?" data-i18n-placeholder="chat.placeholder">
+      <button id="chat-send" data-i18n="chat.ask">Ask</button>
     </div>
-    <p class="tiny">
+    <p class="tiny" data-i18n="chat.note">
       Explains decisions and teaches the rules. It cannot halt, arm or trade —
       the kill switch is the red button below.
     </p>
@@ -336,10 +358,11 @@ summary { cursor: pointer; font-size: 12px; font-weight: 600; color: var(--muted
 
   <section class="card">
     <div class="head">
-      <h2>Live agent log</h2>
-      <label class="follow"><input type="checkbox" id="follow" checked> follow</label>
+      <h2 data-i18n="log.title">Live agent log</h2>
+      <label class="follow"><input type="checkbox" id="follow" checked> <span data-i18n="log.follow">follow</span></label>
     </div>
-    <div id="log"></div>
+    <!-- The log is the bot's own English: it reads left to right in either language. -->
+    <div id="log" dir="ltr"></div>
   </section>
   </div>
   </div>
@@ -356,6 +379,101 @@ summary { cursor: pointer; font-size: 12px; font-weight: 600; color: var(--muted
 
 <script>
 const $ = (id) => document.getElementById(id);
+
+// Every visible string, in both languages. The bot's own words -- the log, the
+// reasons on an order, the mode banner that the arm confirmation echoes -- are
+// shown as the bot wrote them, so what you confirm is exactly what it reports.
+const STRINGS = {
+  en: {
+    'subtitle.sim': 'Thndr simulator · paper trading',
+    'subtitle.live': 'Thndr · REAL account',
+    'conn.connecting': 'connecting', 'conn.live': 'live', 'conn.reconnecting': 'reconnecting',
+    'conn.unauthorised': 'unauthorised',
+    'mode.label': 'Execution mode',
+    'mode.can': 'This mode can place orders.',
+    'mode.cannot': 'Order tickets are refused at the guard. Nothing here can place an order.',
+    'state.label': 'Bot state', 'state.halted': 'HALTED', 'state.armed': 'ARMED',
+    'phase.label': 'Phase', 'phase.note': 'last seen before halt',
+    'risk.label': 'Risk regime', 'risk.RISK_ON': 'RISK ON', 'risk.BUYS_HALTED': 'BUYS HALTED',
+    'risk.ALL_HALTED': 'ALL HALTED',
+    'feeds.never': 'feeds: never polled',
+    'feeds.age': 'feeds {m}m old · {n} headlines', 'feeds.stale': ' · STALE',
+    'guard.label': 'Account guard', 'guard.sim': 'SIMULATOR', 'guard.real': 'REAL MONEY',
+    'guard.unconfirmed': 'UNCONFIRMED', 'guard.sources': '{n} source(s) · {s}s old',
+    'blocked.label': 'News-blocked symbols',
+    'holdings.title': 'Holdings & drift', 'holdings.none': 'no holdings read yet',
+    'money.egp': 'EGP', 'cash.line': 'cash {v} EGP', 'cash.unsettled': ' · {v} unsettled (T+2)',
+    'cash.sim': ' · read on simulator', 'cash.unverified': ' · read UNVERIFIED',
+    'plan.title': 'Current plan', 'plan.withheld': 'Withheld orders',
+    'plan.none': 'No orders: the portfolio is inside its drift bands, or buying is withheld.',
+    'side.buy': 'BUY', 'side.sell': 'SELL',
+    'chat.title': 'Ask about the bot', 'chat.placeholder': 'Why was AZG.CA not bought?',
+    'chat.ask': 'Ask',
+    'chat.note': 'Explains decisions and teaches the rules. It cannot halt, arm or trade — the kill switch is the red button below.',
+    'chat.you': 'You', 'chat.bot': 'Assistant', 'chat.failed': 'Failed: ',
+    'log.title': 'Live agent log', 'log.follow': 'follow',
+    'power.start': 'START THE BOT', 'power.kill': 'KILL SWITCH — STOP THE BOT',
+    'power.confirm': 'CONFIRM — ',
+    'power.note_halted': 'Press to start. You will be asked to confirm the account first.',
+    'power.note_armed': 'Stopping is one tap. Starting takes two.',
+    'power.note_confirm': 'Press again to arm. Cancels itself in 6 seconds.',
+    'toast.halted': 'Bot halted.', 'toast.halt_failed': 'Halt failed: ', 'toast.armed': 'Bot armed.',
+    'lang.other': 'العربية',
+  },
+  ar: {
+    'subtitle.sim': 'Thndr محاكي · تداول تجريبي',
+    'subtitle.live': 'Thndr · حساب حقيقي',
+    'conn.connecting': 'بيتوصّل', 'conn.live': 'متصل', 'conn.reconnecting': 'بيعيد الاتصال',
+    'conn.unauthorised': 'مش مسموح',
+    'mode.label': 'وضع التشغيل',
+    'mode.can': 'الوضع ده يقدر ينفّذ أوامر.',
+    'mode.cannot': 'أوامر البيع والشراء مرفوضة عند الحماية. مفيش حاجة هنا تقدر تنفّذ أمر.',
+    'state.label': 'حالة البوت', 'state.halted': 'متوقف', 'state.armed': 'شغّال',
+    'phase.label': 'المرحلة', 'phase.note': 'آخر حاجة قبل الإيقاف',
+    'risk.label': 'مستوى المخاطر', 'risk.RISK_ON': 'المخاطر عادية',
+    'risk.BUYS_HALTED': 'الشراء موقوف', 'risk.ALL_HALTED': 'كل حاجة موقوفة',
+    'feeds.never': 'المصادر: لسه ماتقرتش',
+    'feeds.age': 'المصادر من {m} دقيقة · {n} خبر', 'feeds.stale': ' · قديمة',
+    'guard.label': 'حماية الحساب', 'guard.sim': 'محاكي', 'guard.real': 'فلوس حقيقية',
+    'guard.unconfirmed': 'مش متأكد', 'guard.sources': '{n} مصدر · من {s} ثانية',
+    'blocked.label': 'أسهم موقوفة بسبب الأخبار',
+    'holdings.title': 'المحفظة والانحراف', 'holdings.none': 'لسه ماتقرتش أسهم',
+    'money.egp': 'جنيه', 'cash.line': 'كاش {v} جنيه', 'cash.unsettled': ' · {v} مش متسوّي (T+2)',
+    'cash.sim': ' · اتقرا من المحاكي', 'cash.unverified': ' · اتقرا من غير تأكيد',
+    'plan.title': 'الخطة الحالية', 'plan.withheld': 'أوامر متوقفة',
+    'plan.none': 'مفيش أوامر: المحفظة جوّه حدود الانحراف، أو الشراء موقوف.',
+    'side.buy': 'شراء', 'side.sell': 'بيع',
+    'chat.title': 'اسأل عن البوت', 'chat.placeholder': 'ليه AZG.CA ماتشتراش؟',
+    'chat.ask': 'اسأل',
+    'chat.note': 'بيشرح القرارات ويعلّمك القواعد. مايقدرش يوقف أو يشغّل أو يتداول — زرار الإيقاف هو الأحمر تحت.',
+    'chat.you': 'انت', 'chat.bot': 'المساعد', 'chat.failed': 'فشل: ',
+    'log.title': 'سجل البوت المباشر', 'log.follow': 'متابعة',
+    'power.start': 'شغّل البوت', 'power.kill': 'إيقاف فوري — وقّف البوت',
+    'power.confirm': 'تأكيد — ',
+    'power.note_halted': 'اضغط للتشغيل. هيطلب منك تأكيد الحساب الأول.',
+    'power.note_armed': 'الإيقاف ضغطة واحدة. التشغيل ضغطتين.',
+    'power.note_confirm': 'اضغط تاني للتشغيل. هيتلغي لوحده بعد 6 ثواني.',
+    'toast.halted': 'البوت وقف.', 'toast.halt_failed': 'الإيقاف فشل: ', 'toast.armed': 'البوت اشتغل.',
+    'lang.other': 'English',
+  },
+};
+
+function initialLang() {
+  const host = document.documentElement.dataset.lang;  // set by the desktop app
+  if (host === 'ar' || host === 'en') return host;
+  try {
+    const saved = localStorage.getItem('egx-lang');
+    if (saved === 'ar' || saved === 'en') return saved;
+  } catch (_) { /* storage blocked: fall through */ }
+  return (navigator.language || '').toLowerCase().startsWith('ar') ? 'ar' : 'en';
+}
+let lang = initialLang();
+
+function t(key, values) {
+  let text = (STRINGS[lang] && STRINGS[lang][key]) ?? STRINGS.en[key] ?? key;
+  for (const [name, value] of Object.entries(values || {})) text = text.replaceAll(`{${name}}`, value);
+  return text;
+}
 const fmt = new Intl.NumberFormat('en-EG', { maximumFractionDigits: 0 });
 const pct = (x) => (x * 100).toFixed(1) + '%';
 const esc = (t) => { const d = document.createElement('div'); d.textContent = t ?? ''; return d.innerHTML; };
@@ -380,7 +498,7 @@ let paintedHalted = null;
 
 function renderControl(control) {
   const halted = control.halted;
-  $('control-state').textContent = halted ? 'HALTED' : 'ARMED';
+  $('control-state').textContent = halted ? t('state.halted') : t('state.armed');
   $('control-state').className = 'big ' + (halted ? 'bad' : 'ok');
   $('control-reason').textContent = (control.reason || '') + (control.actor ? ' — ' + control.actor : '');
   $('control-card').className = 'card ' + (halted ? 'state-bad' : 'state-ok');
@@ -420,29 +538,27 @@ function renderMode(mode) {
   card.className = 'card ' + (dangerous ? 'state-bad' : 'state-warn');
   $('mode-banner').textContent = mode.banner || mode.mode || '';
   $('mode-banner').className = 'med ' + (dangerous ? 'bad' : 'warn');
-  $('mode-detail').textContent = mode.can_order
-    ? 'This mode can place orders.'
-    : 'Order tickets are refused at the guard. Nothing here can place an order.';
+  $('mode-detail').textContent = mode.can_order ? t('mode.can') : t('mode.cannot');
   // The header must not keep claiming "paper trading" while the banner below it
   // says a real account. Two contradictory statements on a safety screen are
   // worse than either one alone.
-  $('subtitle').textContent = mode.live
-    ? 'Thndr · REAL account'
-    : 'Thndr simulator · paper trading';
+  $('subtitle').dataset.i18n = mode.live ? 'subtitle.live' : 'subtitle.sim';
+  $('subtitle').textContent = t($('subtitle').dataset.i18n);
 }
 
 function renderRegime(regime) {
   if (!regime) return;
   const state = (regime.risk_state || '').toUpperCase();
   const cls = state === 'RISK_ON' ? 'ok' : state === 'BUYS_HALTED' ? 'warn' : 'bad';
-  $('risk-state').textContent = state === 'RISK_ON' ? 'RISK ON' : state.replace(/_/g, ' ');
+  $('risk-state').textContent = t('risk.' + state) === 'risk.' + state
+    ? state.replace(/_/g, ' ') : t('risk.' + state);
   $('risk-state').className = 'med ' + cls;
   $('risk-driver').textContent = (regime.drivers || [])[0] || '';
   const age = regime.feed_age_seconds;
   $('feed-age').textContent = age == null
-    ? 'feeds: never polled'
-    : `feeds ${Math.round(age / 60)}m old · ${regime.headline_count ?? 0} headlines`
-      + (regime.stale ? ' · STALE' : '');
+    ? t('feeds.never')
+    : t('feeds.age', { m: Math.round(age / 60), n: regime.headline_count ?? 0 })
+      + (regime.stale ? t('feeds.stale') : '');
   const blocked = regime.blocked_symbols || [];
   $('blocked-card').classList.toggle('hidden', blocked.length === 0);
   $('blocked-list').innerHTML = blocked.map((s) => `<span class="chip">${esc(s)}</span>`).join('');
@@ -452,17 +568,17 @@ function renderGuard(verdict) {
   if (!verdict) return;
   const state = verdict.state || 'unknown';
   const good = state === 'confirmed_demo';
-  $('demo-state').textContent = good ? 'SIMULATOR'
-    : state === 'confirmed_live' ? 'REAL MONEY' : 'UNCONFIRMED';
+  $('demo-state').textContent = good ? t('guard.sim')
+    : state === 'confirmed_live' ? t('guard.real') : t('guard.unconfirmed');
   $('demo-state').className = 'med ' + (good ? 'ok' : 'bad');
   $('demo-detail').textContent = verdict.detail || '';
   $('demo-sources').textContent =
-    `${verdict.effective_sources ?? 0} source(s) · ${verdict.age_seconds ?? '?'}s old`;
+    t('guard.sources', { n: verdict.effective_sources ?? 0, s: verdict.age_seconds ?? '?' });
 }
 
 function renderPortfolio(portfolio, plan) {
   if (!portfolio) return;
-  $('total-value').textContent = fmt.format(Number(portfolio.total_value || 0)) + ' EGP';
+  $('total-value').textContent = fmt.format(Number(portfolio.total_value || 0)) + ' ' + t('money.egp');
   if (plan) $('policy-state').textContent = plan.policy_state || '';
 
   const targets = (plan && plan.target_weights) || {};
@@ -490,13 +606,13 @@ function renderPortfolio(portfolio, plan) {
         <div class="bar-held${wide ? ' drifted' : ''}" style="width:${Math.min(100, held * 100 * scale)}%"></div>
       </div>
     </div>`;
-  }).join('') || '<p class="empty">no holdings read yet</p>';
+  }).join('') || `<p class="empty">${esc(t('holdings.none'))}</p>`;
 
   const cash = Number(portfolio.cash_egp || 0);
   const unsettled = Number(portfolio.unsettled_cash_egp || 0);
-  $('cash-line').textContent = `cash ${fmt.format(cash)} EGP`
-    + (unsettled > 0 ? ` · ${fmt.format(unsettled)} unsettled (T+2)` : '')
-    + ` · read ${portfolio.demo_confirmed ? 'on simulator' : 'UNVERIFIED'}`;
+  $('cash-line').textContent = t('cash.line', { v: fmt.format(cash) })
+    + (unsettled > 0 ? t('cash.unsettled', { v: fmt.format(unsettled) }) : '')
+    + (portfolio.demo_confirmed ? t('cash.sim') : t('cash.unverified'));
 }
 
 function renderPlan(plan) {
@@ -505,12 +621,12 @@ function renderPlan(plan) {
   $('orders').innerHTML = orders.length ? orders.map((o) => `
     <div class="order">
       <div class="orow">
-        <span class="mono"><span class="side-${esc(o.side)}">${esc(o.side.toUpperCase())}</span> ${esc(o.symbol)}</span>
+        <span class="mono"><span class="side-${esc(o.side)}">${esc(t('side.' + o.side))}</span> ${esc(o.symbol)}</span>
         <span class="hnum">${esc(o.quantity)} @ ${esc(o.limit_price)}</span>
       </div>
       <p class="why">${esc(o.rationale || '')}</p>
     </div>`).join('')
-    : '<p class="empty">No orders: the portfolio is inside its drift bands, or buying is withheld.</p>';
+    : `<p class="empty">${esc(t('plan.none'))}</p>`;
 
   const withheld = [...(plan.suppressed || []), ...(plan.skipped || [])];
   $('suppressed-wrap').classList.toggle('hidden', withheld.length === 0);
@@ -556,7 +672,7 @@ async function post(path, payload) {
 let confirmTimer = null;
 
 function armBanner() {
-  return (lastMode && lastMode.banner) || 'START THE BOT';
+  return (lastMode && lastMode.banner) || t('power.start');
 }
 
 function paintPowerButton(halted) {
@@ -565,17 +681,15 @@ function paintPowerButton(halted) {
   confirmTimer = null;
   btn.disabled = false;
   btn.className = halted ? 'start' : 'armed';
-  btn.textContent = halted ? 'START THE BOT' : 'KILL SWITCH — STOP THE BOT';
-  $('power-note').textContent = halted
-    ? 'Press to start. You will be asked to confirm the account first.'
-    : 'Stopping is one tap. Starting takes two.';
+  btn.textContent = halted ? t('power.start') : t('power.kill');
+  $('power-note').textContent = halted ? t('power.note_halted') : t('power.note_armed');
 }
 
 function askToConfirm() {
   const btn = $('power-btn');
   btn.className = 'confirm';
-  btn.textContent = 'CONFIRM — ' + armBanner();
-  $('power-note').textContent = 'Press again to arm. Cancels itself in 6 seconds.';
+  btn.textContent = t('power.confirm') + armBanner();
+  $('power-note').textContent = t('power.note_confirm');
   // Times out rather than latching: a confirm left open in a pocket is the same
   // single accidental tap this two-step exists to prevent.
   confirmTimer = setTimeout(() => paintPowerButton(true), 6000);
@@ -585,10 +699,10 @@ async function halt() {
   $('power-btn').disabled = true;
   try {
     renderControl((await post('/api/control/halt')).control);
-    toast('Bot halted.', true);
+    toast(t('toast.halted'), true);
     if (navigator.vibrate) navigator.vibrate(120);
   } catch (err) {
-    toast('Halt failed: ' + err.message, false);
+    toast(t('toast.halt_failed') + err.message, false);
     $('power-btn').disabled = false;
   }
 }
@@ -602,7 +716,7 @@ async function arm() {
     // cannot arm on what it used to be looking at.
     const mode = (lastMode && lastMode.mode) || '';
     renderControl((await post('/api/control/resume', { confirm: mode })).control);
-    toast('Bot armed.', true);
+    toast(t('toast.armed'), true);
   } catch (err) {
     toast(err.message, false);
     paintPowerButton(true);
@@ -642,7 +756,7 @@ function setMessage(el, who, text) {
   // Direction goes on the text, never on .msg: the "You"/"Assistant" label is
   // always Latin, so letting it set the paragraph direction lays every Arabic
   // answer out backwards.
-  el.innerHTML = `<span class="who">${who === 'you' ? 'You' : 'Assistant'}</span>`
+  el.innerHTML = `<span class="who">${esc(who === 'you' ? t('chat.you') : t('chat.bot'))}</span>`
                + `<span class="body" dir="${direction(text)}">${esc(text)}</span>`;
   return el;
 }
@@ -678,7 +792,7 @@ async function ask() {
     chatHistory.push({ role: 'assistant', content: answer });
     while (chatHistory.length > 12) chatHistory.shift();
   } catch (err) {
-    setMessage(pending, 'bot', 'Failed: ' + err.message);
+    setMessage(pending, 'bot', t('chat.failed') + err.message);
   } finally {
     $('chat-send').disabled = false;
     input.focus();
@@ -691,6 +805,7 @@ $('chat-input').addEventListener('keydown', (e) => { if (e.key === 'Enter') ask(
 let cursor = 0;
 
 function paint(state) {
+  lastState = state;
   renderMode(state.mode);
   renderRegime(state.regime);
   renderGuard(state.demo_verdict);
@@ -702,8 +817,9 @@ function paint(state) {
 
 async function loadState() {
   const response = await fetch('/api/state');
-  if (!response.ok) { setConn(false, 'unauthorised'); return; }
+  if (!response.ok) { setConn(false, t('conn.unauthorised')); return; }
   const state = await response.json();
+  lastControl = state.control;
   renderControl(state.control);
   paint(state);
   if (state.chat && state.chat.enabled) {
@@ -726,17 +842,57 @@ function refreshPanels() {
 
 function connectStream() {
   const stream = new EventSource(`/api/events/stream?after=${cursor}`);
-  stream.addEventListener('open', () => setConn(true, 'live'));
+  stream.addEventListener('open', () => setConn(true, t('conn.live')));
   stream.addEventListener('agent', (message) => {
     const event = JSON.parse(message.data);
     cursor = Math.max(cursor, event.seq);
     appendEvent(event);
     if (['plan', 'regime', 'guard', 'order', 'control'].includes(event.kind)) refreshPanels();
   });
-  stream.addEventListener('control', (message) => renderControl(JSON.parse(message.data)));
-  stream.addEventListener('error', () => setConn(false, 'reconnecting'));
+  stream.addEventListener('control', (message) => {
+    lastControl = JSON.parse(message.data);
+    renderControl(lastControl);
+  });
+  stream.addEventListener('error', () => setConn(false, t('conn.reconnecting')));
 }
 
+// --- language -----------------------------------------------------------------
+let lastState = null;
+let lastControl = null;
+
+function applyLang(next) {
+  lang = next === 'ar' ? 'ar' : 'en';
+  document.documentElement.lang = lang;
+  document.documentElement.dir = lang === 'ar' ? 'rtl' : 'ltr';
+  document.querySelectorAll('[data-i18n]').forEach((el) => { el.textContent = t(el.dataset.i18n); });
+  document.querySelectorAll('[data-i18n-placeholder]').forEach((el) => {
+    el.placeholder = t(el.dataset.i18nPlaceholder);
+  });
+  $('lang-btn').textContent = t('lang.other');
+  $('conn-text').textContent = t($('conn-dot').classList.contains('live') ? 'conn.live'
+    : $('conn-dot').classList.contains('down') ? 'conn.reconnecting' : 'conn.connecting');
+  if (lastState) paint(lastState);
+  if (lastControl) {
+    $('control-state').textContent = lastControl.halted ? t('state.halted') : t('state.armed');
+  }
+  // A pending confirm is left alone: redrawing it would cancel the second press.
+  if (confirmTimer === null && paintedHalted !== null) paintPowerButton(paintedHalted);
+}
+
+// The desktop app sets data-lang on the page; follow it when it changes.
+new MutationObserver(() => {
+  const host = document.documentElement.dataset.lang;
+  if ((host === 'ar' || host === 'en') && host !== lang) applyLang(host);
+}).observe(document.documentElement, { attributes: true, attributeFilter: ['data-lang'] });
+window.egxSetLang = applyLang;
+
+$('lang-btn').addEventListener('click', () => {
+  const next = lang === 'ar' ? 'en' : 'ar';
+  try { localStorage.setItem('egx-lang', next); } catch (_) { /* not remembered */ }
+  applyLang(next);
+});
+
+applyLang(lang);
 loadState().then(connectStream);
 // Belt and braces: if SSE is blocked by a proxy, the panels still refresh.
 setInterval(refreshPanels, 20000);
