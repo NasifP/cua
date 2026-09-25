@@ -63,8 +63,9 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from .. import settings, spend
+from .. import i18n, settings, spend
 from ..doctor import FAIL, Check, check_api_keys, check_token, load_env, render
+from ..i18n import tr
 from ..launcher import Launcher, ProcessSpec, _halt_bus, _probe_port
 from ..login_link import make_login_path
 from ..paths import PROJECT_ROOT, bus_path
@@ -178,7 +179,7 @@ class MainWindow(QMainWindow):
         self.dashboard = QWebEngineView()
         self._theme_script: Optional[QWebEngineScript] = None
         self._sync_dashboard_theme()
-        self.dashboard.setHtml(_placeholder("Starting the dashboard ..."))
+        self.dashboard.setHtml(_placeholder(tr("app.starting")))
 
         self.profile = QWebEngineProfile("egx-thndr", self)
         BROWSER_PROFILE_DIR.mkdir(parents=True, exist_ok=True)
@@ -199,39 +200,32 @@ class MainWindow(QMainWindow):
         self.sources_tab = SourcesTab()
 
         pages = (
-            (self.dashboard, "dashboard", "لوحة التحكم", "Dashboard",
-             "الخطة والمحفظة والسجل والشات. من هنا بتشغّل البوت."),
-            (self.thndr, "browser", "Thndr X", "Your broker",
-             "حسابك في متصفح البرنامج. البوت يقدر يقرا الصفحة دي بس، ومش بيضغط على حاجة."),
-            (self.chart_tab, "chart", "الشارت", "Chart",
-             "شارت TradingView لأسهمك. اللي هنا ليك انت، ومش بيوصل للبوت."),
-            (self.lab_tab, "lab", "معمل الاستراتيجيات", "Strategy Lab",
-             "جرّب قاعدة مؤشر على تاريخ البورصة الحقيقي قبل ما البوت يستخدمها."),
-            (self.sources_tab, "calendar", "الأحداث والأخبار", "Events & news",
-             "مواعيد ومصادر أخبار بتوقّف الشراء الجديد وقت الخطر."),
-            (self.settings_tab, "settings", "الإعدادات", "Settings",
-             "مفاتيح API والموديلات والحدود."),
+            (self.dashboard, "dashboard", "page.dashboard"),
+            (self.thndr, "browser", "page.thndr"),
+            (self.chart_tab, "chart", "page.chart"),
+            (self.lab_tab, "lab", "page.lab"),
+            (self.sources_tab, "calendar", "page.sources"),
+            (self.settings_tab, "settings", "page.settings"),
         )
         self.pages = QStackedWidget()
-        self._page_info: dict[QWidget, tuple[str, str]] = {}
-        self._nav: list[tuple[QPushButton, str]] = []
+        self._page_keys: dict[QWidget, str] = {}
+        self._nav: list[tuple[QPushButton, str, str]] = []
         nav_group = QButtonGroup(self)
         nav_group.setExclusive(True)
         nav = QVBoxLayout()
         nav.setSpacing(4)
-        for widget, icon_name, title, english, subtitle in pages:
+        for widget, icon_name, key in pages:
             self.pages.addWidget(widget)
-            self._page_info[widget] = (title, f"{english}  ·  {subtitle}")
-            button = QPushButton(f"  {title}")
+            self._page_keys[widget] = key
+            button = QPushButton()
             button.setObjectName("NavButton")
             button.setCheckable(True)
-            button.setToolTip(english)
             button.setIconSize(QSize(20, 20))
             button.setCursor(Qt.PointingHandCursor)
             button.clicked.connect(lambda _=False, w=widget: self.show_page(w))
             nav_group.addButton(button)
             nav.addWidget(button)
-            self._nav.append((button, icon_name))
+            self._nav.append((button, icon_name, key))
 
         # --- sidebar: brand, navigation, theme, and the halt button ---
         mark = QLabel("EGX")
@@ -240,7 +234,8 @@ class MainWindow(QMainWindow):
         mark.setFixedSize(40, 40)
         brand_name = QLabel("Robo-Advisor")
         brand_name.setObjectName("BrandName")
-        brand_sub = QLabel("مستشار البورصة المصرية")
+        self.brand_sub = QLabel()
+        brand_sub = self.brand_sub
         brand_sub.setObjectName("BrandSub")
         brand_text = QVBoxLayout()
         brand_text.setSpacing(0)
@@ -255,17 +250,20 @@ class MainWindow(QMainWindow):
         self.theme_button.setProperty("variant", "ghost")
         self.theme_button.setCursor(Qt.PointingHandCursor)
         self.theme_button.clicked.connect(self.toggle_theme)
+        self.lang_button = QPushButton()
+        self.lang_button.setProperty("variant", "ghost")
+        self.lang_button.setCursor(Qt.PointingHandCursor)
+        self.lang_button.clicked.connect(self.toggle_language)
 
-        self.halt_button = QPushButton("  إيقاف البوت  ·  HALT")
+        self.halt_button = QPushButton()
         self.halt_button.setProperty("variant", "danger")
         self.halt_button.setIconSize(QSize(18, 18))
         self.halt_button.setCursor(Qt.PointingHandCursor)
-        self.halt_button.setToolTip("Stops the bot at once (Ctrl+Shift+H)")
         self.halt_button.clicked.connect(self.halt)
         QShortcut(QKeySequence("Ctrl+Shift+H"), self, activated=self.halt)
-        hint = QLabel("Ctrl+Shift+H  ·  الإيقاف ضغطة واحدة")
-        hint.setObjectName("Hint")
-        hint.setAlignment(Qt.AlignCenter)
+        self.hint = QLabel()
+        self.hint.setObjectName("Hint")
+        self.hint.setAlignment(Qt.AlignCenter)
 
         sidebar = QWidget()
         sidebar.setObjectName("Sidebar")
@@ -277,10 +275,11 @@ class MainWindow(QMainWindow):
         side.addSpacing(18)
         side.addLayout(nav)
         side.addStretch(1)
+        side.addWidget(self.lang_button)
         side.addWidget(self.theme_button)
         side.addSpacing(6)
         side.addWidget(self.halt_button)
-        side.addWidget(hint)
+        side.addWidget(self.hint)
 
         # --- page header: title, and the bot's state at a glance ---
         self.page_title = QLabel()
@@ -296,7 +295,7 @@ class MainWindow(QMainWindow):
         self.state_pill.setProperty("pill", "muted")
         self.phase_pill = QLabel("-")
         self.phase_pill.setProperty("pill", "muted")
-        self.spend_text = QLabel("الموديلات النهارده")
+        self.spend_text = QLabel()
         self.spend_text.setObjectName("SpendText")
         # Its own label: "$0.00 / $2.00" inside Arabic text gets reordered.
         self.spend_value = QLabel("")
@@ -346,6 +345,7 @@ class MainWindow(QMainWindow):
         layout.addWidget(main, 1)
         self.setCentralWidget(body)
         self._paint_icons()
+        self._retranslate_shell()
 
         self.show_page(self.dashboard)
         if notice:
@@ -366,20 +366,46 @@ class MainWindow(QMainWindow):
 
     def show_page(self, widget: QWidget) -> None:
         self.pages.setCurrentWidget(widget)
-        title, subtitle = self._page_info[widget]
-        self.page_title.setText(title)
-        self.page_subtitle.setText(subtitle)
-        for button, _ in self._nav:
+        key = self._page_keys[widget]
+        self.page_title.setText(tr(key))
+        self.page_subtitle.setText(tr(f"{key}.sub"))
+        for button, _, _ in self._nav:
             button.setChecked(False)
         self._nav[self.pages.indexOf(widget)][0].setChecked(True)
 
     def _paint_icons(self) -> None:
-        for button, name in self._nav:
+        for button, name, _ in self._nav:
             button.setIcon(theme.icon(name))
         self.halt_button.setIcon(theme.icon("power", "#ffffff", "#ffffff"))
         dark = theme.current() == "dark"
         self.theme_button.setIcon(theme.icon("sun" if dark else "moon"))
-        self.theme_button.setText("  وضع فاتح  ·  Light" if dark else "  وضع داكن  ·  Dark")
+        self.theme_button.setText("  " + tr("app.theme_light" if dark else "app.theme_dark"))
+        self.lang_button.setIcon(theme.icon("browser"))
+
+    def _retranslate_shell(self) -> None:
+        for button, _, key in self._nav:
+            # "&" marks a keyboard shortcut on a button; "Events & news" means the word.
+            button.setText("  " + tr(key).replace("&", "&&"))
+        self.brand_sub.setText(tr("app.brand_sub"))
+        self.lang_button.setText("  " + tr("app.switch_lang"))
+        self.halt_button.setText("  " + tr("app.halt"))
+        self.halt_button.setToolTip(tr("app.halt_tip"))
+        self.hint.setText(tr("app.halt_hint"))
+        self.spend_text.setText(tr("app.spend"))
+        self.spend_value.setLayoutDirection(Qt.LeftToRight)
+        self._paint_icons()
+        self.show_page(self.pages.currentWidget())
+        self._refresh_status()
+
+    @Slot()
+    def toggle_language(self) -> None:
+        lang = i18n.set_language("en" if i18n.current() == "ar" else "ar")
+        theme.apply(QApplication.instance(), theme.current())  # flips the layout direction
+        self._retranslate_shell()
+        for page in (self.chart_tab, self.lab_tab, self.sources_tab, self.settings_tab):
+            page.retranslate()
+        self._sync_dashboard_theme(run_now=True)
+        self._remember({"EGX_LANG": lang})
 
     @Slot()
     def toggle_theme(self) -> None:
@@ -389,23 +415,28 @@ class MainWindow(QMainWindow):
         self._sync_dashboard_theme(run_now=True)
         self.chart_tab.set_theme(name)
         self._refresh_status()
+        self._remember({"EGX_THEME": name})
+
+    @staticmethod
+    def _remember(values: dict[str, str]) -> None:
+        """Keep a display choice in .env for the next start."""
         try:
             env_file = settings.ENV_FILE
             text = env_file.read_text(encoding="utf-8") if env_file.exists() else ""
-            settings.ENV_FILE.write_text(settings.set_env_values(text, {"EGX_THEME": name}),
-                                         encoding="utf-8")
+            env_file.write_text(settings.set_env_values(text, values), encoding="utf-8")
         except OSError:
-            pass  # the theme still changed; it just will not be remembered
+            pass  # the choice still applies now; it just will not be remembered
 
     def _sync_dashboard_theme(self, run_now: bool = False) -> None:
         """The dashboard page follows the window's theme, on every load."""
         # At DocumentCreation there is no <html> element yet: set it as soon as
         # one exists, so the page never flashes the other theme.
         source = (
-            "(function(){var t=%r;function s(){var e=document.documentElement;"
-            "if(!e)return false;e.dataset.theme=t;return true}"
+            "(function(){var t=%r,l=%r;function s(){var e=document.documentElement;"
+            "if(!e)return false;e.dataset.theme=t;e.dataset.lang=l;"
+            "if(window.egxSetLang)window.egxSetLang(l);return true}"
             "if(!s()){new MutationObserver(function(_,o){if(s())o.disconnect()})"
-            ".observe(document,{childList:true})}})();" % theme.current()
+            ".observe(document,{childList:true})}})();" % (theme.current(), i18n.current())
         )
         scripts = self.dashboard.page().scripts()
         if self._theme_script is not None:
@@ -457,16 +488,16 @@ class MainWindow(QMainWindow):
             self.launcher = None
         os.environ.update(settings.effective_values())
         self._dashboard_loaded = False
-        self.dashboard.setHtml(_placeholder("Restarting ..."))
+        self.dashboard.setHtml(_placeholder(tr("app.restarting")))
         self.start_processes(bridge_running=True)
 
     @Slot()
     def halt(self) -> None:
         try:
             _halt_bus("halt button in the desktop app", actor="desktop app")
-            self._set_pill(self.state_pill, "متوقف  ·  HALTED", "bad")
+            self._set_pill(self.state_pill, tr("app.state_halted"), "bad")
         except Exception as exc:  # noqa: BLE001
-            QMessageBox.critical(self, "Halt failed", f"Could not halt the bot: {exc}")
+            QMessageBox.critical(self, "EGX Robo-Advisor", tr("app.halt_failed", error=exc))
 
     def _tick(self) -> None:
         if self.launcher is not None:
@@ -486,13 +517,13 @@ class MainWindow(QMainWindow):
                 status = (bus.get("status") or {}).get("payload") or {}
                 totals = spend.today(bus)
         except Exception as exc:  # noqa: BLE001
-            self._set_pill(self.state_pill, "الحالة غير معروفة  ·  UNKNOWN", "warn")
+            self._set_pill(self.state_pill, tr("app.state_unknown"), "warn")
             self.state_pill.setToolTip(f"bus unavailable: {exc}")
             return
         if control.halted:
-            self._set_pill(self.state_pill, "متوقف  ·  HALTED", "bad")
+            self._set_pill(self.state_pill, tr("app.state_halted"), "bad")
         else:
-            self._set_pill(self.state_pill, "شغّال  ·  ARMED", "ok")
+            self._set_pill(self.state_pill, tr("app.state_armed"), "ok")
         self.state_pill.setToolTip(control.reason or "")
         self._set_pill(self.phase_pill, status.get("phase") or "idle", "muted")
 
@@ -583,6 +614,7 @@ def main(argv: Optional[list[str]] = None) -> int:
     env = load_env()
     os.environ.update({k: v for k, v in env.items() if v or k not in os.environ})
     app = QApplication(argv if argv is not None else sys.argv)
+    i18n.set_language(i18n.name_from_env(env))
     theme.apply(app, theme.name_from_env(env))
     ensure_dashboard_password(env)
 
@@ -590,18 +622,15 @@ def main(argv: Optional[list[str]] = None) -> int:
     if problems:
         QMessageBox.critical(
             None, "EGX Robo-Advisor",
-            "Fix these first (see .env), then start again:\n\n" + render(problems),
+            tr("app.fix_first") + "\n\n" + render(problems),
         )
         return 1
 
     missing = missing_keys(env)
     notice = ""
     if missing:
-        notice = (
-            "Before the bot can read your portfolio: "
-            + "; ".join(f"{c.name} is {c.detail}" for c in missing)
-            + ". Enter the key below and press Save."
-        )
+        notice = tr("app.missing_keys",
+                    items="; ".join(f"{c.name}: {c.detail}" for c in missing))
     window = MainWindow(env, int(env.get("EGX_DASHBOARD_PORT", "8787")), notice=notice)
     window.show()
     window.start_processes()

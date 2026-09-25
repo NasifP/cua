@@ -9,6 +9,8 @@ import pytest
 
 pytest.importorskip("PySide6.QtWebEngineWidgets")
 
+from PySide6.QtCore import Qt  # noqa: E402
+
 from egx_advisor.desktop import chart_tab  # noqa: E402
 from egx_advisor.regime.events import ScheduledEvent, load_events  # noqa: E402
 from egx_advisor.regime.sources import load_feeds, read_feed_entries  # noqa: E402
@@ -108,3 +110,30 @@ def test_both_themes_build_a_stylesheet_and_icons(app):
 def test_chart_follows_the_theme():
     assert 'theme: "light"' in chart_tab.widget_html("COMI.CA", "light")
     assert 'theme: "dark"' in chart_tab.widget_html("COMI.CA", "unknown")
+
+
+def test_switching_language_retranslates_the_tabs(app, tmp_path, monkeypatch):
+    from egx_advisor import i18n
+    from egx_advisor.desktop import lab_tab, sources_tab, theme
+
+    monkeypatch.setattr(sources_tab, "EVENTS_FILE", tmp_path / "events.toml")
+    monkeypatch.setattr(sources_tab, "FEEDS_FILE", tmp_path / "feeds.toml")
+    monkeypatch.setattr(lab_tab, "RULES_FILE", tmp_path / "rules.toml")
+    try:
+        i18n.set_language("ar")
+        sources, lab = sources_tab.SourcesTab(), lab_tab.LabTab()
+        assert sources.events_box.title() == "التقويم الاقتصادي"
+        assert lab.run_button.text() == "شغّل الاختبار"
+
+        i18n.set_language("en")
+        theme.apply(app, "dark")
+        sources.retranslate()
+        lab.retranslate()
+        assert sources.events_box.title() == "Economic calendar"
+        assert lab.run_button.text() == "Run the test"
+        assert lab.form.labelForField(lab.years).text() == "History"
+        assert lab.form.labelForField(lab.kind).text() == "Rule"
+        assert app.layoutDirection() == Qt.LeftToRight
+    finally:
+        i18n.set_language("ar")
+        theme.apply(app, "dark")

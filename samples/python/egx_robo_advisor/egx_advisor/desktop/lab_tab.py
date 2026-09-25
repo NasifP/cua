@@ -30,20 +30,15 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from .. import i18n
 from ..backtest.lab import LabReport, adopt, remove, run_lab
+from ..i18n import tr
 from ..paths import PROJECT_ROOT, config_path
 from ..strategy.filters import RULE_KINDS, BuyFilter, load_rules
 from . import theme
 
 RULES_FILE = config_path("rules.toml")
 
-#: Arabic names for the rule kinds and their settings; RULE_KINDS keeps the English.
-RULE_LABELS = {
-    "sma": "منع الشراء لو السعر تحت متوسط N يوم",
-    "rsi": "منع الشراء لو RSI فوق مستوى معيّن (تشبّع شراء)",
-    "momentum": "منع الشراء بعد نزول حاد في N يوم",
-}
-PARAM_LABELS = {"days": "عدد الأيام", "above": "مستوى RSI", "fall_pct": "نسبة النزول %"}
 HISTORY_CACHE = PROJECT_ROOT / "state" / "history"
 
 
@@ -76,88 +71,118 @@ class LabTab(QWidget):
     def __init__(self, parent: Optional[QWidget] = None) -> None:
         super().__init__(parent)
         self._report: Optional[LabReport] = None
+        self._error = ""
+        #: The banner as (key, kind, values), so a language switch can redraw it.
+        self._banner: tuple[str, str, dict] = ("lab.hint", "info", {})
         self._signals = _Signals()
         self._signals.done.connect(self._finished)
         self._param_widgets: dict[str, QDoubleSpinBox] = {}
 
-        intro = QLabel(
-            "القاعدة تقدر بس تمنع شراء، ومش هتتعتمد إلا لو كسبت بعد العمولات في التاريخ "
-            "كله وفي كل نص منه لوحده."
-        )
-        intro.setToolTip("A rule can only skip buys, and can be adopted only if it wins "
-                         "after costs over the whole history and in each half.")
-        intro.setProperty("muted", "true")
-        intro.setWordWrap(True)
+        self.intro = QLabel()
+        self.intro.setProperty("muted", "true")
+        self.intro.setWordWrap(True)
 
         self.kind = QComboBox()
         for kind, spec in RULE_KINDS.items():
-            self.kind.addItem(RULE_LABELS.get(kind, spec["label"]), kind)
-            self.kind.setItemData(self.kind.count() - 1, spec["label"], Qt.ToolTipRole)
+            self.kind.addItem(spec["label"], kind)
         self.kind.currentIndexChanged.connect(self._rebuild_params)
         self.params_form = QFormLayout()
         self.years = QSpinBox()
         self.years.setRange(2, 20)
         self.years.setValue(8)
-        self.years.setSuffix(" سنين")
         self.source = QComboBox()
-        self.source.addItem("أسعار البورصة الحقيقية (Yahoo)", False)
-        self.source.addItem("أسعار وهمية: لاختبار البرنامج بس، ومش بتتعتمد", True)
-        self.run_button = QPushButton("شغّل الاختبار")
+        self.source.addItem("", False)
+        self.source.addItem("", True)
+        self.run_button = QPushButton()
         self.run_button.setProperty("variant", "primary")
-        self.run_button.setToolTip("Replay the policy with and without the rule")
         self.run_button.clicked.connect(self.run)
 
-        setup = QGroupBox("القاعدة")
-        form = QFormLayout(setup)
-        form.setSpacing(10)
-        form.addRow(intro)
-        form.addRow("القاعدة", self.kind)
-        form.addRow(self.params_form)
-        form.addRow("التاريخ", self.years)
-        form.addRow("الأسعار", self.source)
-        form.addRow(self.run_button)
+        self.setup = QGroupBox()
+        self.form = QFormLayout(self.setup)
+        self.form.setSpacing(10)
+        self.form.addRow(self.intro)
+        # Labels kept by hand: addRow("") makes no label to translate later.
+        self._row_labels = {key: QLabel() for key in ("lab.rule", "lab.history", "lab.prices")}
+        self.form.addRow(self._row_labels["lab.rule"], self.kind)
+        self.form.addRow(self.params_form)
+        self.form.addRow(self._row_labels["lab.history"], self.years)
+        self.form.addRow(self._row_labels["lab.prices"], self.source)
+        self.form.addRow(self.run_button)
 
         self.verdict = QLabel("")
         self.verdict.setWordWrap(True)
         self.output = QPlainTextEdit()
         self.output.setReadOnly(True)
         self.output.setFont(QFont("Consolas, Menlo, monospace", 10))
-        self.output.setLayoutDirection(Qt.LeftToRight)  # the report is an English table
-        self.adopt_button = QPushButton("اعتمد القاعدة")
+        self.adopt_button = QPushButton()
         self.adopt_button.setProperty("variant", "primary")
-        self.adopt_button.setToolTip("Enabled only for a rule that passed")
         self.adopt_button.setEnabled(False)
         self.adopt_button.clicked.connect(self.adopt)
-        result_box = QGroupBox("النتيجة")
-        result_layout = QVBoxLayout(result_box)
+        self.result_box = QGroupBox()
+        result_layout = QVBoxLayout(self.result_box)
         result_layout.setSpacing(10)
         result_layout.addWidget(self.verdict)
         result_layout.addWidget(self.output, 1)
         result_layout.addWidget(self.adopt_button)
 
         self.adopted = QListWidget()
-        remove_button = QPushButton("احذف المحددة")
-        remove_button.setProperty("variant", "ghost")
-        remove_button.clicked.connect(self.remove_selected)
-        adopted_box = QGroupBox("القواعد اللي البوت بيستخدمها")
-        adopted_layout = QVBoxLayout(adopted_box)
+        self.remove_button = QPushButton()
+        self.remove_button.setProperty("variant", "ghost")
+        self.remove_button.clicked.connect(self.remove_selected)
+        self.adopted_box = QGroupBox()
+        adopted_layout = QVBoxLayout(self.adopted_box)
         adopted_layout.addWidget(self.adopted)
-        adopted_layout.addWidget(remove_button, 0, Qt.AlignRight)
+        adopted_layout.addWidget(self.remove_button, 0, Qt.AlignRight)
 
         left = QVBoxLayout()
         left.setSpacing(4)
-        left.addWidget(setup)
-        left.addWidget(adopted_box, 1)
+        left.addWidget(self.setup)
+        left.addWidget(self.adopted_box, 1)
         layout = QHBoxLayout(self)
         layout.setContentsMargins(24, 8, 24, 20)
         layout.setSpacing(18)
         layout.addLayout(left, 2)
-        layout.addWidget(result_box, 3)
+        layout.addWidget(self.result_box, 3)
 
-        self._rebuild_params()
+        self.retranslate()
+
+    def retranslate(self) -> None:
+        self.intro.setText(tr("lab.intro"))
+        for index in range(self.kind.count()):
+            kind = self.kind.itemData(index)
+            self.kind.setItemText(index, tr(f"lab.kind.{kind}", RULE_KINDS[kind]["label"]))
+        self.years.setSuffix(tr("lab.years"))
+        self.source.setItemText(0, tr("lab.real"))
+        self.source.setItemText(1, tr("lab.synthetic"))
+        self.run_button.setText(tr("lab.run"))
+        self.run_button.setToolTip(tr("lab.run_tip"))
+        self.setup.setTitle(tr("lab.rule_box"))
+        for key, label in self._row_labels.items():
+            label.setText(tr(key))
+        self.result_box.setTitle(tr("lab.result_box"))
+        self.adopt_button.setText(tr("lab.adopt"))
+        self.adopt_button.setToolTip(tr("lab.adopt_tip"))
+        self.adopted_box.setTitle(tr("lab.adopted_box"))
+        self.remove_button.setText(tr("lab.remove"))
+        # The report is a table of figures: it reads left to right in either language.
+        self.output.setLayoutDirection(Qt.LeftToRight)
+        self._relabel_params()
         self._refresh_adopted()
-        theme.say(self.verdict, "اختار قاعدة واضغط \"شغّل الاختبار\". النتيجة هتظهر هنا: "
-                  "العائد، وأقصى نزول، والعمولات، والحكم النهائي.", "info")
+        self._show_result()
+
+    def _say(self, key: str, kind: str, **values: object) -> None:
+        self._banner = (key, kind, values)
+        theme.say(self.verdict, tr(key, **values), kind)
+
+    def _show_result(self) -> None:
+        if self._report is not None:
+            self.output.setPlainText(self._report.render(i18n.current()))
+        elif self._error:
+            self.output.setPlainText(self._error)
+        key, kind, values = self._banner
+        if key == "lab.not_adopted" and self._report is not None:
+            values = {"verdict": self._report.verdict(i18n.current())}
+        self._say(key, kind, **values)
 
     def _rebuild_params(self) -> None:
         while self.params_form.rowCount():
@@ -168,8 +193,17 @@ class LabTab(QWidget):
             box.setRange(low, high)
             box.setDecimals(0)
             box.setValue(default)
-            self.params_form.addRow(PARAM_LABELS.get(name, name), box)
+            self.params_form.addRow(tr(f"lab.param.{name}", name), box)
             self._param_widgets[name] = box
+
+    def _relabel_params(self) -> None:
+        if not self._param_widgets:
+            self._rebuild_params()
+            return
+        for name, box in self._param_widgets.items():
+            label = self.params_form.labelForField(box)
+            if label is not None:
+                label.setText(tr(f"lab.param.{name}", name))
 
     def _rule(self) -> BuyFilter:
         return BuyFilter(self.kind.currentData(),
@@ -181,8 +215,9 @@ class LabTab(QWidget):
         years, synthetic = self.years.value(), bool(self.source.currentData())
         self.run_button.setEnabled(False)
         self.adopt_button.setEnabled(False)
-        self.output.setPlainText(f"Fetching {years} years of prices and replaying ...")
-        theme.say(self.verdict, "بيجرّب ... ممكن ياخد دقيقة أول مرة.", "info")
+        self._report, self._error = None, ""
+        self.output.setPlainText(tr("lab.fetching", years=years))
+        self._say("lab.running", "info")
 
         def work() -> None:
             try:
@@ -197,18 +232,15 @@ class LabTab(QWidget):
     @Slot(object, str)
     def _finished(self, report: Optional[LabReport], error: str) -> None:
         self.run_button.setEnabled(True)
-        self._report = report
+        self._report, self._error = report, error
         if report is None:
-            self.output.setPlainText("The test could not run:\n" + error)
-            theme.say(self.verdict, "الاختبار ماشتغلش. التفاصيل تحت.", "bad")
-            return
-        self.output.setPlainText(report.render())
-        if report.passed:
-            theme.say(self.verdict, "نجحت: كسبت بعد العمولات في التاريخ كله وفي كل نص. "
-                      "تقدر تعتمدها.", "ok")
+            self._banner = ("lab.could_not_run", "bad", {})
+        elif report.passed:
+            self._banner = ("lab.passed", "ok", {})
         else:
-            theme.say(self.verdict, "مش هتتعتمد: " + report.verdict(), "bad")
-        self.adopt_button.setEnabled(report.passed)
+            self._banner = ("lab.not_adopted", "bad", {})
+        self._show_result()
+        self.adopt_button.setEnabled(report is not None and report.passed)
 
     @Slot()
     def adopt(self) -> None:
@@ -220,8 +252,7 @@ class LabTab(QWidget):
             self.output.appendPlainText(f"\n{exc}")
             return
         self.adopt_button.setEnabled(False)
-        self.output.appendPlainText("\nAdopted. The bot applies it from its next cycle.")
-        theme.say(self.verdict, "اتعتمدت. البوت هيطبّقها من الدورة الجاية.", "ok")
+        self._say("lab.adopted", "ok")
         self._refresh_adopted()
 
     @Slot()
@@ -237,9 +268,10 @@ class LabTab(QWidget):
         try:
             rules = load_rules(RULES_FILE)
         except Exception as exc:  # noqa: BLE001
-            self.adopted.addItem(f"rules file unreadable: {exc}")
+            self.adopted.addItem(tr("lab.unreadable", error=exc))
             return
         for a in rules:
-            self.adopted.addItem(f"{a.rule.describe()}   (adopted {a.adopted_on}; {a.evidence})")
+            self.adopted.addItem(tr("lab.adopted_item", rule=a.rule.describe(i18n.current()),
+                                    day=a.adopted_on, evidence=a.evidence))
         if not rules:
-            self.adopted.addItem("لسه مفيش قواعد معتمدة")
+            self.adopted.addItem(tr("lab.none"))
