@@ -1,0 +1,5 @@
+# Build output of build_exe.cmd / packaging/build.py
+/build/
+/dist/
+# Written by the app on this machine
+/config/thndr.ticket.toml

@@ -418,7 +418,9 @@ def _load_env_file() -> None:
     from egx_advisor.settings import load_secrets_into_environ
 
     load_secrets_into_environ()
-    env_path = Path(__file__).resolve().parent.parent / ".env"
+    from egx_advisor.paths import PROJECT_ROOT
+
+    env_path = PROJECT_ROOT / ".env"
     if not env_path.exists():
         return
     try:
@@ -438,7 +440,10 @@ def main() -> None:
     """Entry point. Refuses a public bind unless explicitly acknowledged."""
     import uvicorn
 
+    from egx_advisor.parent_watch import start_from_env
+
     logging.basicConfig(level=logging.INFO)
+    start_from_env()  # stop, halted, if the app that started us is gone
     _load_env_file()
     host = os.environ.get("EGX_DASHBOARD_HOST", "127.0.0.1")
     port = int(os.environ.get("EGX_DASHBOARD_PORT", "8787"))

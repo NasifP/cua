@@ -25,6 +25,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Mapping, Optional, Protocol, Sequence
 
+from ..paths import PROJECT_ROOT
 from .pngutil import RgbImage, decode_png
 
 logger = logging.getLogger(__name__)
@@ -161,7 +162,7 @@ _WINDOWS_TESSERACT = (
 
 #: Language packs setup.ps1 downloads into the project, so the Arabic pack needs
 #: no administrator rights to install.
-PROJECT_TESSDATA = Path(__file__).resolve().parents[2] / "state" / "tessdata"
+PROJECT_TESSDATA = PROJECT_ROOT / "state" / "tessdata"
 
 
 def configure_tesseract() -> Optional[str]:

@@ -1,0 +1,7 @@
+# Versions the Windows build pins. Used by build_exe.cmd.
+#
+# litellm: from 1.102 the package no longer ships the cl100k_base tokenizer file
+# it loads on import, so the packaged app downloads it at start-up and fails on
+# a machine without internet (or when the install folder is read-only).
+# 1.86.2 ships it; the build's self-check imports litellm offline to catch this.
+litellm==1.86.2
