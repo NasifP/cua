@@ -44,7 +44,7 @@ from .doctor import (
     render,
 )
 from .login_link import make_login_path
-from .paths import PROJECT_ROOT, bus_path
+from .paths import PROJECT_ROOT, bus_path, child_command
 
 LOG_DIR = PROJECT_ROOT / "state" / "logs"
 MAX_RESTARTS = 3
@@ -101,7 +101,8 @@ class Launcher:
         log = open(LOG_DIR / f"{spec.name}.log", "a", encoding="utf-8")  # noqa: SIM115
         kwargs: dict[str, Any] = {
             "cwd": str(PROJECT_ROOT),
-            "env": dict(self.env),
+            # The child halts the bus and exits if this process disappears.
+            "env": {**self.env, "EGX_PARENT_PID": str(os.getpid())},
             "stdout": log,
             "stderr": subprocess.STDOUT,
         }
@@ -167,15 +168,15 @@ def build_specs(env: Mapping[str, str], python: str = sys.executable) -> list[Pr
             port=COMPUTER_SERVER_PORT, health="/status",
         ),
         ProcessSpec(
-            "dashboard", [python, str(PROJECT_ROOT / "dashboard" / "app.py")],
+            "dashboard", child_command("dashboard", executable=python),
             port=dashboard_port, health="/healthz",
         ),
         # --dry-run always: order submission is refused until calibration is
         # complete anyway, and the launcher is not the place to change that.
         ProcessSpec(
             "agent",
-            [python, str(PROJECT_ROOT / "run_agent.py"),
-             "--target", "host", "--os", _os_name(), "--dry-run"],
+            child_command("agent", "--target", "host", "--os", _os_name(), "--dry-run",
+                          executable=python),
         ),
     ]
 

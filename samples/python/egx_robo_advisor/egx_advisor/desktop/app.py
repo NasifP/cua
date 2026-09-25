@@ -69,7 +69,7 @@ from ..doctor import FAIL, Check, check_api_keys, check_token, load_env, render
 from ..i18n import tr
 from ..launcher import Launcher, ProcessSpec, _halt_bus, _probe_port
 from ..login_link import make_login_path
-from ..paths import PROJECT_ROOT, bus_path
+from ..paths import PROJECT_ROOT, bus_path, child_command
 from ..safety.modes import ExecutionMode
 from . import theme
 from .bridge import BridgeServer
@@ -475,16 +475,14 @@ class MainWindow(QMainWindow):
         child_env.update(self.bridge.env())
         # No window to bring forward here: the agent reads the app's own browser.
         child_env["EGX_ARM_DELAY"] = "0"
-        python = sys.executable
         specs = [
             ProcessSpec(
-                "dashboard", [python, str(PROJECT_ROOT / "dashboard" / "app.py")],
+                "dashboard", child_command("dashboard"),
                 port=self.dashboard_port, health="/healthz",
             ),
             ProcessSpec(
                 "agent",
-                [python, str(PROJECT_ROOT / "run_agent.py"), "--target", "browser",
-                 "--dry-run"],
+                child_command("agent", "--target", "browser", "--dry-run"),
             ),
         ]
         self.launcher = Launcher(specs=specs, env=child_env, say=self._say)

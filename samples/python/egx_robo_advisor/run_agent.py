@@ -57,7 +57,9 @@ def _load_env_file() -> str:
     from egx_advisor.settings import load_secrets_into_environ
 
     load_secrets_into_environ()
-    env_path = Path(__file__).resolve().parent / ".env"
+    from egx_advisor.paths import PROJECT_ROOT
+
+    env_path = PROJECT_ROOT / ".env"
     if not env_path.exists():
         return ""
     try:
@@ -131,6 +133,9 @@ def parse_args() -> argparse.Namespace:
 
 
 async def main() -> None:
+    from egx_advisor.parent_watch import start_from_env
+
+    start_from_env()  # stop, halted, if the app that started us is gone
     # Before parse_args: argument defaults read the environment.
     env_note = _load_env_file()
     args = parse_args()
