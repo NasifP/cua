@@ -31,7 +31,7 @@ from PySide6.QtWidgets import (
 )
 
 from .. import i18n
-from ..backtest.lab import LabReport, adopt, remove, run_lab
+from ..backtest.lab import LabReport, adopt, remove, run_lab, run_strategy_comparison
 from ..i18n import tr
 from ..paths import PROJECT_ROOT, config_path
 from ..strategy.filters import RULE_KINDS, BuyFilter, load_rules
@@ -96,6 +96,8 @@ class LabTab(QWidget):
         self.run_button = QPushButton()
         self.run_button.setProperty("variant", "primary")
         self.run_button.clicked.connect(self.run)
+        self.compare_button = QPushButton()
+        self.compare_button.clicked.connect(self.compare)
 
         self.setup = QGroupBox()
         self.form = QFormLayout(self.setup)
@@ -108,6 +110,7 @@ class LabTab(QWidget):
         self.form.addRow(self._row_labels["lab.history"], self.years)
         self.form.addRow(self._row_labels["lab.prices"], self.source)
         self.form.addRow(self.run_button)
+        self.form.addRow(self.compare_button)
 
         self.verdict = QLabel("")
         self.verdict.setWordWrap(True)
@@ -156,6 +159,8 @@ class LabTab(QWidget):
         self.source.setItemText(1, tr("lab.synthetic"))
         self.run_button.setText(tr("lab.run"))
         self.run_button.setToolTip(tr("lab.run_tip"))
+        self.compare_button.setText(tr("lab.compare"))
+        self.compare_button.setToolTip(tr("lab.compare_tip"))
         self.setup.setTitle(tr("lab.rule_box"))
         for key, label in self._row_labels.items():
             label.setText(tr(key))
@@ -180,7 +185,7 @@ class LabTab(QWidget):
         elif self._error:
             self.output.setPlainText(self._error)
         key, kind, values = self._banner
-        if key == "lab.not_adopted" and self._report is not None:
+        if key in ("lab.not_adopted", "lab.strategy_failed") and self._report is not None:
             values = {"verdict": self._report.verdict(i18n.current())}
         self._say(key, kind, **values)
 
@@ -212,8 +217,18 @@ class LabTab(QWidget):
     @Slot()
     def run(self) -> None:
         rule = self._rule()
+        self._start(lambda history, synthetic: run_lab(history, [rule], synthetic=synthetic))
+
+    @Slot()
+    def compare(self) -> None:
+        """The four-factor strategy against the current plan; read, never adopted."""
+        self._start(lambda history, synthetic: run_strategy_comparison(
+            history, synthetic=synthetic))
+
+    def _start(self, test) -> None:
         years, synthetic = self.years.value(), bool(self.source.currentData())
         self.run_button.setEnabled(False)
+        self.compare_button.setEnabled(False)
         self.adopt_button.setEnabled(False)
         self._report, self._error = None, ""
         self.output.setPlainText(tr("lab.fetching", years=years))
@@ -222,7 +237,7 @@ class LabTab(QWidget):
         def work() -> None:
             try:
                 history = load_history(years, synthetic)
-                report = run_lab(history, [rule], synthetic=synthetic)
+                report = test(history, synthetic)
                 self._signals.done.emit(report, "")
             except Exception as exc:  # noqa: BLE001 - network, data quality, too short
                 self._signals.done.emit(None, f"{type(exc).__name__}: {exc}")
@@ -232,15 +247,21 @@ class LabTab(QWidget):
     @Slot(object, str)
     def _finished(self, report: Optional[LabReport], error: str) -> None:
         self.run_button.setEnabled(True)
+        self.compare_button.setEnabled(True)
         self._report, self._error = report, error
+        strategy = report is not None and not report.rules
         if report is None:
             self._banner = ("lab.could_not_run", "bad", {})
+        elif strategy:
+            self._banner = (("lab.strategy_passed", "ok", {}) if report.passed
+                            else ("lab.strategy_failed", "bad", {}))
         elif report.passed:
             self._banner = ("lab.passed", "ok", {})
         else:
             self._banner = ("lab.not_adopted", "bad", {})
         self._show_result()
-        self.adopt_button.setEnabled(report is not None and report.passed)
+        # A strategy is switched on in Settings; only rules are adopted here.
+        self.adopt_button.setEnabled(report is not None and report.passed and not strategy)
 
     @Slot()
     def adopt(self) -> None:

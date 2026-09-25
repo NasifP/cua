@@ -21,10 +21,11 @@ from __future__ import annotations
 from dataclasses import dataclass, replace
 from datetime import date
 from pathlib import Path
-from typing import Optional, Sequence
+from typing import Any, Optional, Sequence
 
 from ..i18n import tr
 from ..strategy.filters import BuyFilter
+from ..strategy.four_factor import FourFactorParams
 from .engine import BacktestConfig, run_backtest, run_buy_and_hold
 from .metrics import Comparison, Metrics, compare, compute, sample_size_warning
 from .types import PriceHistory
@@ -44,6 +45,9 @@ class LabReport:
     sessions: int
     warning: Optional[str]
     synthetic: bool = False
+    #: Set when the lab compared a whole strategy rather than rules; such a
+    #: report can be read, never adopted as a rule.
+    title: str = ""
 
     @property
     def passed(self) -> bool:
@@ -80,8 +84,9 @@ class LabReport:
         def t(key: str) -> str:
             return tr(key, lang=lang)
 
+        first = t("report.four_factor") if self.title else t("report.with_rules")
         rows = [
-            ("", t("report.with_rules"), t("report.policy"), t("report.hold")),
+            ("", first, t("report.policy"), t("report.hold")),
             (t("report.total_return"), *(f"{m.total_return:+.1%}" for m in self._all())),
             (t("report.max_drawdown"), *(f"{m.max_drawdown:.1%}" for m in self._all())),
             (t("report.costs"), *(f"{m.total_costs:,.0f}" for m in self._all())),
@@ -89,10 +94,11 @@ class LabReport:
         ]
         table = "\n".join(f"  {a:<14}{b:>14}{c:>14}{d:>14}" for a, b, c, d in rows)
         parts = [
-            t("report.rules") + ": " + "; ".join(r.describe(lang) for r in self.rules),
+            (t("report.strategy") + ": " + t(self.title) if self.title else
+             t("report.rules") + ": " + "; ".join(r.describe(lang) for r in self.rules)),
             table,
             "",
-            t("report.versus"),
+            t("report.versus_strategy") if self.title else t("report.versus"),
             f"  {t('report.whole'):<14} {self.full.difference:+.2%}  "
             f"{t('report.interval')} [{self.full.ci_low:+.2%}, {self.full.ci_high:+.2%}]",
             f"  {t('report.first'):<14} {self.first_half.difference:+.2%}",
@@ -169,6 +175,8 @@ def adopt(report: LabReport, path: Path, today: date) -> None:
     """
     from ..strategy.filters import AdoptedRule, load_rules, save_rules
 
+    if not report.rules:
+        raise ValueError("not adopted: a strategy comparison is chosen in Settings, not adopted")
     if not report.passed:
         raise ValueError(f"not adopted: {report.verdict()}")
     existing = [a for a in load_rules(path) if a.rule not in report.rules]
@@ -180,3 +188,41 @@ def remove(rule: BuyFilter, path: Path) -> None:
     from ..strategy.filters import load_rules, save_rules
 
     save_rules(path, [a for a in load_rules(path) if a.rule != rule])
+
+
+def run_strategy_comparison(
+    history: PriceHistory,
+    params: Optional[FourFactorParams] = None,
+    config: Optional[BacktestConfig] = None,
+    *,
+    synthetic: bool = False,
+) -> LabReport:
+    """The four-factor strategy against the plain policy, the lab's way:
+    same history, same costs, the whole span and each half on its own."""
+    sessions = len(history.days)
+    if sessions < MIN_SESSIONS:
+        raise ValueError(f"only {sessions} sessions of history; the lab needs {MIN_SESSIONS}+")
+    params = params or FourFactorParams()
+    config = replace(config or BacktestConfig(), buy_filters=())
+
+    def pair(part: PriceHistory) -> tuple[Any, Any]:
+        base = run_backtest(part, replace(config, four_factor=None, label="policy"))
+        four = run_backtest(part, replace(config, four_factor=params, label="four-factor"))
+        return four, base
+
+    four, base = pair(history)
+    hold = run_buy_and_hold(history, replace(config, label="buy & hold"))
+    first, second = _halves(history)
+    return LabReport(
+        rules=(),
+        with_rules=compute(four),
+        policy=compute(base),
+        buy_and_hold=compute(hold),
+        full=compare(four, base),
+        first_half=compare(*pair(first)),
+        second_half=compare(*pair(second)),
+        sessions=sessions,
+        warning=sample_size_warning(sessions),
+        synthetic=synthetic,
+        title="lab.kind.four_factor_strategy",
+    )

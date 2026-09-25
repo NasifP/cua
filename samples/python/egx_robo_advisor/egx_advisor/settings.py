@@ -94,6 +94,10 @@ BEHAVIOUR_FIELDS: tuple[Field, ...] = (
     Field("EGX_DAILY_CALL_LIMIT", "Daily model call limit", "int",
           "A backstop that works even for models without a known price.",
           default="400", minimum=1, maximum=100000),
+    Field("EGX_FOUR_FACTOR", "Four-factor strategy", "bool",
+          "Trend, momentum, volume and volatility decide what to buy, sell and how much, "
+          "instead of the fixed allocation. Compare them in the Strategy Lab first.",
+          default="false"),
     Field("EGX_TICKET_FILL", "Fill buy tickets in Thndr X", "bool",
           "When on, the Thndr X tab can write an order's quantity and price into an open "
           "buy ticket when you press Fill. It never presses Buy.", default="false"),

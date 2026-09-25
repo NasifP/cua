@@ -212,6 +212,13 @@ STRINGS: dict[str, tuple[str, str]] = {
                         "they match.",
                         "الخانات فيها كمية {quantity} وسعر {price}، ودول مش الأمر. صلّحهم أو "
                         "اضغط املأ تاني، وماتضغطش شراء غير لما يطابقوا."),
+    "field.EGX_FOUR_FACTOR": ("Four-factor strategy", "استراتيجية الأربع عوامل"),
+    "field.EGX_FOUR_FACTOR.help": ("Trend, momentum, volume and volatility decide what to buy, "
+                                   "sell and how much, instead of the fixed allocation. Compare "
+                                   "them in the Strategy Lab first.",
+                                   "الاتجاه والزخم والحجم والتذبذب بيحددوا تشتري إيه وتبيع "
+                                   "إيه وبكام، بدل التوزيع الثابت. قارنهم في معمل "
+                                   "الاستراتيجيات الأول."),
     "field.EGX_TICKET_FILL": ("Fill buy tickets in Thndr X", "تجهيز أوامر الشراء في Thndr X"),
     "field.EGX_TICKET_FILL.help": ("When on, the Thndr X page can write an order's quantity and "
                                    "price into an open buy ticket when you press Fill. It never "
@@ -234,6 +241,26 @@ STRINGS: dict[str, tuple[str, str]] = {
                       "مفيش شراء بعد نزول {fall}% في {days} يوم"),
 
     # --- lab report (backtest/lab.py) ---
+    "report.four_factor": ("four-factor", "الأربع عوامل"),
+    "report.strategy": ("Strategy", "الاستراتيجية"),
+    "report.versus_strategy": ("Four-factor strategy vs plain policy (annualised):",
+                               "استراتيجية الأربع عوامل مقابل الخطة الحالية (سنوياً):"),
+    "lab.kind.four_factor_strategy": ("Trend + Momentum + Volume + Volatility decide what to "
+                                      "hold and how much",
+                                      "الاتجاه + الزخم + الحجم + التذبذب بيحددوا نمسك إيه "
+                                      "وبكام"),
+    "lab.compare": ("Compare the full strategy with the current plan",
+                    "قارن الاستراتيجية الكاملة بالخطة الحالية"),
+    "lab.compare_tip": ("Four factors decide buys, sells and sizes; replayed against the "
+                        "fixed allocation",
+                        "الأربع عوامل بيقرروا الشراء والبيع والحجم، ويتقارنوا بالتوزيع الثابت"),
+    "lab.strategy_passed": ("The four-factor strategy beat the current plan after costs, over "
+                            "the whole history and in each half. You can switch to it in "
+                            "Settings.",
+                            "استراتيجية الأربع عوامل كسبت الخطة الحالية بعد العمولات، في "
+                            "التاريخ كله وفي كل نص. تقدر تشغّلها من الإعدادات."),
+    "lab.strategy_failed": ("Not recommended yet: {verdict}",
+                            "مش موصى بيها لسه: {verdict}"),
     "report.rules": ("Rules", "القواعد"),
     "report.with_rules": ("with rules", "بالقواعد"),
     "report.policy": ("policy", "الخطة"),
