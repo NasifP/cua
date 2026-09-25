@@ -137,3 +137,29 @@ def test_switching_language_retranslates_the_tabs(app, tmp_path, monkeypatch):
     finally:
         i18n.set_language("ar")
         theme.apply(app, "dark")
+
+
+def test_a_language_switch_keeps_unsaved_settings(app, monkeypatch):
+    from egx_advisor import i18n
+    from egx_advisor.desktop import settings_tab
+
+    class Store:
+        available = False
+
+        def get(self, key):
+            return None
+
+    monkeypatch.setattr(settings_tab.settings, "load", lambda store=None: type(
+        "State", (), {"values": {"EGX_CYCLE_SECONDS": "300"}, "secret_sources": {}})())
+    try:
+        i18n.set_language("ar")
+        tab = settings_tab.SettingsTab(on_saved=lambda: None, store=Store())
+        tab._inputs["EGX_CYCLE_SECONDS"].setText("600")
+        tab._secret_inputs["GEMINI_API_KEY"].setText("typed-not-saved")
+        i18n.set_language("en")
+        tab.retranslate()
+        assert tab.save_button.text() == "Save settings"
+        assert tab._inputs["EGX_CYCLE_SECONDS"].text() == "600"
+        assert tab._secret_inputs["GEMINI_API_KEY"].text() == "typed-not-saved"
+    finally:
+        i18n.set_language("ar")

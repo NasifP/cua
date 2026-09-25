@@ -93,9 +93,14 @@ class SettingsTab(QWidget):
         self._texts.append(apply)
 
     def retranslate(self) -> None:
+        """Relabel in the current language. Values typed but not saved are kept."""
+        first = not hasattr(self, "_sources")
         for apply in self._texts:
             apply()
-        self.reload()
+        if first:
+            self.reload()
+        else:
+            self._paint_statuses()
         self._say("")
 
     @staticmethod
@@ -248,13 +253,11 @@ class SettingsTab(QWidget):
 
     def reload(self) -> None:
         state = settings.load(store=self._store)
-        for key, status in self._secret_status.items():
-            source = state.secret_sources.get(key, "")
-            status.setText(tr("set.saved_pill") if source else tr("set.not_set"))
-            status.setToolTip(f"saved in {source}" if source else "not set")
-            theme.restyle_pill(status, "ok" if source else "muted")
-            self._secret_inputs[key].clear()
+        self._sources = dict(state.secret_sources)
         self._remove.clear()
+        for edit in self._secret_inputs.values():
+            edit.clear()
+        self._paint_statuses()
         for key, widget in self._inputs.items():
             value = state.values.get(key, "")
             if isinstance(widget, QComboBox):
@@ -266,6 +269,17 @@ class SettingsTab(QWidget):
                 widget.setChecked(value.lower() == "true")
             else:
                 widget.setText(value)
+
+    def _paint_statuses(self) -> None:
+        for key, status in self._secret_status.items():
+            source = self._sources.get(key, "")
+            if key in self._remove:
+                status.setText(tr("set.will_remove"))
+                theme.restyle_pill(status, "bad")
+                continue
+            status.setText(tr("set.saved_pill") if source else tr("set.not_set"))
+            status.setToolTip(source or "")
+            theme.restyle_pill(status, "ok" if source else "muted")
 
     def _mark_remove(self, key: str) -> None:
         self._remove.add(key)
