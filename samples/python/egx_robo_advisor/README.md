@@ -29,9 +29,11 @@ You need Windows 10 or 11, Chrome, and a Gemini API key (free at
 3. **Your key.** Open `.env` in Notepad and paste your Gemini key after
    `GEMINI_API_KEY=`. Nothing else in the file needs changing to start.
 4. **Open the app.** Double-click **`desktop.cmd`** (or the desktop shortcut).
-   One window opens with these tabs: **Dashboard** (plan, log, chat, START),
-   **Thndr X** (a browser built into the app), **Chart** (TradingView),
-   **Strategy Lab**, **Events & news**, and **Settings**.
+   One window opens, in Arabic, with a sidebar: **Dashboard** (plan, log,
+   chat, START), **Thndr X** (a browser built into the app), **Chart**
+   (TradingView), **Strategy Lab**, **Events & news**, and **Settings**. The
+   header shows whether the bot is running and today's model spend; the
+   button above HALT switches between the dark and light theme.
 5. **Sign in** to Thndr X in its tab and open **Positions**. The app remembers
    the sign-in in `state/browser`.
 6. **Run it.** On the Dashboard tab press **START THE BOT**, then **CONFIRM**.

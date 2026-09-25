@@ -34,6 +34,7 @@ from PySide6.QtWidgets import (
 from ..paths import config_path
 from ..regime.events import IMPACTS, ScheduledEvent, load_events, save_events
 from ..regime.sources import read_feed_entries, save_feeds
+from . import theme
 
 EVENTS_FILE = config_path("events.toml")
 FEEDS_FILE = config_path("feeds.toml")
@@ -45,6 +46,10 @@ def _table(headers: list[str]) -> QTableWidget:
     table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
     table.setSelectionBehavior(QAbstractItemView.SelectRows)
     table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+    table.setAlternatingRowColors(True)
+    table.setShowGrid(False)
+    table.verticalHeader().setVisible(False)
+    table.horizontalHeader().setHighlightSections(False)
     return table
 
 
@@ -55,47 +60,59 @@ class SourcesTab(QWidget):
         self.message.setWordWrap(True)
 
         # --- events ---
-        self.events = _table(["Date", "Event", "Impact"])
+        self.events = _table(["التاريخ", "الحدث", "الأهمية"])
         self.event_date = QDateEdit(QDate.currentDate())
         self.event_date.setCalendarPopup(True)
         self.event_date.setDisplayFormat("yyyy-MM-dd")
         self.event_title = QLineEdit()
-        self.event_title.setPlaceholderText("e.g. CBE MPC rate decision")
+        self.event_title.setPlaceholderText("مثلاً: قرار الفايدة من البنك المركزي")
         self.event_impact = QComboBox()
         self.event_impact.addItems(list(IMPACTS))
-        add_event = QPushButton("أضف  |  Add")
+        add_event = QPushButton("أضف الحدث")
+        add_event.setProperty("variant", "primary")
         add_event.clicked.connect(self.add_event)
-        remove_event = QPushButton("احذف المحدد  |  Remove")
+        remove_event = QPushButton("احذف المحدد")
+        remove_event.setProperty("variant", "ghost")
         remove_event.clicked.connect(self.remove_event)
         event_row = QHBoxLayout()
         for widget in (self.event_date, self.event_title, self.event_impact, add_event,
                        remove_event):
             event_row.addWidget(widget, 1 if widget is self.event_title else 0)
-        events_box = QGroupBox("التقويم الاقتصادي  |  Economic calendar")
+        events_box = QGroupBox("التقويم الاقتصادي")
         events_layout = QVBoxLayout(events_box)
         note = QLabel(
-            "مفيش شراء جديد حوالين الأحداث دي: high = اليوم اللي قبل واليوم نفسه واللي بعده، "
-            "medium = اليوم نفسه. انقل المواعيد من البنك المركزي أو Investing.com.\n"
-            "No new buys around these: high = the day before, of and after; medium = the "
-            "day of. Copy dates from cbe.org.eg or Investing.com's economic calendar."
+            "مفيش شراء جديد حوالين الأحداث دي. high: اليوم اللي قبل الحدث ويومه واليوم اللي "
+            "بعده. medium: يوم الحدث بس. انقل المواعيد من موقع البنك المركزي أو "
+            "Investing.com."
         )
+        note.setProperty("muted", "true")
+        note.setToolTip("No new buys around these: high = the day before, of and after; "
+                        "medium = the day of.")
         note.setWordWrap(True)
         events_layout.addWidget(note)
+        self.events_empty = QLabel(
+            "لسه مفيش أحداث. ضيف ميعاد اجتماع البنك المركزي الجاي من cbe.org.eg.")
+        self.events_empty.setProperty("message", "info")
+        events_layout.addWidget(self.events_empty)
         events_layout.addWidget(self.events, 1)
         events_layout.addLayout(event_row)
 
         # --- feeds ---
-        self.feeds = _table(["Name", "URL", "Official", "Enabled"])
+        self.feeds = _table(["الاسم", "الرابط", "رسمي", "الحالة"])
         self.feed_name = QLineEdit()
-        self.feed_name.setPlaceholderText("Name")
+        self.feed_name.setPlaceholderText("الاسم")
         self.feed_url = QLineEdit()
-        self.feed_url.setPlaceholderText("https://... RSS or Atom feed")
-        self.feed_official = QCheckBox("Official (exchange/regulator)")
-        add_feed = QPushButton("أضف  |  Add")
+        self.feed_url.setPlaceholderText("https://...  رابط RSS أو Atom")
+        self.feed_official = QCheckBox("مصدر رسمي (البورصة أو الرقابة)")
+        self.feed_official.setToolTip("If an official source fails during a session, buys stop")
+        add_feed = QPushButton("أضف المصدر")
+        add_feed.setProperty("variant", "primary")
         add_feed.clicked.connect(self.add_feed)
-        toggle_feed = QPushButton("شغّل/وقّف  |  Enable/disable")
+        toggle_feed = QPushButton("شغّل / وقّف")
+        toggle_feed.setProperty("variant", "ghost")
         toggle_feed.clicked.connect(self.toggle_feed)
-        remove_feed = QPushButton("احذف  |  Remove")
+        remove_feed = QPushButton("احذف المحدد")
+        remove_feed.setProperty("variant", "ghost")
         remove_feed.clicked.connect(self.remove_feed)
         feed_row = QHBoxLayout()
         feed_row.addWidget(self.feed_name)
@@ -106,14 +123,13 @@ class SourcesTab(QWidget):
         feed_buttons.addStretch(1)
         feed_buttons.addWidget(toggle_feed)
         feed_buttons.addWidget(remove_feed)
-        feeds_box = QGroupBox("مصادر الأخبار  |  News sources")
+        feeds_box = QGroupBox("مصادر الأخبار")
         feeds_layout = QVBoxLayout(feeds_box)
         feed_note = QLabel(
-            "RSS بس، ومن غير تسجيل دخول. اتأكد إن شروط الموقع بتسمح قبل ما تضيفه. "
-            "لو مصدر Official وقع وقت التداول، الشراء بيقف.\n"
-            "RSS only, no logins. Check a site's terms before adding it. If an Official "
-            "source fails during a session, buys stop."
+            "روابط RSS بس، ومن غير تسجيل دخول. اتأكد إن شروط الموقع بتسمح قبل ما تضيفه. "
+            "لو مصدر رسمي وقع وقت التداول، الشراء بيقف. التعديل بيشتغل بعد إعادة تشغيل البوت."
         )
+        feed_note.setProperty("muted", "true")
         feed_note.setWordWrap(True)
         feeds_layout.addWidget(feed_note)
         feeds_layout.addWidget(self.feeds, 1)
@@ -121,6 +137,8 @@ class SourcesTab(QWidget):
         feeds_layout.addLayout(feed_buttons)
 
         layout = QVBoxLayout(self)
+        layout.setContentsMargins(24, 8, 24, 20)
+        layout.setSpacing(4)
         layout.addWidget(events_box, 1)
         layout.addWidget(feeds_box, 1)
         layout.addWidget(self.message)
@@ -135,6 +153,7 @@ class SourcesTab(QWidget):
             self._events = []
             self._say(f"events.toml unreadable: {exc}", error=True)
         self.events.setRowCount(0)
+        self.events_empty.setVisible(not self._events)
         for event in self._events:
             row = self.events.rowCount()
             self.events.insertRow(row)
@@ -149,8 +168,8 @@ class SourcesTab(QWidget):
         for entry in self._feeds:
             row = self.feeds.rowCount()
             self.feeds.insertRow(row)
-            cells = (entry["name"], entry["url"], "yes" if entry["authoritative"] else "",
-                     "yes" if entry["enabled"] else "off")
+            cells = (entry["name"], entry["url"], "رسمي" if entry["authoritative"] else "",
+                     "شغّال" if entry["enabled"] else "متوقف")
             for col, text in enumerate(cells):
                 item = QTableWidgetItem(str(text))
                 if not entry["enabled"]:
@@ -214,5 +233,4 @@ class SourcesTab(QWidget):
             self.reload()
 
     def _say(self, text: str, *, error: bool = False) -> None:
-        self.message.setText(text)
-        self.message.setStyleSheet("color:#c62828;" if error else "color:#2e7d32;")
+        theme.say(self.message, text, "bad" if error else "ok")
