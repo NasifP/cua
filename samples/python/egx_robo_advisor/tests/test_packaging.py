@@ -63,7 +63,7 @@ def test_first_run_gets_the_defaults_and_later_runs_keep_the_users_files(tmp_pat
 
 def test_the_spec_ships_config_files_that_exist_and_nothing_personal():
     spec = (ROOT / "packaging" / "egx_robo_advisor.spec").read_text(encoding="utf-8")
-    shipped = re.search(r"SHIPPED_CONFIG = \[(.*?)\]", spec).group(1)
+    shipped = re.search(r"SHIPPED_CONFIG = \[(.*?)\]", spec, re.S).group(1)
     names = re.findall(r'"([^"]+)"', shipped)
     assert names and all((ROOT / "config" / n).is_file() for n in names)
     assert "rules.toml" not in names and "thndr.ticket.toml" not in names

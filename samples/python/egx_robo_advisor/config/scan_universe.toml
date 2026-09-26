@@ -1,0 +1,13 @@
+# Stocks the chat's opportunity scan looks at ("find the best 5 opportunities").
+#
+# Yahoo Finance tickers for EGX stocks end in ".CA". This is a broad list of
+# large, liquid EGX names, not an official index membership: verify it, and
+# add or remove names freely. A ticker Yahoo does not know, or whose prices
+# fail the data checks, is skipped and listed as skipped in the answer.
+symbols = [
+  "COMI.CA", "TMGH.CA", "SWDY.CA", "ABUK.CA", "EAST.CA", "ETEL.CA", "HRHO.CA",
+  "EFIH.CA", "FWRY.CA", "ORAS.CA", "AMOC.CA", "MFPC.CA", "ESRS.CA", "JUFO.CA",
+  "HELI.CA", "PHDC.CA", "ORWE.CA", "CIEB.CA", "ADIB.CA", "CCAP.CA", "EMFD.CA",
+  "SKPC.CA", "BTFH.CA", "EFID.CA", "ISPH.CA", "GBCO.CA", "CLHO.CA", "ALCN.CA",
+  "MASR.CA", "RMDA.CA", "EGAL.CA", "OCDI.CA",
+]

@@ -25,6 +25,7 @@ from PySide6.QtWidgets import (
     QListWidget,
     QPlainTextEdit,
     QPushButton,
+    QScrollArea,
     QSpinBox,
     QVBoxLayout,
     QWidget,
@@ -137,14 +138,22 @@ class LabTab(QWidget):
         adopted_layout.addWidget(self.adopted)
         adopted_layout.addWidget(self.remove_button, 0, Qt.AlignRight)
 
-        left = QVBoxLayout()
+        # The rule form is tall (six settings for the four-factor rule): on a
+        # short screen it scrolls instead of squeezing the rows together.
+        left_panel = QWidget()
+        left = QVBoxLayout(left_panel)
+        left.setContentsMargins(0, 0, 6, 0)
         left.setSpacing(4)
         left.addWidget(self.setup)
         left.addWidget(self.adopted_box, 1)
+        self.adopted.setMinimumHeight(90)
+        left_scroll = QScrollArea()
+        left_scroll.setWidgetResizable(True)
+        left_scroll.setWidget(left_panel)
         layout = QHBoxLayout(self)
         layout.setContentsMargins(24, 8, 24, 20)
         layout.setSpacing(18)
-        layout.addLayout(left, 2)
+        layout.addWidget(left_scroll, 2)
         layout.addWidget(self.result_box, 3)
 
         self.retranslate()

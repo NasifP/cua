@@ -29,6 +29,11 @@ sell views would undo that. So this assistant is given the bot's state and asked
 to describe it, and its system prompt tells it plainly to decline trade
 recommendations rather than improvise them.
 
+The one exception is a scan. "Find the best 5 opportunities" is answered by
+`scanner.py`, which ranks EGX stocks with the four-factor rules from past
+prices. The model is handed that ranked table and asked to explain it, not to
+add, drop or reorder names. The pick is code; the model only puts it in words.
+
 Untrusted content
 -----------------
 The context includes news headlines fetched from the open internet. They are
@@ -51,6 +56,7 @@ from dataclasses import dataclass, field
 from typing import Any, Callable, Mapping, Optional, Sequence
 
 from .bus import StateBus
+from .scanner import scan_request
 
 logger = logging.getLogger(__name__)
 
@@ -89,6 +95,16 @@ WHAT YOU MUST NOT DO
 - Do not invent numbers. Everything you state as fact must come from the state
   below. If it is not there, say you cannot see it.
 
+SCAN RESULTS
+When a <scan_results> block is present, the operator asked for the best
+opportunities and the bot's scanner has ranked them. Present that ranking
+faithfully, in its order, as a short list with each stock's key figures and
+which of the four factors (trend, momentum, volume, volatility) agree. Do not
+add, drop or reorder names, and do not add figures that are not in the block.
+Say plainly that it is a rules-based screen of past prices, not a forecast, and
+that the bot itself buys only through its plan, with the operator pressing Buy.
+Mention skipped stocks briefly if there are any.
+
 TONE
 Direct and concrete. Prefer the actual figures over generalities. When the state
 shows something is blocked or halted, say what unblocks it.
@@ -110,6 +126,10 @@ class Assistant:
     max_tokens: int = 1200
     #: Extra context the caller wants included, e.g. the loaded policy.
     extra_context: Mapping[str, Any] = field(default_factory=dict)
+    #: top_n -> ScanResult. Injected for testing; the Yahoo scan when None.
+    scanner: Optional[Callable[[int], Any]] = None
+    #: False when chat is off in Settings: scans still answer, with figures only.
+    use_model: bool = True
 
     # ------------------------------------------------------------------ context
 
@@ -169,6 +189,8 @@ class Assistant:
     # ------------------------------------------------------------------ answering
 
     def _resolve(self) -> Optional[Callable[..., Any]]:
+        if not self.use_model:
+            return None
         if self.completion is None:
             try:
                 from litellm import completion
@@ -189,8 +211,33 @@ class Assistant:
         if not question:
             return "Ask me something about the bot's state, plan, or decisions."
 
+        scan_block = ""
+        top = scan_request(question)
+        if top is not None:
+            try:
+                result = self._run_scan(top)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("opportunity scan failed: %s", exc)
+                return _say(question, f"تعذر البحث عن الفرص: {exc}",
+                            f"The opportunity scan failed: {exc}")
+            if not result.top:
+                return _say(question, "لم أجد أسعاراً كافية لأي سهم.\n" + result.table(),
+                            "No stock had enough usable prices.\n" + result.table())
+            scan_block = result.table()
+
         completion = self._resolve()
         if completion is None:
+            if scan_block:
+                return _say(question, "نتيجة الفحص (بدون نموذج الشات، بالأرقام فقط):\n",
+                            "Scan result (the chat model is off, figures only):\n") + scan_block
+            if not self.use_model:
+                return _say(
+                    question,
+                    "الشات مقفول. شغّله من الإعدادات (Chat) علشان يجاوب على الأسئلة. "
+                    "البحث عن الفرص شغال من غيره: اكتب مثلاً «ابحث عن أفضل 5 فرص».",
+                    "Chat is off. Turn it on in Settings to ask questions. The opportunity "
+                    "scan works without it: try \"find the best 5 opportunities\".",
+                )
             return (
                 "The chat model is not configured. Install the extra "
                 "(`pip install -e '.[chat]'`) and set the provider's API key, "
@@ -205,6 +252,9 @@ class Assistant:
                 "content": "Current state of the bot:\n\n" + self.build_context(),
             },
         ]
+        if scan_block:
+            messages.append({"role": "system",
+                             "content": f"<scan_results>\n{scan_block}\n</scan_results>"})
         for turn in list(history)[-MAX_HISTORY_TURNS:]:
             role = turn.get("role")
             content = str(turn.get("content", ""))[:MAX_QUESTION_CHARS]
@@ -222,6 +272,21 @@ class Assistant:
             text = response["choices"][0]["message"]["content"] or ""
         except Exception as exc:  # noqa: BLE001
             logger.warning("chat completion failed: %s", exc)
+            if scan_block:
+                return f"The chat model could not be reached ({exc}). Scan result:\n{scan_block}"
             return f"The chat model could not be reached: {exc}"
 
         return text.strip() or "(the model returned nothing)"
+
+
+    def _run_scan(self, top: int) -> Any:
+        if self.scanner is None:
+            from .scanner import yahoo_scan
+
+            self.scanner = yahoo_scan
+        return self.scanner(top)
+
+
+def _say(question: str, arabic: str, english: str) -> str:
+    """Reply in the question's language: Arabic when it has Arabic letters."""
+    return arabic if any("\u0600" <= ch <= "\u06ff" for ch in question) else english

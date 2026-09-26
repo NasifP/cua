@@ -88,9 +88,10 @@ BEHAVIOUR_FIELDS: tuple[Field, ...] = (
     Field("EGX_CYCLE_SECONDS", "Seconds between cycles (market open)", "int",
           "How often the bot reads the portfolio and replans.", default="300",
           minimum=60, maximum=3600),
-    Field("EGX_DAILY_SPEND_LIMIT_USD", "Daily model spend limit (USD)", "float",
-          "Model calls stop for the day once this is reached.", default="2.00",
-          minimum=0, maximum=1000),
+    Field("EGX_DAILY_SPEND_LIMIT_EGP", "Daily model spend limit (EGP)", "float",
+          "Model calls stop for the day once this is reached. Providers bill in dollars; "
+          "the app converts at the day's USD/EGP rate.", default="100",
+          minimum=0, maximum=100000),
     Field("EGX_DAILY_CALL_LIMIT", "Daily model call limit", "int",
           "A backstop that works even for models without a known price.",
           default="400", minimum=1, maximum=100000),

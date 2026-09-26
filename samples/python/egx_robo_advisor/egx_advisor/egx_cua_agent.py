@@ -420,6 +420,10 @@ class EgxCuaAgent:
         self.bus.put("status", {"phase": AgentPhase.READING_PORTFOLIO.value})
         portfolio = await executor.read_portfolio()
         market = await self._market_data.snapshot(self.config.policy.universe)
+        if market.usd_egp > 0:
+            # The day's rate, so the model budget can be shown and capped in EGP.
+            self.bus.put("fx", {"usd_egp": str(market.usd_egp),
+                                "as_of": market.as_of.isoformat()})
 
         # --- Gate 5: plan, filter, execute -------------------------------------
         self.bus.put("status", {"phase": AgentPhase.PLANNING.value})

@@ -407,10 +407,11 @@ const STRINGS = {
     'plan.title': 'Current plan', 'plan.withheld': 'Withheld orders',
     'plan.none': 'No orders: the portfolio is inside its drift bands, or buying is withheld.',
     'side.buy': 'BUY', 'side.sell': 'SELL',
-    'chat.title': 'Ask about the bot', 'chat.placeholder': 'Why was AZG.CA not bought?',
+    'chat.title': 'Ask about the bot', 'chat.placeholder': 'Find the best 5 opportunities, or: why was AZG.CA not bought?',
     'chat.ask': 'Ask',
-    'chat.note': 'Explains decisions and teaches the rules. It cannot halt, arm or trade — the kill switch is the red button below.',
+    'chat.note': 'Explains decisions, teaches the rules, and ranks EGX stocks by the four factors on request. It cannot halt, arm or trade — the kill switch is the red button below.',
     'chat.you': 'You', 'chat.bot': 'Assistant', 'chat.failed': 'Failed: ',
+    'chat.off': 'Chat model off (Settings): scans only',
     'log.title': 'Live agent log', 'log.follow': 'follow',
     'power.start': 'START THE BOT', 'power.kill': 'KILL SWITCH — STOP THE BOT',
     'power.confirm': 'CONFIRM — ',
@@ -443,10 +444,11 @@ const STRINGS = {
     'plan.title': 'الخطة الحالية', 'plan.withheld': 'أوامر متوقفة',
     'plan.none': 'مفيش أوامر: المحفظة جوّه حدود الانحراف، أو الشراء موقوف.',
     'side.buy': 'شراء', 'side.sell': 'بيع',
-    'chat.title': 'اسأل عن البوت', 'chat.placeholder': 'ليه AZG.CA ماتشتراش؟',
+    'chat.title': 'اسأل عن البوت', 'chat.placeholder': 'ابحث عن أفضل 5 فرص، أو: ليه AZG.CA ماتشتراش؟',
     'chat.ask': 'اسأل',
-    'chat.note': 'بيشرح القرارات ويعلّمك القواعد. مايقدرش يوقف أو يشغّل أو يتداول — زرار الإيقاف هو الأحمر تحت.',
+    'chat.note': 'بيشرح القرارات ويعلّمك القواعد، ولو طلبت بيرتب أسهم البورصة بالعوامل الأربعة. مايقدرش يوقف أو يشغّل أو يتداول — زرار الإيقاف هو الأحمر تحت.',
     'chat.you': 'انت', 'chat.bot': 'المساعد', 'chat.failed': 'فشل: ',
+    'chat.off': 'نموذج الشات مقفول (الإعدادات): البحث عن الفرص بس',
     'log.title': 'سجل البوت المباشر', 'log.follow': 'متابعة',
     'power.start': 'شغّل البوت', 'power.kill': 'إيقاف فوري — وقّف البوت',
     'power.confirm': 'تأكيد — ',
@@ -824,7 +826,7 @@ async function loadState() {
   paint(state);
   if (state.chat && state.chat.enabled) {
     $('chat-card').classList.remove('hidden');
-    $('chat-model').textContent = state.chat.model || '';
+    $('chat-model').textContent = state.chat.model || t('chat.off');
   }
   $('log').innerHTML = '';
   (state.events || []).forEach(appendEvent);

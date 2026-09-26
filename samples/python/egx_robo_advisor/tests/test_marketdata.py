@@ -289,3 +289,11 @@ async def test_a_single_bad_symbol_counts_once() -> None:
     await provider.snapshot(UNIVERSE)
     moves = [f for f in provider.last_report.blocking if f.code == "IMPLAUSIBLE_MOVE"]
     assert len(moves) == 1
+
+
+def test_a_close_just_outside_the_range_is_a_warning_not_a_block() -> None:
+    """Yahoo's EGX bars do this on a handful of days; it blocked 8 years of history."""
+    series = [YahooRow(date(2026, 9, 21), D(85), D(86), D(84), D("86.50"))]
+    report = validate_bars(series, "COMI.CA")
+    assert not report.blocking
+    assert any(f.code == "CLOSE_OUTSIDE_RANGE" for f in report.findings)
