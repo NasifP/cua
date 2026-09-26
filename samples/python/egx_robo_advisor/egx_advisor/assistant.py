@@ -56,7 +56,7 @@ from dataclasses import dataclass, field
 from typing import Any, Callable, Mapping, Optional, Sequence
 
 from .bus import StateBus
-from .scanner import scan_request
+from .scanner import scan_budget, scan_request
 
 logger = logging.getLogger(__name__)
 
@@ -103,7 +103,9 @@ which of the four factors (trend, momentum, volume, volatility) agree. Do not
 add, drop or reorder names, and do not add figures that are not in the block.
 Say plainly that it is a rules-based screen of past prices, not a forecast, and
 that the bot itself buys only through its plan, with the operator pressing Buy.
-Mention skipped stocks briefly if there are any.
+Mention skipped stocks briefly if there are any. When the block gives an
+amount and how many shares it buys, repeat those counts as given; do not split
+the amount between stocks or suggest how much to put in each.
 
 TONE
 Direct and concrete. Prefer the actual figures over generalities. When the state
@@ -211,25 +213,28 @@ class Assistant:
         if not question:
             return "Ask me something about the bot's state, plan, or decisions."
 
-        scan_block = ""
+        scan_block, scan_text = "", ""
+        arabic = _arabic(question)
         top = scan_request(question)
         if top is not None:
+            budget = scan_budget(question)
             try:
                 result = self._run_scan(top)
             except Exception as exc:  # noqa: BLE001
                 logger.warning("opportunity scan failed: %s", exc)
-                return _say(question, f"تعذر البحث عن الفرص: {exc}",
-                            f"The opportunity scan failed: {exc}")
+                return _say(question, f"تعذر البحث عن الفرص: {_short(exc)}",
+                            f"The opportunity scan failed: {_short(exc)}")
             if not result.top:
-                return _say(question, "لم أجد أسعاراً كافية لأي سهم.\n" + result.table(),
-                            "No stock had enough usable prices.\n" + result.table())
-            scan_block = result.table()
+                return _say(question, "مالقيتش أسعار كفاية لأي سهم.\n",
+                            "No stock had enough usable prices.\n") + result.summary(arabic)
+            scan_block = result.table(budget)
+            scan_text = result.summary(arabic, budget)
 
         completion = self._resolve()
         if completion is None:
             if scan_block:
-                return _say(question, "نتيجة الفحص (بدون نموذج الشات، بالأرقام فقط):\n",
-                            "Scan result (the chat model is off, figures only):\n") + scan_block
+                return _say(question, "نتيجة الفحص (نموذج الشات مقفول، بالأرقام بس):\n",
+                            "Scan result (the chat model is off, figures only):\n") + scan_text
             if not self.use_model:
                 return _say(
                     question,
@@ -272,12 +277,29 @@ class Assistant:
             text = response["choices"][0]["message"]["content"] or ""
         except Exception as exc:  # noqa: BLE001
             logger.warning("chat completion failed: %s", exc)
-            if scan_block:
-                return f"The chat model could not be reached ({exc}). Scan result:\n{scan_block}"
-            return f"The chat model could not be reached: {exc}"
+            problem = self._model_problem(exc, arabic)
+            if scan_text:
+                return problem + _say(question, "\n\nنتيجة الفحص بالأرقام:\n",
+                                      "\n\nScan result, figures only:\n") + scan_text
+            return problem
 
         return text.strip() or "(the model returned nothing)"
 
+
+    def _model_problem(self, exc: Exception, arabic: bool) -> str:
+        """One readable line for a failed model call, not the provider's JSON."""
+        text = str(exc)
+        if "429" in text or "RateLimit" in text or "quota" in text.lower():
+            if arabic:
+                return (f"الموديل {self.model} رفض الطلب: الحصة خلصت أو الموديل ده مش متاح "
+                        "في الخطة المجانية (limit 0). غيّر موديل الشات من الإعدادات لموديل "
+                        "أرخص زي gemini/gemini-2.5-flash، أو فعّل الدفع في Google AI Studio.")
+            return (f"{self.model} refused the request: the quota is used up, or this model "
+                    "has no free tier (limit 0). Pick a cheaper chat model in Settings, such "
+                    "as gemini/gemini-2.5-flash, or enable billing in Google AI Studio.")
+        if arabic:
+            return f"نموذج الشات مش متاح دلوقتي: {_short(exc)}"
+        return f"The chat model could not be reached: {_short(exc)}"
 
     def _run_scan(self, top: int) -> Any:
         if self.scanner is None:
@@ -287,6 +309,16 @@ class Assistant:
         return self.scanner(top)
 
 
+def _arabic(question: str) -> bool:
+    return any("\u0600" <= ch <= "\u06ff" for ch in question)
+
+
 def _say(question: str, arabic: str, english: str) -> str:
     """Reply in the question's language: Arabic when it has Arabic letters."""
-    return arabic if any("\u0600" <= ch <= "\u06ff" for ch in question) else english
+    return arabic if _arabic(question) else english
+
+
+def _short(exc: Exception, limit: int = 200) -> str:
+    """The first line of an error, cut short: provider errors can be pages of JSON."""
+    line = str(exc).strip().splitlines()[0] if str(exc).strip() else type(exc).__name__
+    return line if len(line) <= limit else line[:limit] + "..."

@@ -68,11 +68,14 @@ class ScanResult:
     as_of: str
     params: FourFactorParams = field(default_factory=FourFactorParams)
 
-    def table(self) -> str:
+    def table(self, budget: Optional[float] = None) -> str:
         """The ranked rows as plain text: what the chat model is given."""
         lines = [f"scan of {self.scanned} EGX stocks, prices up to the previous session "
                  f"(as of {self.as_of}); ranked by factors agreeing, then 60-day return "
                  f"per unit of volatility"]
+        if budget:
+            lines.append(f"the operator mentioned an amount of {budget:,.0f} EGP; 'buys' is how "
+                         f"many whole shares that amount buys at the close, before fees")
         for rank, o in enumerate(self.top, 1):
             flags = ", ".join(f"{k} {'yes' if v else 'no'}" for k, v in o.agree.items())
             lines.append(
@@ -81,10 +84,51 @@ class ScanResult:
                 f"20-day {o.momentum_20:+.1f}%, 60-day {o.momentum_60:+.1f}%; "
                 f"volume {o.volume_ratio:.0f}% of average; volatility {o.volatility:.1f}%/day; "
                 f"RSI {o.rsi:.0f}"
+                + (f"; buys {shares(budget, o.close)} shares" if budget else "")
             )
         if self.skipped:
             lines.append("skipped (no usable prices): " + ", ".join(self.skipped))
         return "\n".join(lines)
+
+    def summary(self, arabic: bool, budget: Optional[float] = None) -> str:
+        """The ranking for a person to read, when no model explains it."""
+        names_ar = {"trend": "اتجاه", "momentum": "زخم", "volume": "سيولة",
+                    "volatility": "تذبذب"}
+        lines = []
+        for rank, o in enumerate(self.top, 1):
+            name = o.symbol.removesuffix(".CA")
+            if arabic:
+                flags = " ".join(f"{names_ar[k]} {'✓' if v else '✗'}" for k, v in o.agree.items())
+                line = (f"{rank}. {name}: إغلاق {o.close:.2f} ج.م | {o.agreeing} من 4 متفقة "
+                        f"({flags}) | 60 يوم {o.momentum_60:+.1f}% | تذبذب {o.volatility:.1f}%/يوم")
+                if budget:
+                    line += f" | بمبلغ {budget:,.0f} ج.م: {shares(budget, o.close)} سهم"
+            else:
+                flags = " ".join(f"{k} {'✓' if v else '✗'}" for k, v in o.agree.items())
+                line = (f"{rank}. {name}: close {o.close:.2f} EGP | {o.agreeing}/4 agree "
+                        f"({flags}) | 60-day {o.momentum_60:+.1f}% | "
+                        f"volatility {o.volatility:.1f}%/day")
+                if budget:
+                    line += f" | {budget:,.0f} EGP buys {shares(budget, o.close)} shares"
+            lines.append(line)
+        if arabic:
+            lines.append(f"\nفحص {self.scanned} سهم بقواعد العوامل الأربعة على أسعار لحد آخر "
+                         "جلسة. ده ترتيب بالقواعد مش توقع، والأرقام قبل العمولة. "
+                         "البوت مش بيبعت أوامر، وانت اللي بتضغط شراء.")
+            if self.skipped:
+                lines.append("اتسابوا (مافيش أسعار كفاية): " + "، ".join(self.skipped))
+        else:
+            lines.append(f"\nRules-based screen of {self.scanned} stocks on prices up to the "
+                         "last session: a ranking, not a forecast; share counts before fees. "
+                         "The bot sends no orders; you press Buy.")
+            if self.skipped:
+                lines.append("Skipped (not enough prices): " + ", ".join(self.skipped))
+        return "\n".join(lines)
+
+
+def shares(budget: float, close: float) -> int:
+    """Whole shares an amount buys at a price, before fees."""
+    return int(budget // close) if close > 0 else 0
 
 
 def _rsi(prices: Sequence[float], days: int = 14) -> float:
@@ -186,8 +230,29 @@ _ARABIC_DIGITS = str.maketrans("٠١٢٣٤٥٦٧٨٩", "0123456789")
 #: about the bot, not scans.
 _ASK = re.compile(r"(ابحث|دور ?(لي|على|علي)|دوّر|رشح|افضل|أفضل|احسن|أحسن|اقوى|أقوى|"
                   r"\b(find|search|scan|best|top|recommend)\b)", re.IGNORECASE)
-_WHAT = re.compile(r"(فرص|سهم|اسهم|أسهم|opportunit|\bstocks?\b|\bshares?\b|\bset-?ups?\b)",
-                   re.IGNORECASE)
+_WHAT = re.compile(r"(فرص|سهم|اسهم|أسهم|صفق|دخول|opportunit|\bstocks?\b|\bshares?\b|"
+                   r"\bset-?ups?\b|\btrades?\b|\bdeals?\b|\bentr(y|ies)\b)", re.IGNORECASE)
+#: An amount of money: "5 الاف جنيه", "5000 ج.م", "10k", "EGP 20,000".
+_THOUSAND = r"(الاف|آلاف|ألاف|الف|ألف|k\b)"
+_AMOUNT = re.compile(
+    r"(\d[\d,]*(?:\.\d+)?)\s*(?:" + _THOUSAND + r")?\s*"
+    r"(جنيه|جنية|جنيهات|ج\.?م|egp|le\b|pounds?)"
+    r"|(\d[\d,]*(?:\.\d+)?)\s*" + _THOUSAND
+    + r"|(?:egp|ج\.?م)\s*(\d[\d,]*(?:\.\d+)?)",
+    re.IGNORECASE,
+)
+
+
+def scan_budget(question: str) -> Optional[float]:
+    """An amount of money in the question, in EGP, if there is one."""
+    text = (question or "").translate(_ARABIC_DIGITS)
+    match = _AMOUNT.search(text)
+    if not match:
+        return None
+    number = next(g for g in (match.group(1), match.group(4), match.group(6)) if g)
+    thousand = match.group(2) or match.group(5)
+    value = float(number.replace(",", "")) * (1000 if thousand else 1)
+    return value if value > 0 else None
 
 
 def scan_request(question: str) -> Optional[int]:
@@ -195,5 +260,5 @@ def scan_request(question: str) -> Optional[int]:
     text = (question or "").translate(_ARABIC_DIGITS)
     if not (_ASK.search(text) and _WHAT.search(text)):
         return None
-    number = re.search(r"\b(\d{1,2})\b", text)
+    number = re.search(r"\b(\d{1,2})\b", _AMOUNT.sub(" ", text))
     return max(1, min(int(number.group(1)), MAX_TOP)) if number else 5

@@ -90,6 +90,9 @@ def test_the_scan_list_ships_and_loads(tmp_path):
 
 
 @pytest.mark.parametrize(("question", "top"), [
+    ("احسن صفقة للدخول بمبلغ 5 الاف جنية؟", 5),
+    ("ابحث عن افضل 3 فرص بـ 20000 جنيه", 3),
+    ("top 3 stocks for 10k", 3),
     ("ابحث عن افضل 5 فرص للتداول", 5),
     ("ابحث عن أفضل ٣ فرص", 3),
     ("هاتلي احسن اسهم", 5),
@@ -132,7 +135,7 @@ def test_with_chat_off_a_scan_still_answers_with_figures(tmp_path):
                           completion=lambda **_: pytest.fail("model called"),
                           scanner=lambda n: _result())
     answer = assistant.answer("ابحث عن افضل 5 فرص")
-    assert "نتيجة الفحص" in answer and "COMI.CA" in answer
+    assert "نتيجة الفحص" in answer and "1. COMI:" in answer and "3 من 4" in answer
 
 
 def test_a_failed_scan_is_reported_not_raised(tmp_path):
@@ -149,3 +152,33 @@ def test_other_questions_never_run_the_scan(tmp_path):
         completion=lambda **_: {"choices": [{"message": {"content": "ok"}}]},
         scanner=lambda n: pytest.fail("scanned"))
     assert assistant.answer("why is buying halted?") == "ok"
+
+
+@pytest.mark.parametrize(("question", "amount"), [
+    ("احسن صفقة للدخول بمبلغ 5 الاف جنية؟", 5000),
+    ("ابحث عن افضل ٣ فرص بـ ٢٠٠٠٠ جنيه", 20000),
+    ("best 5 trades with EGP 10,000", 10000),
+    ("top 3 stocks for 10k", 10000),
+    ("ابحث عن أفضل 5 فرص", None),
+])
+def test_an_amount_in_the_question_is_read_in_pounds(question, amount):
+    assert scanner.scan_budget(question) == amount
+
+
+def test_the_amount_becomes_whole_shares_at_the_close():
+    result = _result()
+    assert "buys 62 shares" in result.table(5000)
+    assert "بمبلغ 5,000 ج.م: 62 سهم" in result.summary(arabic=True, budget=5000)
+
+
+def test_a_quota_error_is_one_readable_line_and_the_scan_still_shows(tmp_path):
+    def over_quota(**_):
+        raise RuntimeError('litellm.RateLimitError: geminiException - {"error": {"code": 429, '
+                           '"message": "You exceeded your current quota"}}')
+
+    assistant = Assistant(bus=StateBus(tmp_path / "s.db"), model="gemini/x-pro",
+                          completion=over_quota, scanner=lambda n: _result())
+    answer = assistant.answer("احسن صفقة للدخول بمبلغ 5 الاف جنية؟")
+    assert "gemini/x-pro" in answer and "gemini-2.5-flash" in answer
+    assert "{" not in answer, "no provider JSON in the chat"
+    assert "1. COMI:" in answer and "62 سهم" in answer
