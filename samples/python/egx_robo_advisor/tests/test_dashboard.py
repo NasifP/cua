@@ -270,16 +270,18 @@ def test_chat_answers_an_authenticated_question(chat_client) -> None:
     assert assistant.asked == ["why was AZG.CA not bought?"]
 
 
-def test_chat_is_absent_when_not_configured(tmp_path: Path) -> None:
-    """The control surface must work with chat off."""
+def test_with_chat_off_the_model_is_never_called(tmp_path: Path) -> None:
+    """The control surface must work with chat off; the scan still answers."""
     config = DashboardConfig(bus_path=str(tmp_path / "s.db"), token=TOKEN)
     api = TestClient(create_app(config))
     headers = {"Authorization": f"Bearer {TOKEN}"}
+    api.app.state.assistant.completion = lambda **_: pytest.fail("chat is off")
 
-    assert api.post("/api/chat", json={"question": "hi"}, headers=headers).status_code == 503
+    answer = api.post("/api/chat", json={"question": "hi"}, headers=headers).json()["answer"]
+    assert "Chat is off" in answer
     # Halting still works without a chat model.
     assert api.post("/api/control/halt", headers=headers).status_code == 200
-    assert api.get("/api/state", headers=headers).json()["chat"]["enabled"] is False
+    assert api.get("/api/state", headers=headers).json()["chat"] == {"enabled": True, "model": ""}
 
 
 def test_chat_cannot_halt_or_arm_the_bot(chat_client) -> None:

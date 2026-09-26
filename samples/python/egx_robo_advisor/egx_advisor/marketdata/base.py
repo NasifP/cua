@@ -130,6 +130,10 @@ class QualityPolicy:
     #: limit bands, and usually mean an unadjusted corporate action rather than a
     #: real move. Set above the band so a genuine limit day is not flagged.
     implausible_move: Decimal = Decimal("0.25")
+    #: Yahoo's EGX bars sometimes print an open or close a little outside that
+    #: day's high/low. Within this much of the range it is a warning, and the
+    #: bar is used as is; further out it is a bad bar and blocks, as before.
+    range_tolerance: Decimal = Decimal("0.03")
     #: Below this, treat a session as effectively untradeable for our sizes.
     min_daily_volume: Decimal = Decimal("1000")
     #: Warn when a symbol's history has gaps bigger than this many session days.

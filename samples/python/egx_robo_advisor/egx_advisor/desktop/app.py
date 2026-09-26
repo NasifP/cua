@@ -75,6 +75,7 @@ from . import theme
 from .bridge import BridgeServer
 from .chart_tab import ChartTab
 from .lab_tab import LabTab
+from .popout import PopOut
 from .settings_tab import SettingsTab
 from .sources_tab import SourcesTab
 from .ticket_panel import TicketPanel
@@ -175,7 +176,7 @@ class MainWindow(QMainWindow):
         self.env = env
         self.dashboard_port = dashboard_port
         self.setWindowTitle("EGX Robo-Advisor")
-        self.resize(1400, 900)
+        self.setMinimumSize(960, 600)
 
         # --- pages ---
         self.dashboard = QWebEngineView()
@@ -206,13 +207,16 @@ class MainWindow(QMainWindow):
         self.thndr_page.addWidget(self.ticket_panel)
         self.thndr_page.setStretchFactor(0, 1)
         self.thndr_page.setCollapsible(0, False)
+        # Thndr X can move to its own window, for a second screen.
+        self.thndr_slot = PopOut(self.thndr_page, on_halt=self.halt,
+                                 settings_file=PROJECT_ROOT / "state" / "desktop.ini")
         self.chart_tab = ChartTab()
         self.lab_tab = LabTab()
         self.sources_tab = SourcesTab()
 
         pages = (
             (self.dashboard, "dashboard", "page.dashboard"),
-            (self.thndr_page, "browser", "page.thndr"),
+            (self.thndr_slot, "browser", "page.thndr"),
             (self.chart_tab, "chart", "page.chart"),
             (self.lab_tab, "lab", "page.lab"),
             (self.sources_tab, "calendar", "page.sources"),
@@ -233,7 +237,7 @@ class MainWindow(QMainWindow):
             button.setCheckable(True)
             button.setIconSize(QSize(20, 20))
             button.setCursor(Qt.PointingHandCursor)
-            button.clicked.connect(lambda _=False, w=widget: self.show_page(w))
+            button.clicked.connect(lambda _=False, w=widget: self.open_page(w))
             nav_group.addButton(button)
             nav.addWidget(button)
             self._nav.append((button, icon_name, key))
@@ -378,6 +382,12 @@ class MainWindow(QMainWindow):
 
     # ------------------------------------------------------------------ layout
 
+    def open_page(self, widget: QWidget) -> None:
+        """A navigation click. Thndr X may open in its own window."""
+        self.show_page(widget)
+        if widget is self.thndr_slot:
+            self.thndr_slot.opened()
+
     def show_page(self, widget: QWidget) -> None:
         self.pages.setCurrentWidget(widget)
         key = self._page_keys[widget]
@@ -417,7 +427,7 @@ class MainWindow(QMainWindow):
         theme.apply(QApplication.instance(), theme.current())  # flips the layout direction
         self._retranslate_shell()
         for page in (self.chart_tab, self.lab_tab, self.sources_tab, self.settings_tab,
-                     self.ticket_panel):
+                     self.ticket_panel, self.thndr_slot):
             page.retranslate()
         self._sync_dashboard_theme(run_now=True)
         self._remember({"EGX_LANG": lang})
@@ -530,6 +540,7 @@ class MainWindow(QMainWindow):
                 control = bus.control_state()
                 status = (bus.get("status") or {}).get("payload") or {}
                 totals = spend.today(bus)
+                rate, measured = spend.usd_egp(bus)
         except Exception as exc:  # noqa: BLE001
             self._set_pill(self.state_pill, tr("app.state_unknown"), "warn")
             self.state_pill.setToolTip(f"bus unavailable: {exc}")
@@ -541,12 +552,16 @@ class MainWindow(QMainWindow):
         self.state_pill.setToolTip(control.reason or "")
         self._set_pill(self.phase_pill, status.get("phase") or "idle", "muted")
 
-        call_limit, usd_limit = spend.limits()
-        usd, calls = float(totals.get("usd", 0)), int(totals.get("calls", 0))
-        used = max(usd / usd_limit if usd_limit else 1.0, calls / call_limit if call_limit else 1.0)
-        self.spend_value.setText(f"${usd:.2f} / ${usd_limit:.2f}")
-        self.spend_bar.setToolTip(spend.describe(totals))
-        self.spend_text.setToolTip(spend.describe(totals))
+        call_limit, _ = spend.limits(rate=rate)
+        spent, limit = spend.in_egp(totals, rate=rate)
+        calls = int(totals.get("calls", 0))
+        used = max(spent / limit if limit else 1.0, calls / call_limit if call_limit else 1.0)
+        self.spend_value.setText(tr("app.spend_value", spent=f"{spent:,.2f}",
+                                    limit=f"{limit:,.0f}"))
+        tip = spend.describe(totals, rate=rate) + (
+            f"  ·  USD/EGP {rate:.2f}" if measured else f"  ·  USD/EGP ~{rate:.0f} (estimate)")
+        self.spend_bar.setToolTip(tip)
+        self.spend_text.setToolTip(tip)
         self.spend_bar.setValue(int(min(used, 1.0) * 1000))
         level = "bad" if used >= 1 else "warn" if used >= 0.8 else ""
         if self.spend_bar.property("level") != level:
@@ -568,6 +583,7 @@ class MainWindow(QMainWindow):
             _halt_bus("desktop app closed")
         if self.bridge is not None:
             self.bridge.stop()
+        self.thndr_slot.shutdown()
         # A page must go before its profile, or Qt warns and may lose the
         # session it was about to write.
         page = self.thndr.page()
@@ -578,6 +594,25 @@ class MainWindow(QMainWindow):
 
 
 # --------------------------------------------------------------------------- #
+
+
+def show_fitted(window: QMainWindow, preferred: tuple[int, int] = (1440, 920)) -> None:
+    """Open at a size that fits this screen, scaling included.
+
+    A fixed 1400x900 is taller than a laptop screen at 125-150% Windows
+    scaling, which cut off the HALT and START buttons. On a screen too small
+    for the preferred size the window opens maximised; otherwise at that size,
+    centred on the usable area.
+    """
+    screen = window.screen() or QApplication.primaryScreen()
+    area = screen.availableGeometry()
+    width, height = preferred
+    if area.width() < width + 40 or area.height() < height + 40:
+        window.showMaximized()
+        return
+    window.resize(width, height)
+    window.move(area.x() + (area.width() - width) // 2, area.y() + (area.height() - height) // 2)
+    window.show()
 
 
 def ensure_dashboard_password(env: dict[str, str]) -> None:
@@ -646,7 +681,7 @@ def main(argv: Optional[list[str]] = None) -> int:
         notice = tr("app.missing_keys",
                     items="; ".join(f"{c.name}: {c.detail}" for c in missing))
     window = MainWindow(env, int(env.get("EGX_DASHBOARD_PORT", "8787")), notice=notice)
-    window.show()
+    show_fitted(window)
     window.start_processes()
     return app.exec()
 

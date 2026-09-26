@@ -35,6 +35,7 @@ STRINGS: dict[str, tuple[str, str]] = {
     "app.state_armed": ("ARMED", "شغّال"),
     "app.state_unknown": ("UNKNOWN", "الحالة غير معروفة"),
     "app.spend": ("Models today", "الموديلات النهارده"),
+    "app.spend_value": ("EGP {spent} / {limit}", "{spent} / {limit} ج.م"),
     "app.starting": ("Starting the dashboard ...", "لوحة التحكم بتفتح ..."),
     "app.restarting": ("Restarting ...", "بيعيد التشغيل ..."),
     "app.halt_failed": ("Could not halt the bot: {error}", "ماقدرتش أوقف البوت: {error}"),
@@ -53,6 +54,13 @@ STRINGS: dict[str, tuple[str, str]] = {
                        "panel fills a buy ticket when you press Fill, and you press Buy.",
                        "حسابك في متصفح البرنامج. البوت بيقراه بس؛ واللوحة بتملى أمر الشراء "
                        "لما تضغط املأ، وانت اللي بتضغط شراء."),
+    "popout.undock": ("Open in a separate window", "افتح في نافذة منفصلة"),
+    "popout.dock": ("Back to main window", "رجوع للنافذة الرئيسية"),
+    "popout.show": ("Show the Thndr X window", "اعرض نافذة Thndr X"),
+    "popout.note": ("Thndr X is open in its own window, so you can put it on a second screen. "
+                    "The bot still reads it there, and the ticket panel moved with it.",
+                    "Thndr X مفتوح في نافذة لوحده، تقدر تحطه على شاشة تانية. البوت لسه "
+                    "بيقراه هناك، ولوحة الأوامر اتنقلت معاه."),
     "page.chart": ("Chart", "الشارت"),
     "page.chart.sub": ("TradingView chart for your holdings. Nothing here reaches the bot.",
                        "شارت TradingView لأسهمك. اللي هنا ليك انت، ومش بيوصل للبوت."),
@@ -423,6 +431,14 @@ STRINGS: dict[str, tuple[str, str]] = {
                                 "ثواني بين كل دورة (والسوق فاتح)"),
     "field.EGX_CYCLE_SECONDS.help": ("How often the bot reads the portfolio and replans.",
                                      "كل قد إيه البوت يقرا المحفظة ويعيد الخطة."),
+    "field.EGX_DAILY_SPEND_LIMIT_EGP": ("Daily model spend limit (EGP)",
+                                        "حد صرف الموديلات في اليوم (جنيه)"),
+    "field.EGX_DAILY_SPEND_LIMIT_EGP.help": ("Model calls stop for the day once this is "
+                                             "reached. Providers bill in dollars; the app "
+                                             "converts at the day's USD/EGP rate.",
+                                             "طلبات الموديلات بتقف باقي اليوم لما توصل "
+                                             "للحد ده. الشركات بتحاسب بالدولار، والبرنامج "
+                                             "بيحوّل بسعر الدولار النهارده."),
     "field.EGX_DAILY_SPEND_LIMIT_USD": ("Daily model spend limit (USD)",
                                         "حد صرف الموديلات في اليوم (دولار)"),
     "field.EGX_DAILY_SPEND_LIMIT_USD.help": ("Model calls stop for the day once this is "

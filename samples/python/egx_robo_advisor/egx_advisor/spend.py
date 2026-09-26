@@ -9,10 +9,13 @@ day on the shared bus, so the agent and the dashboard spend from one budget.
 Two limits, because only one of them is always measurable:
 
 - EGX_DAILY_CALL_LIMIT (default 400) counts calls. It always works.
-- EGX_DAILY_SPEND_LIMIT_USD (default 2.00) counts dollars, from litellm's own
-  price table. A model litellm has no price for adds nothing to the dollar
-  total, and the dashboard says how many calls went unpriced, so the call
-  limit is the one that cannot be fooled.
+- EGX_DAILY_SPEND_LIMIT_EGP (default 100) caps spending in Egyptian pounds.
+  Providers bill in dollars, from litellm's own price table, so the ledger
+  counts dollars and converts at the day's USD/EGP rate (the agent records it
+  as the "fx" snapshot; FALLBACK_USD_EGP until it has). A model litellm has
+  no price for adds nothing, and the app says how many calls went unpriced,
+  so the call limit is the one that cannot be fooled. The older
+  EGX_DAILY_SPEND_LIMIT_USD still works when the EGP limit is not set.
 
 Either limit reached refuses the next call with BudgetExceeded. The caller
 treats that like any other unavailable model: the classifier falls back to
@@ -33,6 +36,10 @@ logger = logging.getLogger(__name__)
 SNAPSHOT_KEY = "spend"
 DEFAULT_CALL_LIMIT = 400
 DEFAULT_USD_LIMIT = 2.00
+DEFAULT_EGP_LIMIT = 100.0
+#: Used only until the agent has fetched the day's rate.
+FALLBACK_USD_EGP = 50.0
+FX_KEY = "fx"
 
 
 class BudgetExceeded(RuntimeError):
@@ -43,17 +50,41 @@ def _today(now: Optional[datetime] = None) -> str:
     return (now or datetime.now(CAIRO)).astimezone(CAIRO).date().isoformat()
 
 
-def limits(env: Mapping[str, str] = os.environ) -> tuple[int, float]:
-    def number(key: str, default: float) -> float:
-        try:
-            return float(env.get(key) or default)
-        except ValueError:
-            return default
+def _number(env: Mapping[str, str], key: str, default: Optional[float]) -> Optional[float]:
+    try:
+        return float(env[key]) if env.get(key) else default
+    except ValueError:
+        return default
 
-    return (
-        int(number("EGX_DAILY_CALL_LIMIT", DEFAULT_CALL_LIMIT)),
-        number("EGX_DAILY_SPEND_LIMIT_USD", DEFAULT_USD_LIMIT),
-    )
+
+def usd_egp(bus: Any) -> tuple[float, bool]:
+    """The day's USD/EGP rate from the agent's market data, and whether it is one.
+
+    (FALLBACK_USD_EGP, False) until the agent has recorded a rate.
+    """
+    try:
+        rate = float(((bus.get(FX_KEY) or {}).get("payload") or {}).get("usd_egp") or 0)
+    except (TypeError, ValueError, AttributeError):
+        rate = 0.0
+    return (rate, True) if rate > 0 else (FALLBACK_USD_EGP, False)
+
+
+def limits(env: Mapping[str, str] = os.environ,
+           rate: float = FALLBACK_USD_EGP) -> tuple[int, float]:
+    """(call limit, spend limit in dollars at `rate` EGP per dollar)."""
+    calls = int(_number(env, "EGX_DAILY_CALL_LIMIT", DEFAULT_CALL_LIMIT) or DEFAULT_CALL_LIMIT)
+    egp = _number(env, "EGX_DAILY_SPEND_LIMIT_EGP", None)
+    if egp is not None:
+        return calls, egp / rate
+    usd = _number(env, "EGX_DAILY_SPEND_LIMIT_USD", None)
+    return calls, usd if usd is not None else DEFAULT_EGP_LIMIT / rate
+
+
+def in_egp(totals: Mapping[str, Any], env: Mapping[str, str] = os.environ,
+           rate: float = FALLBACK_USD_EGP) -> tuple[float, float]:
+    """(spent today, daily limit), both in Egyptian pounds."""
+    _calls, usd_limit = limits(env, rate)
+    return float(totals.get("usd", 0)) * rate, usd_limit * rate
 
 
 def _fresh(day: str) -> dict[str, Any]:
@@ -96,9 +127,10 @@ def metered(
         return StateBus(bus_path())
 
     def call(**kwargs: Any) -> Any:
-        call_limit, usd_limit = limits(env if env is not None else os.environ)
         bus = open_bus()
         try:
+            rate, _measured = usd_egp(bus)
+            call_limit, usd_limit = limits(env if env is not None else os.environ, rate)
             current = today(bus, now())
             if current["calls"] >= call_limit:
                 raise BudgetExceeded(
@@ -107,8 +139,9 @@ def metered(
                 )
             if current["usd"] >= usd_limit:
                 raise BudgetExceeded(
-                    f"daily model spend limit reached (${current['usd']:.2f}/"
-                    f"${usd_limit:.2f}); raise EGX_DAILY_SPEND_LIMIT_USD in Settings"
+                    f"daily model spend limit reached ({current['usd'] * rate:.2f}/"
+                    f"{usd_limit * rate:.2f} EGP); raise the daily model spend limit "
+                    f"in Settings"
                 )
             response = completion(**kwargs)
             spent = cost(response, str(kwargs.get("model", "")))
@@ -137,10 +170,12 @@ def metered(
     return call
 
 
-def describe(totals: Mapping[str, Any], env: Mapping[str, str] = os.environ) -> str:
-    call_limit, usd_limit = limits(env)
+def describe(totals: Mapping[str, Any], env: Mapping[str, str] = os.environ,
+             rate: float = FALLBACK_USD_EGP) -> str:
+    call_limit, _ = limits(env, rate)
+    spent, limit = in_egp(totals, env, rate)
     text = (
-        f"today: ${totals.get('usd', 0):.2f} of ${usd_limit:.2f}, "
+        f"today: {spent:.2f} of {limit:.2f} EGP (${totals.get('usd', 0):.2f}), "
         f"{totals.get('calls', 0)} of {call_limit} calls"
     )
     if totals.get("unpriced_calls"):

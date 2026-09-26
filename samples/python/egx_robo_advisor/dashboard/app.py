@@ -142,10 +142,12 @@ def create_app(
     """
     config = config or DashboardConfig.from_env()
     bus = StateBus(config.bus_path)
-    if assistant is None and config.chat_enabled:
+    if assistant is None:
         from egx_advisor.assistant import Assistant
 
-        assistant = Assistant(bus=bus, model=config.chat_model)
+        # With chat off the model is never called, but the opportunity scan
+        # still answers, with its figures only.
+        assistant = Assistant(bus=bus, model=config.chat_model, use_model=config.chat_enabled)
     templates = Jinja2Templates(directory=str(Path(__file__).parent / "templates"))
 
     app = FastAPI(title="EGX Robo-Advisor", docs_url=None, redoc_url=None)
@@ -239,7 +241,8 @@ def create_app(
                 "demo_verdict": _payload(snapshots, "demo_verdict"),
                 "chat": {
                     "enabled": app.state.assistant is not None,
-                    "model": getattr(app.state.assistant, "model", ""),
+                    "model": (getattr(app.state.assistant, "model", "")
+                              if getattr(app.state.assistant, "use_model", True) else ""),
                 },
                 "events": [e.to_json() for e in events],
                 "latest_seq": events[-1].seq if events else 0,

@@ -104,3 +104,20 @@ def test_every_model_call_site_is_metered() -> None:
     for rel in ("assistant.py", "regime/sentiment.py", "execution/thndr.py"):
         source = (root / rel).read_text(encoding="utf-8")
         assert "metered(" in source, rel
+
+
+def test_the_budget_is_in_pounds_at_the_days_rate(tmp_path):
+    from egx_advisor.bus import StateBus
+    from egx_advisor.spend import in_egp, limits, usd_egp
+
+    bus = StateBus(tmp_path / "fx.db")
+    assert usd_egp(bus) == (50.0, False)  # no rate recorded yet
+    bus.put("fx", {"usd_egp": "48.50"})
+    rate, measured = usd_egp(bus)
+    assert (rate, measured) == (48.5, True)
+    assert limits({"EGX_DAILY_SPEND_LIMIT_EGP": "97"}, rate)[1] == pytest.approx(2.0)
+    assert in_egp({"usd": 1.0}, {"EGX_DAILY_SPEND_LIMIT_EGP": "97"}, rate) == pytest.approx(
+        (48.5, 97.0))
+    # The old dollar setting still works when no pound limit is set.
+    assert limits({"EGX_DAILY_SPEND_LIMIT_USD": "3"}, rate)[1] == 3.0
+    assert "EGP" in describe({"usd": 0.1, "calls": 1}, {}, rate)

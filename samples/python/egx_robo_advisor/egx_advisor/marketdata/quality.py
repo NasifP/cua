@@ -139,9 +139,14 @@ def validate_bars(
             )
             continue
         if not (row.low <= row.close <= row.high and row.low <= row.open <= row.high):
+            above = max(row.open, row.close) - row.high
+            below = row.low - min(row.open, row.close)
+            excursion = max(above / row.high, below / row.low)
+            small = excursion <= policy.range_tolerance
             report.add(
-                "CLOSE_OUTSIDE_RANGE", symbol, Severity.BLOCKING,
-                f"{row.day}: open/close outside [{row.low}, {row.high}]",
+                "CLOSE_OUTSIDE_RANGE", symbol, Severity.WARN if small else Severity.BLOCKING,
+                f"{row.day}: open/close outside [{row.low}, {row.high}] by {excursion:.1%}"
+                + (" (within tolerance: used as is)" if small else ""),
             )
 
         if previous_close is not None and previous_close > 0:
