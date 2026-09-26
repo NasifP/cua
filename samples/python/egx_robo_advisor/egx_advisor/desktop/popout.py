@@ -2,8 +2,11 @@
 
 The Thndr X page (browser and ticket panel) can leave the main window and
 live in a window of its own: the market on one screen, the app's controls on
-the other. The page moves; it is not reloaded, so the Thndr X session, the
-bridge's reads and the ticket panel carry on as they were.
+the other. The ticket panel moves with it. The browser view itself is never
+moved: on Windows a live web view moved into another window stops drawing and
+takes no clicks, so the app closes it and opens a new one in the new window,
+at the same address and on the same profile. The Thndr X sign-in is kept (the
+profile's cookies are persistent); the page loads again.
 
 Choosing Thndr X in the navigation opens the separate window; "Back to main
 window" keeps the page in the main window from then on, and "Open in a
@@ -90,9 +93,16 @@ class PopOut(QWidget):
     """
 
     def __init__(self, content: QWidget, on_halt: Callable[[], None],
-                 settings_file: Path) -> None:
+                 settings_file: Path,
+                 before_move: Optional[Callable[[], None]] = None,
+                 after_move: Optional[Callable[[], None]] = None) -> None:
         super().__init__()
         self.content = content
+        #: Called around every move. The app closes the browser view before
+        #: and opens a new one after, so no live web view is ever moved
+        #: between windows (see MainWindow._close_thndr_view).
+        self._before_move = before_move or (lambda: None)
+        self._after_move = after_move or (lambda: None)
         self.settings = QSettings(str(settings_file), QSettings.IniFormat)
         self.window_: Optional[DetachedWindow] = None
         self._on_halt = on_halt
@@ -174,18 +184,23 @@ class PopOut(QWidget):
             self.window_ = DetachedWindow(on_close=self._window_closed,
                                           on_dock=lambda: self.dock(remember=True),
                                           on_halt=self._on_halt)
+        self._before_move()
         self.layout_.removeWidget(self.content)
         self.window_.body.addWidget(self.content, 1)
         self.content.show()
         self.docked_bar.hide()
         self.detached_note.show()
         self._place(self.window_)
+        self._after_move()
         self.raise_window()
 
     def dock(self, remember: bool = False) -> None:
         if remember:
             self._remember_choice(False)
         window = self.window_
+        if window is None or self.content.parent() is self:
+            return  # already here
+        self._before_move()
         if window is not None:
             self.settings.setValue(GEOMETRY_KEY, window.saveGeometry())
             self.settings.sync()
@@ -197,6 +212,7 @@ class PopOut(QWidget):
         self.content.show()
         self.detached_note.hide()
         self.docked_bar.show()
+        self._after_move()
 
     def _window_closed(self) -> None:
         # Closed with the window's X: the page comes back for now, and the

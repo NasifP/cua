@@ -78,3 +78,23 @@ def test_shutdown_closes_the_window_and_keeps_the_choice(app, tmp_path):
     slot.shutdown()
     assert not slot.window_.isVisible()
     assert slot.prefers_separate
+
+
+def test_the_app_is_told_before_and_after_every_move(app, tmp_path):
+    """The app swaps the web view around a move instead of moving a live one."""
+    from PySide6.QtWidgets import QLabel
+
+    from egx_advisor.desktop.popout import PopOut
+
+    calls: list[str] = []
+    content = QLabel("thndr")
+    slot = PopOut(content, on_halt=lambda: None, settings_file=tmp_path / "d.ini",
+                  before_move=lambda: calls.append(f"before:{content.window() is slot.window()}"),
+                  after_move=lambda: calls.append(f"after:{content.window() is slot.window()}"))
+    slot.opened()
+    assert calls == ["before:True", "after:False"], "closed in the old window, opened in the new"
+    slot.window_.dock_button.click()
+    assert calls[2:] == ["before:False", "after:True"]
+    slot.dock()
+    assert len(calls) == 4, "docking when already docked moves nothing"
+    slot.shutdown()
