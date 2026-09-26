@@ -249,6 +249,9 @@ async def main() -> None:
         demo_guard=DemoGuard.default(),
         executor_factory=executor_factory,
     )
+    from egx_advisor.memory import Memory, memory_path_for
+
+    agent.memory = Memory(memory_path_for(args.bus))
     agent.install_signal_handlers()
 
     if args.target == "host":

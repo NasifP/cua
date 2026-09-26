@@ -154,6 +154,8 @@ class EgxCuaAgent:
         #: restart. None in tests that do not care.
         self.events_path: Optional[Path] = config_path("events.toml")
         self.rules_path: Optional[Path] = config_path("rules.toml")
+        #: Where plan orders are kept for the pick review. None in tests.
+        self.memory: Optional[Any] = None
         self._closes: dict[str, list[Decimal]] = {}
         self._volumes: dict[str, list[Decimal]] = {}
         self._four_factor: Optional[FourFactorDecision] = None
@@ -659,7 +661,22 @@ class EgxCuaAgent:
             data={"blocked": sorted(regime.blocked_symbols)},
         )
 
+    def _remember_plan(self, plan: Any, allowed: Sequence[Any]) -> None:
+        """Keep the plan's orders so the Memory tab can later say how they did."""
+        if self.memory is None or not allowed:
+            return
+        from .memory import Pick
+
+        try:
+            self.memory.record_picks(
+                Pick(day=plan.as_of.date(), source="plan", symbol=o.symbol, side=o.side.value,
+                     price=float(o.limit_price), reason=str(o.rationale)[:300])
+                for o in allowed)
+        except Exception as exc:  # noqa: BLE001 - memory must never stop a cycle
+            logger.warning("could not keep the plan in memory: %s", exc)
+
     def _publish_plan(self, plan: Any, allowed: Sequence[Any], suppressed: Sequence[Any]) -> None:
+        self._remember_plan(plan, allowed)
         self.bus.put(
             "plan",
             {

@@ -75,6 +75,7 @@ from . import theme
 from .bridge import BridgeServer
 from .chart_tab import ChartTab
 from .lab_tab import LabTab
+from .memory_tab import MemoryTab
 from .popout import PopOut
 from .settings_tab import SettingsTab
 from .sources_tab import SourcesTab
@@ -211,8 +212,14 @@ class MainWindow(QMainWindow):
         self.thndr_slot = PopOut(self.thndr_page, on_halt=self.halt,
                                  settings_file=PROJECT_ROOT / "state" / "desktop.ini")
         self.chart_tab = ChartTab()
-        self.lab_tab = LabTab()
+        from ..marketdata.archive import PriceArchive, archive_path_for
+        from ..memory import Memory, memory_path_for
+
+        self.memory = Memory(memory_path_for(bus_path()))
+        self.archive = PriceArchive(archive_path_for(bus_path()))
+        self.lab_tab = LabTab(memory=self.memory)
         self.sources_tab = SourcesTab()
+        self.memory_tab = MemoryTab(self.memory, self.archive)
 
         pages = (
             (self.dashboard, "dashboard", "page.dashboard"),
@@ -220,6 +227,7 @@ class MainWindow(QMainWindow):
             (self.chart_tab, "chart", "page.chart"),
             (self.lab_tab, "lab", "page.lab"),
             (self.sources_tab, "calendar", "page.sources"),
+            (self.memory_tab, "memory", "page.memory"),
             (self.settings_tab, "settings", "page.settings"),
         )
         self.pages = QStackedWidget()
@@ -427,7 +435,7 @@ class MainWindow(QMainWindow):
         theme.apply(QApplication.instance(), theme.current())  # flips the layout direction
         self._retranslate_shell()
         for page in (self.chart_tab, self.lab_tab, self.sources_tab, self.settings_tab,
-                     self.ticket_panel, self.thndr_slot):
+                     self.ticket_panel, self.thndr_slot, self.memory_tab):
             page.retranslate()
         self._sync_dashboard_theme(run_now=True)
         self._remember({"EGX_LANG": lang})

@@ -147,7 +147,12 @@ def create_app(
 
         # With chat off the model is never called, but the opportunity scan
         # still answers, with its figures only.
-        assistant = Assistant(bus=bus, model=config.chat_model, use_model=config.chat_enabled)
+        from egx_advisor.marketdata.archive import PriceArchive, archive_path_for
+        from egx_advisor.memory import Memory, memory_path_for
+
+        assistant = Assistant(bus=bus, model=config.chat_model, use_model=config.chat_enabled,
+                              memory=Memory(memory_path_for(config.bus_path)),
+                              archive=PriceArchive(archive_path_for(config.bus_path)))
     templates = Jinja2Templates(directory=str(Path(__file__).parent / "templates"))
 
     app = FastAPI(title="EGX Robo-Advisor", docs_url=None, redoc_url=None)

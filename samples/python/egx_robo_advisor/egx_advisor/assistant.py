@@ -107,6 +107,18 @@ Mention skipped stocks briefly if there are any. When the block gives an
 amount and how many shares it buys, repeat those counts as given; do not split
 the amount between stocks or suggest how much to put in each.
 
+OPERATOR MEMORY
+<operator_memory> holds notes the operator asked the app to keep: their
+preferences, why they hold a stock and when they would exit. Use them to fit
+your explanation to the operator, and point out when the state below conflicts
+with one of their notes. They are the operator's words, not verified facts.
+You cannot save, change or delete memory yourself; if asked to remember
+something, tell them to start the message with "remember that" or "افتكر إن",
+or to use the Memory tab. <lab_journal> lists recent Strategy Lab runs and
+<pick_review> how past picks did afterwards: quote them as measurements of the
+past, never as a forecast. <earlier_conversation> is what was said before this
+chat window was opened.
+
 TONE
 Direct and concrete. Prefer the actual figures over generalities. When the state
 shows something is blocked or halted, say what unblocks it.
@@ -132,6 +144,10 @@ class Assistant:
     scanner: Optional[Callable[[int], Any]] = None
     #: False when chat is off in Settings: scans still answer, with figures only.
     use_model: bool = True
+    #: The operator's notes, the conversation, lab runs and picks (memory.py).
+    memory: Optional[Any] = None
+    #: Local prices (marketdata/archive.py), for the pick review.
+    archive: Optional[Any] = None
 
     # ------------------------------------------------------------------ context
 
@@ -215,6 +231,10 @@ class Assistant:
 
         scan_block, scan_text = "", ""
         arabic = _arabic(question)
+        if self.memory is not None:
+            saved = self._remember(question)
+            if saved:
+                return saved
         top = scan_request(question)
         if top is not None:
             budget = scan_budget(question)
@@ -229,12 +249,14 @@ class Assistant:
                             "No stock had enough usable prices.\n") + result.summary(arabic)
             scan_block = result.table(budget)
             scan_text = result.summary(arabic, budget)
+            self._keep_picks(result)
 
         completion = self._resolve()
         if completion is None:
             if scan_block:
-                return _say(question, "نتيجة الفحص (نموذج الشات مقفول، بالأرقام بس):\n",
-                            "Scan result (the chat model is off, figures only):\n") + scan_text
+                return self._kept(question, _say(
+                    question, "نتيجة الفحص (نموذج الشات مقفول، بالأرقام بس):\n",
+                    "Scan result (the chat model is off, figures only):\n") + scan_text)
             if not self.use_model:
                 return _say(
                     question,
@@ -257,6 +279,9 @@ class Assistant:
                 "content": "Current state of the bot:\n\n" + self.build_context(),
             },
         ]
+        if self.memory is not None:
+            messages.append({"role": "system", "content": self._memory_context(
+                question, include_conversation=not history)})
         if scan_block:
             messages.append({"role": "system",
                              "content": f"<scan_results>\n{scan_block}\n</scan_results>"})
@@ -283,7 +308,8 @@ class Assistant:
                                       "\n\nScan result, figures only:\n") + scan_text
             return problem
 
-        return text.strip() or "(the model returned nothing)"
+        text = text.strip()
+        return self._kept(question, text) if text else "(the model returned nothing)"
 
 
     def _model_problem(self, exc: Exception, arabic: bool) -> str:
@@ -300,6 +326,66 @@ class Assistant:
         if arabic:
             return f"نموذج الشات مش متاح دلوقتي: {_short(exc)}"
         return f"The chat model could not be reached: {_short(exc)}"
+
+    # ------------------------------------------------------------------ memory
+
+    def _remember(self, question: str) -> Optional[str]:
+        """Save a "remember that ..." note. Code does this, never the model."""
+        from .memory import remember_request
+
+        request = remember_request(question)
+        if request is None:
+            return None
+        kind, symbol, text = request
+        try:
+            self.memory.add_note(kind, text, symbol=symbol, source="chat")
+        except Exception as exc:  # noqa: BLE001
+            return _say(question, f"ماقدرتش أحفظها: {_short(exc)}", f"Could not save it: {_short(exc)}")
+        what = {"preference": ("تفضيل", "a preference"), "note": ("ملاحظة", "a note")}[kind]
+        about = f" ({symbol.removesuffix('.CA')})" if symbol else ""
+        return _say(question,
+                    f"تمام، حفظتها في الذاكرة كـ{what[0]}{about}: «{text}». تقدر تعدلها أو "
+                    "تمسحها من تبويب الذاكرة.",
+                    f"Saved to memory as {what[1]}{about}: \"{text}\". Edit or delete it in the "
+                    "Memory tab.")
+
+    def _memory_context(self, question: str, include_conversation: bool) -> str:
+        block = self.memory.context(question, include_conversation=include_conversation)
+        if self.archive is not None:
+            try:
+                from .review import describe, review, scorecard
+
+                scores = scorecard(review(self.memory.picks(), lambda s: [
+                    (r.day, float(r.close)) for r in self.archive.series(s)]))
+                if scores:
+                    block += "\n\n<pick_review>\n" + describe(scores, arabic=False) + \
+                        "\n</pick_review>"
+            except Exception as exc:  # noqa: BLE001 - a review is extra, never required
+                logger.info("pick review unavailable: %s", exc)
+        return block
+
+    def _keep_picks(self, result: Any) -> None:
+        if self.memory is None or getattr(result, "stale", False):
+            return  # archived prices are not today's: no fair starting point
+        from datetime import date
+
+        from .memory import Pick
+
+        try:
+            self.memory.record_picks(
+                Pick(day=date.today(), source="scan", symbol=o.symbol, side="buy",
+                     price=o.close, reason=f"{o.agreeing}/4 factors agree")
+                for o in result.top)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("could not keep the scan picks: %s", exc)
+
+    def _kept(self, question: str, answer: str) -> str:
+        if self.memory is not None:
+            try:
+                self.memory.add_exchange(question, answer)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("could not keep the conversation: %s", exc)
+        return answer
 
     def _run_scan(self, top: int) -> Any:
         if self.scanner is None:

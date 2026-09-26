@@ -67,12 +67,17 @@ class ScanResult:
     skipped: tuple[str, ...]
     as_of: str
     params: FourFactorParams = field(default_factory=FourFactorParams)
+    #: True when Yahoo could not be reached and the prices came from the archive.
+    stale: bool = False
 
     def table(self, budget: Optional[float] = None) -> str:
         """The ranked rows as plain text: what the chat model is given."""
         lines = [f"scan of {self.scanned} EGX stocks, prices up to the previous session "
                  f"(as of {self.as_of}); ranked by factors agreeing, then 60-day return "
                  f"per unit of volatility"]
+        if self.stale:
+            lines.append("Yahoo could not be reached: these prices are from the app's local "
+                         "archive and may be a few days old; say so")
         if budget:
             lines.append(f"the operator mentioned an amount of {budget:,.0f} EGP; 'buys' is how "
                          f"many whole shares that amount buys at the close, before fees")
@@ -95,6 +100,10 @@ class ScanResult:
         names_ar = {"trend": "اتجاه", "momentum": "زخم", "volume": "سيولة",
                     "volatility": "تذبذب"}
         lines = []
+        if self.stale:
+            lines.append("Yahoo مش متاح: الأسعار دي من أرشيف البرنامج وممكن تكون قديمة كام يوم."
+                         if arabic else "Yahoo is unreachable: these prices are from the "
+                         "app's archive and may be a few days old.")
         for rank, o in enumerate(self.top, 1):
             name = o.symbol.removesuffix(".CA")
             if arabic:
@@ -200,13 +209,15 @@ async def scan(market_data: Any, symbols: Sequence[str], top: int = 5,
             symbol, [r.close for r in series], [getattr(r, "volume", 0) for r in series], params)
         (found.append(opportunity) if opportunity else skipped.append(symbol))
     return ScanResult(top=rank(found, top), scanned=len(symbols), skipped=tuple(skipped),
-                      as_of=datetime.now(timezone.utc).date().isoformat(), params=params)
+                      as_of=datetime.now(timezone.utc).date().isoformat(), params=params,
+                      stale=bool(getattr(market_data, "stale", False)))
 
 
 def yahoo_scan(top: int = 5, universe_path: Optional[Path] = None) -> ScanResult:
-    """The default scanner: Yahoo prices, the configured scan list."""
+    """The default scanner: Yahoo prices, kept in the archive; the configured scan list."""
     from .marketdata import YahooMarketData
-    from .paths import config_path
+    from .marketdata.archive import ArchivedMarketData, PriceArchive, archive_path_for
+    from .paths import bus_path, config_path
 
     symbols = load_universe(universe_path or config_path("scan_universe.toml"))
     if not symbols:
@@ -215,7 +226,8 @@ def yahoo_scan(top: int = 5, universe_path: Optional[Path] = None) -> ScanResult
         symbols = [i.symbol for i in AllocationPolicy().universe]
     # Checks still run and a bad stock is skipped, but one bad stock must not
     # stop the scan of the others.
-    source = YahooMarketData(include_macro=False, enforce_quality=False)
+    source = ArchivedMarketData(YahooMarketData(include_macro=False, enforce_quality=False),
+                                PriceArchive(archive_path_for(bus_path())))
     return asyncio.run(scan(source, symbols, top))
 
 

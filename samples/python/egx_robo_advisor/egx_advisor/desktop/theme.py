@@ -191,6 +191,15 @@ QHeaderView::section {{
 }}
 QTableCornerButton::section {{ background: {t['surface']}; border: none; }}
 
+/* ---- inner tabs (Memory) ---- */
+QTabWidget::pane {{ border: none; }}
+QTabBar::tab {{
+    background: transparent; color: {t['muted']}; padding: 8px 14px; margin-right: 4px;
+    border: none; border-bottom: 2px solid transparent; font-weight: 600;
+}}
+QTabBar::tab:selected {{ color: {t['text']}; border-bottom-color: {t['accent']}; }}
+QTabBar::tab:hover {{ color: {t['text']}; }}
+
 /* ---- scrollbars ---- */
 QScrollBar:vertical {{ background: transparent; width: 10px; margin: 2px; }}
 QScrollBar:horizontal {{ background: transparent; height: 10px; margin: 2px; }}
@@ -271,6 +280,9 @@ _ICONS = {
                 'M16 3v4"/>',
     "settings": '<path d="M4 6h10M18 6h2M4 12h4M12 12h8M4 18h12"/><circle cx="16" cy="6" '
                 'r="2"/><circle cx="10" cy="12" r="2"/><circle cx="18" cy="18" r="2"/>',
+    "memory": '<path d="M9 4a3 3 0 0 0-3 3v.5A3 3 0 0 0 4 10.3a3 3 0 0 0 1 4.9A3 3 0 0 0 9 20'
+              'a3 3 0 0 0 3-3V7a3 3 0 0 0-3-3z"/><path d="M15 4a3 3 0 0 1 3 3v.5a3 3 0 0 1 2 '
+              '2.8 3 3 0 0 1-1 4.9A3 3 0 0 1 15 20a3 3 0 0 1-3-3"/>',
     "power": '<path d="M12 3v9"/><path d="M6.3 6.3a8 8 0 1 0 11.4 0"/>',
     "sun": '<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 '
            '17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/>',
