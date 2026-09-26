@@ -75,6 +75,7 @@ from . import theme
 from .bridge import BridgeServer
 from .chart_tab import ChartTab
 from .lab_tab import LabTab
+from .memory_tab import MemoryTab
 from .popout import PopOut
 from .settings_tab import SettingsTab
 from .sources_tab import SourcesTab
@@ -99,10 +100,15 @@ class QtPage(QObject):
 
     _request = Signal(str, object)
 
-    def __init__(self, view: QWebEngineView) -> None:
+    def __init__(self, view: Any) -> None:
         super().__init__()
-        self._view = view
+        #: The view, or a function returning the current one.
+        self._view_of = view if callable(view) else (lambda: view)
         self._request.connect(self._handle, Qt.QueuedConnection)
+
+    @property
+    def _view(self) -> QWebEngineView:
+        return self._view_of()
 
     def _call(self, kind: str) -> Any:
         if threading.current_thread() is threading.main_thread():
@@ -190,12 +196,9 @@ class MainWindow(QMainWindow):
         self.profile.setCachePath(str(BROWSER_PROFILE_DIR / "cache"))
         self.profile.setPersistentCookiesPolicy(QWebEngineProfile.ForcePersistentCookies)
         self.profile.setHttpUserAgent(_chrome_user_agent(self.profile))
-        self.thndr = QWebEngineView()
-        self.thndr.setPage(QWebEnginePage(self.profile, self.thndr))
-        self.thndr.egx_loading = True
-        self.thndr.loadStarted.connect(lambda: setattr(self.thndr, "egx_loading", True))
-        self.thndr.loadFinished.connect(lambda ok: setattr(self.thndr, "egx_loading", False))
-        self.thndr.load(QUrl(env.get("EGX_THNDR_URL") or DEFAULT_THNDR_URL))
+        self._thndr_home = QUrl(env.get("EGX_THNDR_URL") or DEFAULT_THNDR_URL)
+        self._thndr_sizes: list[int] = []
+        self.thndr = self._new_thndr_view(self._thndr_home)
 
         self.settings_tab = SettingsTab(on_saved=self.restart_processes)
         # Thndr X with the ticket panel beside it. The bridge still reads only
@@ -209,10 +212,18 @@ class MainWindow(QMainWindow):
         self.thndr_page.setCollapsible(0, False)
         # Thndr X can move to its own window, for a second screen.
         self.thndr_slot = PopOut(self.thndr_page, on_halt=self.halt,
-                                 settings_file=PROJECT_ROOT / "state" / "desktop.ini")
+                                 settings_file=PROJECT_ROOT / "state" / "desktop.ini",
+                                 before_move=self._close_thndr_view,
+                                 after_move=self._open_thndr_view)
         self.chart_tab = ChartTab()
-        self.lab_tab = LabTab()
+        from ..marketdata.archive import PriceArchive, archive_path_for
+        from ..memory import Memory, memory_path_for
+
+        self.memory = Memory(memory_path_for(bus_path()))
+        self.archive = PriceArchive(archive_path_for(bus_path()))
+        self.lab_tab = LabTab(memory=self.memory)
         self.sources_tab = SourcesTab()
+        self.memory_tab = MemoryTab(self.memory, self.archive)
 
         pages = (
             (self.dashboard, "dashboard", "page.dashboard"),
@@ -220,6 +231,7 @@ class MainWindow(QMainWindow):
             (self.chart_tab, "chart", "page.chart"),
             (self.lab_tab, "lab", "page.lab"),
             (self.sources_tab, "calendar", "page.sources"),
+            (self.memory_tab, "memory", "page.memory"),
             (self.settings_tab, "settings", "page.settings"),
         )
         self.pages = QStackedWidget()
@@ -371,7 +383,8 @@ class MainWindow(QMainWindow):
             self.show_page(self.settings_tab)
             self.settings_tab._say(notice, error=True)
 
-        self.page = QtPage(self.thndr)
+        # Through a function: the view is replaced when Thndr X changes window.
+        self.page = QtPage(lambda: self.thndr)
         self.bridge: Optional[BridgeServer] = None
         self.launcher: Optional[Launcher] = None
         self._dashboard_loaded = False
@@ -379,6 +392,41 @@ class MainWindow(QMainWindow):
         self._timer = QTimer(self)
         self._timer.timeout.connect(self._tick)
         self._timer.start(1000)
+
+    # ------------------------------------------------------------ Thndr X view
+
+    def _new_thndr_view(self, url: QUrl) -> QWebEngineView:
+        view = QWebEngineView()
+        view.setPage(QWebEnginePage(self.profile, view))
+        view.egx_loading = True
+        view.loadStarted.connect(lambda v=view: setattr(v, "egx_loading", True))
+        view.loadFinished.connect(lambda ok, v=view: setattr(v, "egx_loading", False))
+        view.load(url)
+        return view
+
+    def _close_thndr_view(self) -> None:
+        """Before Thndr X changes window: close the view instead of moving it.
+
+        A QWebEngineView moved into another top-level window on Windows keeps
+        its last picture but stops drawing and takes no clicks. So the view is
+        closed here and `_open_thndr_view` opens a new one where the page went.
+        """
+        url = self.thndr.url()
+        self._thndr_url = url if url.isValid() and url.scheme() in ("http", "https") \
+            else self._thndr_home
+        self._thndr_sizes = self.thndr_page.sizes()
+        old = self.thndr
+        old.hide()
+        old.setParent(None)
+        old.deleteLater()  # its page goes with it; the profile, and the sign-in, stay
+
+    def _open_thndr_view(self) -> None:
+        self.thndr = self._new_thndr_view(getattr(self, "_thndr_url", self._thndr_home))
+        self.thndr_page.insertWidget(0, self.thndr)
+        self.thndr_page.setStretchFactor(0, 1)
+        self.thndr_page.setCollapsible(0, False)
+        if self._thndr_sizes:
+            self.thndr_page.setSizes(self._thndr_sizes)
 
     # ------------------------------------------------------------------ layout
 
@@ -427,7 +475,7 @@ class MainWindow(QMainWindow):
         theme.apply(QApplication.instance(), theme.current())  # flips the layout direction
         self._retranslate_shell()
         for page in (self.chart_tab, self.lab_tab, self.sources_tab, self.settings_tab,
-                     self.ticket_panel, self.thndr_slot):
+                     self.ticket_panel, self.thndr_slot, self.memory_tab):
             page.retranslate()
         self._sync_dashboard_theme(run_now=True)
         self._remember({"EGX_LANG": lang})
@@ -662,6 +710,9 @@ def missing_keys(env: dict[str, str]) -> list[Check]:
 def main(argv: Optional[list[str]] = None) -> int:
     env = load_env()
     os.environ.update({k: v for k, v in env.items() if v or k not in os.environ})
+    # Qt WebEngine asks for this before the application exists; it also lets a
+    # web view's drawing surface work in more than one top-level window.
+    QApplication.setAttribute(Qt.AA_ShareOpenGLContexts)
     app = QApplication(argv if argv is not None else sys.argv)
     i18n.set_language(i18n.name_from_env(env))
     theme.apply(app, theme.name_from_env(env))

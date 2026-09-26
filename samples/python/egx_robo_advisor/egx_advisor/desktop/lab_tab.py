@@ -69,8 +69,12 @@ def load_history(years: int, synthetic: bool) -> Any:
 
 
 class LabTab(QWidget):
-    def __init__(self, parent: Optional[QWidget] = None) -> None:
+    def __init__(self, parent: Optional[QWidget] = None, memory: Optional[Any] = None) -> None:
         super().__init__(parent)
+        #: The lab journal (memory.py): every run is kept, and a repeat says so.
+        self.memory = memory
+        self._previous: Optional[Any] = None
+        self._run_span: tuple[int, bool] = (0, False)
         self._report: Optional[LabReport] = None
         self._error = ""
         #: The banner as (key, kind, values), so a language switch can redraw it.
@@ -188,9 +192,32 @@ class LabTab(QWidget):
         self._banner = (key, kind, values)
         theme.say(self.verdict, tr(key, **values), kind)
 
+    def _journal(self, report: LabReport) -> None:
+        """Keep this run, and remember the last time the same test was run."""
+        if self.memory is None:
+            return
+        from ..memory import lab_key
+
+        years, synthetic = self._run_span
+        key = lab_key(report.rules, report.title, years, synthetic)
+        try:
+            earlier = self.memory.lab_runs(key, limit=1)
+            self._previous = earlier[0] if earlier else None
+            title = (tr(report.title, lang="en") if report.title else
+                     "; ".join(r.describe("en") for r in report.rules))
+            self.memory.record_lab_run(key, f"{title} ({years}y)", report.sessions, synthetic,
+                                       report.passed, report.verdict("en"), report.evidence())
+        except Exception as exc:  # noqa: BLE001 - the journal must never break the lab
+            self._previous = None
+            self.output.appendPlainText(f"\n(lab journal: {exc})")
+
     def _show_result(self) -> None:
         if self._report is not None:
-            self.output.setPlainText(self._report.render(i18n.current()))
+            text = self._report.render(i18n.current())
+            if self._previous is not None:
+                text += "\n\n" + tr("lab.tested_before", date=self._previous.ts[:10],
+                                     verdict=self._previous.verdict)
+            self.output.setPlainText(text)
         elif self._error:
             self.output.setPlainText(self._error)
         key, kind, values = self._banner
@@ -236,6 +263,8 @@ class LabTab(QWidget):
 
     def _start(self, test) -> None:
         years, synthetic = self.years.value(), bool(self.source.currentData())
+        self._run_span = (years, synthetic)
+        self._previous = None
         self.run_button.setEnabled(False)
         self.compare_button.setEnabled(False)
         self.adopt_button.setEnabled(False)
@@ -258,6 +287,8 @@ class LabTab(QWidget):
         self.run_button.setEnabled(True)
         self.compare_button.setEnabled(True)
         self._report, self._error = report, error
+        if report is not None:
+            self._journal(report)
         strategy = report is not None and not report.rules
         if report is None:
             self._banner = ("lab.could_not_run", "bad", {})

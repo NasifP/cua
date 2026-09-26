@@ -529,3 +529,19 @@ async def test_a_guard_refusal_with_the_bus_armed_does_not_spin(tmp_path: Path) 
     await asyncio.wait_for(task, timeout=5)
     assert not bus.is_halted()
     assert cycles == 1, f"re-ran {cycles} times in half a second"
+
+
+async def test_the_plan_orders_are_kept_for_the_pick_review(tmp_path: Path) -> None:
+    from egx_advisor.memory import Memory
+
+    agent, bus, computer, news, market, agents = build(tmp_path, execute=False)
+    _wire_tree(agent, computer)
+    agent.memory = Memory(tmp_path / "memory.db")
+
+    await agent._run_cycle()
+
+    orders = bus.get("plan")["payload"]["orders"]
+    picks = agent.memory.picks("plan")
+    assert orders, "the fixture plan has orders to keep"
+    assert {(p.symbol, p.side) for p in picks} == {(o["symbol"], o["side"]) for o in orders}
+    assert all(p.price > 0 for p in picks)
