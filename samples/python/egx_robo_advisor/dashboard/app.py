@@ -150,9 +150,18 @@ def create_app(
         from egx_advisor.marketdata.archive import PriceArchive, archive_path_for
         from egx_advisor.memory import Memory, memory_path_for
 
-        assistant = Assistant(bus=bus, model=config.chat_model, use_model=config.chat_enabled,
-                              memory=Memory(memory_path_for(config.bus_path)),
-                              archive=PriceArchive(archive_path_for(config.bus_path)))
+        from egx_advisor import levels
+        from egx_advisor.analyst.tools import Toolbox
+
+        memory = Memory(memory_path_for(config.bus_path))
+        archive = PriceArchive(archive_path_for(config.bus_path))
+        # The analyst uses its own model when one is set: the deep work can go
+        # to a stronger (paid) model while the routine calls stay cheap.
+        assistant = Assistant(
+            bus=bus, model=os.environ.get("EGX_ANALYST_MODEL") or config.chat_model,
+            use_model=config.chat_enabled, memory=memory, archive=archive,
+            toolbox=Toolbox(bus=bus, memory=memory, archive=archive,
+                            style=levels.style_from(os.environ)))
     templates = Jinja2Templates(directory=str(Path(__file__).parent / "templates"))
 
     app = FastAPI(title="EGX Robo-Advisor", docs_url=None, redoc_url=None)

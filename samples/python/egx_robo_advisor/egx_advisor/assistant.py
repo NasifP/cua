@@ -148,6 +148,9 @@ class Assistant:
     memory: Optional[Any] = None
     #: Local prices (marketdata/archive.py), for the pick review.
     archive: Optional[Any] = None
+    #: The analyst's read-only tools (analyst/tools.py). With them the model
+    #: looks things up itself and gives views; without, it only explains.
+    toolbox: Optional[Any] = None
 
     # ------------------------------------------------------------------ context
 
@@ -249,6 +252,20 @@ class Assistant:
         if numbers is not None:
             # Arithmetic: code answers, the model is not asked.
             return self._kept(question, average_answer(numbers, arabic))
+        if self.toolbox is not None and self.use_model:
+            completion = self._resolve()
+            if completion is not None:
+                try:
+                    text = self._analyse(question, history, completion)
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning("analyst failed: %s", exc)
+                    problem = self._model_problem(exc, arabic)
+                    if scan_request(question) is None:
+                        return problem
+                    # A scan still answers with its figures.
+                    return problem + "\n\n" + self._figures_only(question, arabic)
+                if text:
+                    return self._kept(question, text)
         top = scan_request(question)
         if top is not None:
             budget = scan_budget(question)
@@ -325,6 +342,38 @@ class Assistant:
         text = text.strip()
         return self._kept(question, text) if text else "(the model returned nothing)"
 
+
+    def _analyse(self, question: str, history: Sequence[Mapping[str, str]],
+                 completion: Callable[..., Any]) -> str:
+        """The analyst: the model with read-only tools, in a loop (analyst/agent.py)."""
+        from .analyst import agent
+
+        context = ["Current state of the bot:\n\n" + self.build_context()]
+        if self.memory is not None:
+            context.append(self._memory_context(question, include_conversation=not history))
+        turns = []
+        for turn in list(history)[-MAX_HISTORY_TURNS:]:
+            role = turn.get("role")
+            content = str(turn.get("content", ""))[:MAX_QUESTION_CHARS]
+            if role in ("user", "assistant") and content:
+                turns.append({"role": role, "content": content})
+        self.toolbox.calls.clear()
+        self.toolbox.last_scan = None
+        text = agent.run(question, completion=completion, model=self.model,
+                         toolbox=self.toolbox, context=context, history=turns,
+                         timeout=max(self.timeout, 90.0), max_tokens=max(self.max_tokens, 1800))
+        if self.toolbox.last_scan is not None:
+            self._keep_picks(self.toolbox.last_scan)
+        return text
+
+    def _figures_only(self, question: str, arabic: bool) -> str:
+        try:
+            result = self._run_scan(scan_request(question) or 5)
+        except Exception as exc:  # noqa: BLE001
+            return _say(question, f"تعذر البحث عن الفرص: {_short(exc)}",
+                        f"The opportunity scan failed: {_short(exc)}")
+        self._keep_picks(result)
+        return result.summary(arabic, scan_budget(question))
 
     def _model_problem(self, exc: Exception, arabic: bool) -> str:
         """One readable line for a failed model call, not the provider's JSON."""

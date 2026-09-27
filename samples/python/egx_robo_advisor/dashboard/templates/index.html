@@ -250,6 +250,9 @@ summary { cursor: pointer; font-size: 12px; font-weight: 600; color: var(--muted
 #log-card > summary::-webkit-details-marker { display: none; }
 #log-card > summary h2::before { content: "\25B8  "; color: var(--muted); }
 #log-card[open] > summary h2::before { content: "\25BE  "; }
+.chipbtn { font: 600 12px var(--sans); color: var(--text); background: var(--bg); cursor: pointer;
+           border: 1px solid var(--border); border-radius: 999px; padding: 5px 11px; }
+.chipbtn:hover { border-color: var(--accent); }
 .calc { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px 12px; margin-top: 10px; }
 .calc label { display: flex; flex-direction: column; gap: 3px; font-size: 11px; color: var(--muted); }
 .calc input { font: 14px var(--sans); padding: 8px 10px; border: 1px solid var(--border); border-radius: 8px;
@@ -394,6 +397,11 @@ summary { cursor: pointer; font-size: 12px; font-weight: 600; color: var(--muted
       <span class="tiny" id="chat-model" style="margin:0"></span>
     </div>
     <div id="chat-log"></div>
+    <div class="chips" id="chat-chips" style="margin-top:8px">
+      <button type="button" class="chipbtn" data-i18n="chip.portfolio" data-ask="chip.portfolio_q">Analyse my portfolio</button>
+      <button type="button" class="chipbtn" data-i18n="chip.best" data-ask="chip.best_q">Best 5 opportunities</button>
+      <button type="button" class="chipbtn" data-i18n="chip.market" data-ask="chip.market_q">How is the market?</button>
+    </div>
     <div class="input-row" style="margin-top:10px">
       <input id="chat-input" type="text" autocomplete="off" dir="auto"
              placeholder="Why was AZG.CA not bought?" data-i18n-placeholder="chat.placeholder">
@@ -490,9 +498,12 @@ const STRINGS = {
     'plan.title': "Today's plan", 'plan.withheld': 'Withheld orders',
     'plan.none': 'No orders: the portfolio is inside its drift bands, or buying is withheld.',
     'side.buy': 'BUY', 'side.sell': 'SELL',
-    'chat.title': 'Ask about the bot', 'chat.placeholder': 'Find the best 5 opportunities, or: why was AZG.CA not bought?',
+    'chat.title': 'Your analyst', 'chat.placeholder': 'Analyse COMI, or: which of my stocks should I trim?',
+    'chip.portfolio': 'Analyse my portfolio', 'chip.portfolio_q': 'Analyse my portfolio: a view on each stock, with its stop and targets.',
+    'chip.best': 'Best 5 opportunities', 'chip.best_q': 'Find the best 5 trading opportunities and analyse each.',
+    'chip.market': 'How is the market?', 'chip.market_q': 'How is the Egyptian market today, and what does it mean for my portfolio?',
     'chat.ask': 'Ask',
-    'chat.note': 'Explains the bot, finds opportunities ("best 5") and remembers what you ask it to ("remember that ..."). It cannot trade.',
+    'chat.note': 'Looks up prices, news and your portfolio itself and gives a view on each stock. It cannot place orders: you decide and press Buy.',
     'chat.you': 'You', 'chat.bot': 'Assistant', 'chat.failed': 'Failed: ',
     'chat.off': 'Chat model off (Settings): scans only',
     'log.title': 'Detailed log', 'log.follow': 'follow',
@@ -548,9 +559,12 @@ const STRINGS = {
     'plan.title': 'خطة النهارده', 'plan.withheld': 'أوامر متوقفة',
     'plan.none': 'مفيش أوامر: المحفظة جوّه حدود الانحراف، أو الشراء موقوف.',
     'side.buy': 'شراء', 'side.sell': 'بيع',
-    'chat.title': 'اسأل عن البوت', 'chat.placeholder': 'ابحث عن أفضل 5 فرص، أو: ليه AZG.CA ماتشتراش؟',
+    'chat.title': 'المحلل بتاعك', 'chat.placeholder': 'حلل سهم COMI، أو: أنهي سهم عندي أخففه؟',
+    'chip.portfolio': 'حلل محفظتي', 'chip.portfolio_q': 'حلل محفظتي: رأيك في كل سهم مع الوقف والأهداف.',
+    'chip.best': 'أفضل 5 فرص', 'chip.best_q': 'ابحث عن أفضل 5 فرص تداول وحلل كل واحدة.',
+    'chip.market': 'السوق عامل إيه؟', 'chip.market_q': 'السوق المصري عامل إيه النهارده، وده معناه إيه لمحفظتي؟',
     'chat.ask': 'اسأل',
-    'chat.note': 'بيشرح البوت، ويدوّر على الفرص («أفضل 5»)، ويفتكر اللي تقوله («افتكر إن ...»). مايقدرش يتداول.',
+    'chat.note': 'بيجيب الأسعار والأخبار ومحفظتك بنفسه ويدّيك رأيه في كل سهم. مايقدرش يبعت أوامر: القرار ليك وانت اللي بتضغط شراء.',
     'chat.you': 'انت', 'chat.bot': 'المساعد', 'chat.failed': 'فشل: ',
     'chat.off': 'نموذج الشات مقفول (الإعدادات): البحث عن الفرص بس',
     'log.title': 'السجل التفصيلي', 'log.follow': 'متابعة',
@@ -969,6 +983,10 @@ async function ask() {
 }
 
 $('chat-send').addEventListener('click', ask);
+document.querySelectorAll('.chipbtn').forEach((b) => b.addEventListener('click', () => {
+  $('chat-input').value = t(b.dataset.ask);
+  ask();
+}));
 $('chat-input').addEventListener('keydown', (e) => { if (e.key === 'Enter') ask(); });
 
 let cursor = 0;

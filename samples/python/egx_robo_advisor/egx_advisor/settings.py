@@ -76,6 +76,11 @@ MODEL_FIELDS: tuple[Field, ...] = (
           suggestions=_SUGGESTED_MODELS),
     Field("EGX_CHAT_MODEL", "Chat", "model", _MODEL_HELP,
           default="gemini/gemini-2.5-flash", suggestions=_SUGGESTED_MODELS),
+    Field("EGX_ANALYST_MODEL", "Analyst (deep analysis)", "model",
+          _MODEL_HELP + " Looks things up with tools and gives a view on each stock; a "
+          "stronger model answers much better. Empty: the chat model.",
+          suggestions=("anthropic/claude-sonnet-5", "gemini/gemini-3.1-pro-preview",
+                       "gemini/gemini-2.5-flash")),
     Field("EGX_CLASSIFIER_MODEL", "News classifier", "model",
           _MODEL_HELP + " Runs every cycle: a cheaper model is fine here, and it can "
           "only ever add caution.",

@@ -529,6 +529,14 @@ STRINGS: dict[str, tuple[str, str]] = {
     "field.EGX_VISION_MODEL": ("Reads your portfolio", "قراءة المحفظة"),
     "field.EGX_CHAT_MODEL": ("Chat", "الشات"),
     "field.EGX_CLASSIFIER_MODEL": ("News classifier", "تصنيف الأخبار"),
+    "field.EGX_ANALYST_MODEL": ("Analyst (deep analysis)", "المحلل (تحليل عميق)"),
+    "field.EGX_ANALYST_MODEL.help": (
+        "The model that looks things up with tools and gives a view on each stock. A stronger "
+        "model answers much better, e.g. anthropic/claude-sonnet-5 (needs an Anthropic key) "
+        "or gemini/gemini-3.1-pro-preview (needs billing on). Empty: the chat model.",
+        "الموديل اللي بيدوّر بالأدوات ويدّي رأي في كل سهم. الموديل الأقوى بيجاوب أحسن بكتير، زي "
+        "anthropic/claude-sonnet-5 (محتاج مفتاح Anthropic) أو gemini/gemini-3.1-pro-preview "
+        "(محتاج تفعيل الدفع). فاضي: نفس موديل الشات."),
     "field.EGX_CHAT_ENABLED": ("Chat enabled", "تشغيل الشات"),
     "field.EGX_CHAT_ENABLED.help": ("Chat sends your holdings and their values to the chat "
                                     "model's provider.",
