@@ -598,7 +598,8 @@ class MainWindow(QMainWindow):
         else:
             self._set_pill(self.state_pill, tr("app.state_armed"), "ok")
         self.state_pill.setToolTip(control.reason or "")
-        self._set_pill(self.phase_pill, status.get("phase") or "idle", "muted")
+        phase = status.get("phase") or "idle"
+        self._set_pill(self.phase_pill, tr(f"app.phase.{phase}", phase), "muted")
 
         call_limit, _ = spend.limits(rate=rate)
         spent, limit = spend.in_egp(totals, rate=rate)

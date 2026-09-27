@@ -112,6 +112,8 @@ class TicketPanel(QWidget):
         layout.addWidget(self.teach_box)
         layout.addWidget(self.orders_box, 1)
         layout.addWidget(self.message)
+        # Takes the free space only when the orders box is hidden (switched off).
+        layout.addStretch(0)
         self.retranslate()
 
     # ------------------------------------------------------------------ state
@@ -161,7 +163,14 @@ class TicketPanel(QWidget):
         self._paint_state()
 
     def _paint_state(self) -> None:
-        if not tf.enabled(os.environ):
+        # Switched off (the default): only the title and one line saying how to
+        # switch it on, instead of a column of disabled boxes beside Thndr X.
+        on = tf.enabled(os.environ)
+        for widget in (self.intro, self.teach_box, self.orders_box):
+            widget.setVisible(on)
+        self.setMinimumWidth(300 if on else 200)
+        self.setMaximumWidth(420 if on else 240)
+        if not on:
             theme.say(self.state, tr("ticket.off"), "info")
         elif self._halted:
             theme.say(self.state, tr("ticket.halted"), "info")

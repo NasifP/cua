@@ -66,7 +66,6 @@ class SourcesTab(QWidget):
         self.event_date.setDisplayFormat("yyyy-MM-dd")
         self.event_title = QLineEdit()
         self.event_impact = QComboBox()
-        self.event_impact.addItems(list(IMPACTS))
         self.add_event_button = QPushButton()
         self.add_event_button.setProperty("variant", "primary")
         self.add_event_button.clicked.connect(self.add_event)
@@ -134,6 +133,12 @@ class SourcesTab(QWidget):
         self.events.setHorizontalHeaderLabels(
             [tr("src.col_date"), tr("src.col_event"), tr("src.col_impact")])
         self.event_title.setPlaceholderText(tr("src.event_placeholder"))
+        current = self.event_impact.currentData()
+        self.event_impact.clear()
+        for impact in IMPACTS:
+            self.event_impact.addItem(tr(f"src.impact.{impact}", impact), impact)
+        if current:
+            self.event_impact.setCurrentIndex(max(0, self.event_impact.findData(current)))
         self.add_event_button.setText(tr("src.add_event"))
         self.remove_event_button.setText(tr("src.remove"))
         self.events_box.setTitle(tr("src.calendar"))
@@ -167,7 +172,8 @@ class SourcesTab(QWidget):
         for event in self._events:
             row = self.events.rowCount()
             self.events.insertRow(row)
-            for col, text in enumerate((event.day.isoformat(), event.title, event.impact)):
+            for col, text in enumerate((event.day.isoformat(), event.title,
+                                        tr(f"src.impact.{event.impact}", event.impact))):
                 self.events.setItem(row, col, QTableWidgetItem(text))
         try:
             self._feeds = read_feed_entries(FEEDS_FILE)
@@ -193,7 +199,7 @@ class SourcesTab(QWidget):
             self._say(tr("src.need_title"), error=True)
             return
         day = self.event_date.date().toPython()
-        self._events.append(ScheduledEvent(day, title, self.event_impact.currentText()))
+        self._events.append(ScheduledEvent(day, title, self.event_impact.currentData()))
         save_events(EVENTS_FILE, self._events)
         self.event_title.clear()
         self._say(tr("src.added_event", title=title, day=day))
