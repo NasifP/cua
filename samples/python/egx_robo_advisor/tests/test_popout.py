@@ -98,3 +98,32 @@ def test_the_app_is_told_before_and_after_every_move(app, tmp_path):
     slot.dock()
     assert len(calls) == 4, "docking when already docked moves nothing"
     slot.shutdown()
+
+
+def test_both_bars_offer_a_reload(app, tmp_path):
+    from PySide6.QtWidgets import QLabel
+
+    from egx_advisor.desktop.popout import PopOut
+
+    reloads: list[int] = []
+    slot = PopOut(QLabel("thndr"), on_halt=lambda: None, settings_file=tmp_path / "d.ini",
+                  on_reload=lambda: reloads.append(1))
+    slot.reload_button.click()
+    slot.opened()
+    slot.window_.reload_button.click()
+    assert reloads == [1, 1]
+    slot.shutdown()
+
+
+def test_browser_flags_stop_occlusion_and_draw_in_software_by_default(monkeypatch):
+    pytest.importorskip("PySide6.QtWebEngineWidgets")
+    from egx_advisor.desktop.app import chromium_flags
+
+    monkeypatch.delenv("QTWEBENGINE_CHROMIUM_FLAGS", raising=False)
+    flags = chromium_flags({})
+    assert "--disable-features=CalculateNativeWinOcclusion" in flags
+    assert "--disable-gpu" in flags
+    off = chromium_flags({"EGX_BROWSER_SOFTWARE": "false"})
+    assert "--disable-gpu" not in off and "CalculateNativeWinOcclusion" in off
+    monkeypatch.setenv("QTWEBENGINE_CHROMIUM_FLAGS", "--no-sandbox --disable-gpu")
+    assert chromium_flags({}).split().count("--disable-gpu") == 1

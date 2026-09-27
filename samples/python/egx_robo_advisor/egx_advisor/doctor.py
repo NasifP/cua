@@ -28,7 +28,7 @@ OK, WARN, FAIL = "ok", "warn", "fail"
 
 MIN_TOKEN_LENGTH = 24
 DEFAULT_AGENT_MODEL = "anthropic/claude-sonnet-5"
-DEFAULT_LITELLM_MODEL = "gemini/gemini-2.5-pro"
+DEFAULT_LITELLM_MODEL = "gemini/gemini-2.5-flash"
 COMPUTER_SERVER_PORT = 8000
 
 #: Modules the full setup needs, and the package that provides each.

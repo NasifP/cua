@@ -253,7 +253,7 @@ def default_classifier_model() -> str:
     It used to be read at import, which happens before run_agent.py loads
     `.env`, so a model set there was silently ignored.
     """
-    return os.environ.get("EGX_CLASSIFIER_MODEL", "gemini/gemini-2.5-pro")
+    return os.environ.get("EGX_CLASSIFIER_MODEL", "gemini/gemini-2.5-flash")
 
 
 @dataclass

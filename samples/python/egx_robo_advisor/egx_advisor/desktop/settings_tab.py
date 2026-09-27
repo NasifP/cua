@@ -219,6 +219,10 @@ class SettingsTab(QWidget):
         for spec in settings.BEHAVIOUR_FIELDS:
             if spec.kind == "bool":
                 widget: QWidget = QCheckBox()
+            elif spec.kind == "choice":
+                widget = QComboBox()
+                for value in spec.suggestions:
+                    widget.addItem(value, value)
             else:
                 widget = QLineEdit()
                 widget.setPlaceholderText(spec.default)
@@ -231,6 +235,10 @@ class SettingsTab(QWidget):
                     widget.setText(help_text)
                 else:
                     widget.setToolTip(help_text)
+                if spec.kind == "choice":
+                    for index in range(widget.count()):
+                        value = widget.itemData(index)
+                        widget.setItemText(index, tr(f"choice.{spec.key}.{value}", value))
                 label.setText(self._field(spec.key, spec.label))
 
             self._text(texts)
@@ -288,7 +296,10 @@ class SettingsTab(QWidget):
         self._paint_statuses()
         for key, widget in self._inputs.items():
             value = state.values.get(key, "")
-            if isinstance(widget, QComboBox):
+            if isinstance(widget, QComboBox) and not widget.isEditable():
+                spec = next(f for f in settings.BEHAVIOUR_FIELDS if f.key == key)
+                widget.setCurrentIndex(max(0, widget.findData(value or spec.default)))
+            elif isinstance(widget, QComboBox):
                 # An editable combo shows its first suggestion when given "";
                 # saving that would silently change an unset model.
                 widget.setCurrentIndex(-1)
@@ -319,7 +330,9 @@ class SettingsTab(QWidget):
     def _collect(self) -> dict[str, str]:
         values = {}
         for key, widget in self._inputs.items():
-            if isinstance(widget, QComboBox):
+            if isinstance(widget, QComboBox) and not widget.isEditable():
+                values[key] = str(widget.currentData() or "")
+            elif isinstance(widget, QComboBox):
                 values[key] = widget.currentText().strip()
             elif isinstance(widget, QCheckBox):
                 values[key] = "true" if widget.isChecked() else "false"

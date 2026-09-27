@@ -165,6 +165,30 @@ def test_a_language_switch_keeps_unsaved_settings(app, monkeypatch):
         i18n.set_language("ar")
 
 
+def test_the_style_choice_loads_saves_and_translates(app, monkeypatch):
+    from egx_advisor import i18n, settings
+    from egx_advisor.desktop import settings_tab
+
+    class Store:
+        available = True
+
+    monkeypatch.setattr(settings, "load", lambda store=None: type(
+        "State", (), {"values": {"EGX_STYLE": "long"}, "secret_sources": {}})())
+    try:
+        i18n.set_language("ar")
+        tab = settings_tab.SettingsTab(on_saved=lambda: None, store=Store())
+        combo = tab._inputs["EGX_STYLE"]
+        assert combo.currentData() == "long" and combo.currentText() == "طويل المدى (شهور)"
+        combo.setCurrentIndex(combo.findData("trader"))
+        assert tab._collect()["EGX_STYLE"] == "trader"
+        # Only the stored key's row and Gemini's show; the rest wait behind a button.
+        assert tab.more_keys.isVisibleTo(tab)
+    finally:
+        i18n.set_language("ar")
+    assert settings.validate({"EGX_STYLE": "yolo"})
+    assert not settings.validate({"EGX_STYLE": "swing"})
+
+
 def test_settings_load_the_saved_values_when_the_page_opens(app, monkeypatch):
     """A regression: initialising _sources early made the first reload skip."""
     from egx_advisor.desktop import settings_tab

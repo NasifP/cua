@@ -552,7 +552,7 @@ The bot starts **halted**. Arm it from the dashboard: press START THE BOT, then 
 pip install -e '.[chat]'
 export GEMINI_API_KEY=...
 export EGX_CHAT_ENABLED=true
-export EGX_CHAT_MODEL=gemini/gemini-2.5-pro   # any litellm ID
+export EGX_CHAT_MODEL=gemini/gemini-2.5-flash   # any litellm ID
 ```
 
 A panel on the dashboard that explains what the bot did and why, in Arabic or

@@ -156,6 +156,8 @@ class EgxCuaAgent:
         self.rules_path: Optional[Path] = config_path("rules.toml")
         #: Where plan orders are kept for the pick review. None in tests.
         self.memory: Optional[Any] = None
+        #: Local prices (marketdata/archive.py) for stops and targets. None in tests.
+        self.archive: Optional[Any] = None
         self._closes: dict[str, list[Decimal]] = {}
         self._volumes: dict[str, list[Decimal]] = {}
         self._four_factor: Optional[FourFactorDecision] = None
@@ -421,6 +423,7 @@ class EgxCuaAgent:
         # --- Read state ---------------------------------------------------------
         self.bus.put("status", {"phase": AgentPhase.READING_PORTFOLIO.value})
         portfolio = await executor.read_portfolio()
+        await self._publish_levels(portfolio)
         market = await self._market_data.snapshot(self.config.policy.universe)
         if market.usd_egp > 0:
             # The day's rate, so the model budget can be shown and capped in EGP.
@@ -660,6 +663,34 @@ class EgxCuaAgent:
             phase="polling_news",
             data={"blocked": sorted(regime.blocked_symbols)},
         )
+
+    async def _publish_levels(self, portfolio: Any) -> None:
+        """Stop and targets for each holding (levels.py). Shown, never acted on."""
+        if self.archive is None or not portfolio.positions:
+            return
+        from . import levels
+        from .marketdata import YahooMarketData
+        from .marketdata.archive import ArchivedMarketData
+        from .types import Instrument, Sleeve
+
+        held = [Instrument(s, s, Sleeve.BLUE_CHIP) for s in portfolio.positions]
+        try:
+            # Once a day from Yahoo; the archive answers the rest of the day.
+            source = ArchivedMarketData(
+                YahooMarketData(include_macro=False, enforce_quality=False), self.archive)
+            rows = await source.history(held, days=130)
+            today = datetime.now(timezone.utc).date()
+            history = {s: [r for r in series if r.day < today] for s, series in rows.items()}
+            positions = [{"symbol": p.symbol, "quantity": str(p.quantity),
+                          "market_value": str(p.market_value),
+                          "avg_cost": None if p.avg_cost is None else str(p.avg_cost)}
+                         for p in portfolio.positions.values()]
+            style = levels.style_from(os.environ)
+            self.bus.put("levels", {"style": style,
+                                    "stale": bool(source.stale),
+                                    "levels": levels.for_portfolio(positions, history, style)})
+        except Exception as exc:  # noqa: BLE001 - levels are extra, never block a cycle
+            logger.warning("stops and targets unavailable: %s", exc)
 
     def _remember_plan(self, plan: Any, allowed: Sequence[Any]) -> None:
         """Keep the plan's orders so the Memory tab can later say how they did."""

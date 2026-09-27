@@ -545,3 +545,28 @@ async def test_the_plan_orders_are_kept_for_the_pick_review(tmp_path: Path) -> N
     assert orders, "the fixture plan has orders to keep"
     assert {(p.symbol, p.side) for p in picks} == {(o["symbol"], o["side"]) for o in orders}
     assert all(p.price > 0 for p in picks)
+
+
+async def test_stops_and_targets_are_published_for_holdings(tmp_path: Path) -> None:
+    from datetime import date, timedelta
+    from decimal import Decimal
+
+    from egx_advisor.marketdata import YahooRow
+    from egx_advisor.marketdata.archive import PriceArchive, _cairo_today
+
+    agent, bus, computer, news, market, agents = build(tmp_path, execute=False)
+    _wire_tree(agent, computer)
+    archive = PriceArchive(tmp_path / "prices.db")
+    today = _cairo_today()
+    rows = [YahooRow(today - timedelta(days=90 - i), Decimal("48"), Decimal("51"),
+                     Decimal("47"), Decimal("49") + Decimal(i) / 100, Decimal(1000))
+            for i in range(90)]
+    archive.store({"COMI.CA": rows}, today, date(2000, 1, 1))  # fresh: no network
+    agent.archive = archive
+
+    await agent._run_cycle()
+
+    snapshot = bus.get("levels")["payload"]
+    assert snapshot["style"] == "swing"
+    comi = snapshot["levels"]["COMI.CA"]
+    assert comi["stop"] < comi["price"] < comi["target1"] <= comi["target2"]

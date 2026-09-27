@@ -214,7 +214,8 @@ class MainWindow(QMainWindow):
         self.thndr_slot = PopOut(self.thndr_page, on_halt=self.halt,
                                  settings_file=PROJECT_ROOT / "state" / "desktop.ini",
                                  before_move=self._close_thndr_view,
-                                 after_move=self._open_thndr_view)
+                                 after_move=self._open_thndr_view,
+                                 on_reload=lambda: self.thndr.reload())
         self.chart_tab = ChartTab()
         from ..marketdata.archive import PriceArchive, archive_path_for
         from ..memory import Memory, memory_path_for
@@ -708,12 +709,32 @@ def missing_keys(env: dict[str, str]) -> list[Check]:
     ]
 
 
+def chromium_flags(env: dict[str, str]) -> str:
+    """Flags for the built-in browser. Read once, before the application exists.
+
+    On some Windows PCs Thndr X showed its first frame and then nothing: no
+    repaint, no clicks, no tab changes, while the plain dashboard page worked.
+    Two causes are common there. Chromium's occlusion tracking can decide a
+    Qt-hosted view is hidden and stop drawing it; that is switched off always.
+    And GPU drivers that do not cooperate with Qt's surfaces; for those the
+    browser draws in software (EGX_BROWSER_SOFTWARE, on by default), which a
+    trading page does not notice.
+    """
+    flags = (os.environ.get("QTWEBENGINE_CHROMIUM_FLAGS") or "").split()
+    flags += ["--disable-features=CalculateNativeWinOcclusion",
+              "--disable-backgrounding-occluded-windows"]
+    if (env.get("EGX_BROWSER_SOFTWARE") or "true").strip().lower() != "false":
+        flags += ["--disable-gpu", "--disable-gpu-compositing"]
+    return " ".join(dict.fromkeys(flags))
+
+
 def main(argv: Optional[list[str]] = None) -> int:
     env = load_env()
     os.environ.update({k: v for k, v in env.items() if v or k not in os.environ})
     # Qt WebEngine asks for this before the application exists; it also lets a
     # web view's drawing surface work in more than one top-level window.
     QApplication.setAttribute(Qt.AA_ShareOpenGLContexts)
+    os.environ["QTWEBENGINE_CHROMIUM_FLAGS"] = chromium_flags(env)
     app = QApplication(argv if argv is not None else sys.argv)
     i18n.set_language(i18n.name_from_env(env))
     theme.apply(app, theme.name_from_env(env))

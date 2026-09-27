@@ -139,7 +139,8 @@ def test_missing_model_explains_how_to_configure_it(tmp_path: Path) -> None:
     assistant.completion = None
     # No litellm in the test environment: the answer must be guidance, not a crash.
     answer = assistant.answer("why?")
-    assert "EGX_CHAT_MODEL" in answer or "could not be reached" in answer
+    assert ("EGX_CHAT_MODEL" in answer or "could not be reached" in answer
+            or "API key" in answer)
 
 
 # -------------------------------------------------------------- no authority

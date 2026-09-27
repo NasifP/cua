@@ -44,7 +44,8 @@ class DetachedWindow(QWidget):
     """The separate window. Closing it docks the page back."""
 
     def __init__(self, on_close: Callable[[], None], on_dock: Callable[[], None],
-                 on_halt: Callable[[], None]) -> None:
+                 on_halt: Callable[[], None],
+                 on_reload: Optional[Callable[[], None]] = None) -> None:
         super().__init__(None, Qt.Window)
         self.setObjectName("Page")
         self._on_close = on_close
@@ -59,10 +60,15 @@ class DetachedWindow(QWidget):
         self.halt_button.setIconSize(QSize(16, 16))
         self.halt_button.setCursor(Qt.PointingHandCursor)
         self.halt_button.clicked.connect(on_halt)
+        self.reload_button = QPushButton()
+        self.reload_button.setProperty("variant", "ghost")
+        self.reload_button.setCursor(Qt.PointingHandCursor)
+        self.reload_button.clicked.connect(on_reload or (lambda: None))
 
         bar = QHBoxLayout()
         bar.setContentsMargins(10, 6, 10, 6)
         bar.addWidget(self.dock_button)
+        bar.addWidget(self.reload_button)
         bar.addStretch(1)
         bar.addWidget(self.halt_button)
         self.body = QVBoxLayout(self)
@@ -75,6 +81,7 @@ class DetachedWindow(QWidget):
         self.setWindowTitle(f"{tr('page.thndr')} - EGX Robo-Advisor")
         self.dock_button.setText("  " + tr("popout.dock"))
         self.dock_button.setIcon(theme.icon("dashboard"))
+        self.reload_button.setText(tr("popout.reload"))
         self.halt_button.setText("  " + tr("app.halt"))
         self.halt_button.setToolTip(tr("app.halt_tip"))
         self.halt_button.setIcon(theme.icon("power", "#ffffff", "#ffffff"))
@@ -95,8 +102,10 @@ class PopOut(QWidget):
     def __init__(self, content: QWidget, on_halt: Callable[[], None],
                  settings_file: Path,
                  before_move: Optional[Callable[[], None]] = None,
-                 after_move: Optional[Callable[[], None]] = None) -> None:
+                 after_move: Optional[Callable[[], None]] = None,
+                 on_reload: Optional[Callable[[], None]] = None) -> None:
         super().__init__()
+        self._on_reload = on_reload or (lambda: None)
         self.content = content
         #: Called around every move. The app closes the browser view before
         #: and opens a new one after, so no live web view is ever moved
@@ -115,6 +124,11 @@ class PopOut(QWidget):
         self.docked_bar = QWidget()
         bar = QHBoxLayout(self.docked_bar)
         bar.setContentsMargins(10, 6, 10, 6)
+        self.reload_button = QPushButton()
+        self.reload_button.setProperty("variant", "ghost")
+        self.reload_button.setCursor(Qt.PointingHandCursor)
+        self.reload_button.clicked.connect(lambda: self._on_reload())
+        bar.addWidget(self.reload_button)
         bar.addStretch(1)
         bar.addWidget(self.undock_button)
 
@@ -183,7 +197,8 @@ class PopOut(QWidget):
         if self.window_ is None:
             self.window_ = DetachedWindow(on_close=self._window_closed,
                                           on_dock=lambda: self.dock(remember=True),
-                                          on_halt=self._on_halt)
+                                          on_halt=self._on_halt,
+                                          on_reload=lambda: self._on_reload())
         self._before_move()
         self.layout_.removeWidget(self.content)
         self.window_.body.addWidget(self.content, 1)
@@ -254,6 +269,7 @@ class PopOut(QWidget):
 
     def retranslate(self) -> None:
         self.undock_button.setText("  " + tr("popout.undock"))
+        self.reload_button.setText(tr("popout.reload"))
         self.undock_button.setIcon(theme.icon("browser"))
         self.note.setText(tr("popout.note"))
         self.show_button.setText(tr("popout.show"))

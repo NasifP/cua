@@ -62,7 +62,7 @@ def default_vision_model() -> str:
     return (
         os.environ.get("EGX_VISION_MODEL")
         or os.environ.get("EGX_CHAT_MODEL")
-        or "gemini/gemini-2.5-pro"
+        or "gemini/gemini-2.5-flash"
     )
 
 
@@ -605,13 +605,15 @@ def positions_prompt(ui: "ThndrUiMap", *, source: str) -> str:
         f"This is {source} of the Thndr X trading app. Read the "
         f"'{ui.positions_tab_label}' table and return ONLY a JSON object, "
         "no prose, with exactly these keys:\n"
-        '  "positions": a list of objects with "symbol", "quantity", "market_value"\n'
+        '  "positions": a list of objects with "symbol", "quantity", "market_value", '
+        '"avg_cost"\n'
         '  "cash_egp": the available cash balance in EGP, or null\n'
         '  "unsettled_cash_egp": unsettled cash in EGP, or null\n'
         "Rules: use each ticker exactly as the table shows it. quantity is the Qty "
         "column. market_value is the market value column in EGP; the header may be "
         "abbreviated (Thndr X shows 'Mkt. Val...'). Never use AvgCost, Weight or "
-        "P/L for either. Copy digits as shown, without thousands separators. If "
+        "P/L for either. avg_cost is the AvgCost column (average cost per share, "
+        "EGP), or null if the table does not show it. Copy digits as shown, without thousands separators. If "
         "the cash balance is not shown, set cash_egp to null -- do not "
         "guess and do not write zero. If a number is not legible, omit that position. "
         "If this is not the Thndr X positions table, return {\"positions\": [], "
@@ -715,6 +717,7 @@ def publish_portfolio(
                     "symbol": p.symbol,
                     "quantity": str(p.quantity),
                     "market_value": str(p.market_value),
+                    "avg_cost": None if p.avg_cost is None else str(p.avg_cost),
                 }
                 for p in portfolio.positions.values()
             ],
@@ -757,7 +760,17 @@ def _parse_portfolio(payload: Mapping[str, Any], *, demo_confirmed: bool) -> Por
             raise PortfolioReadError(f"negative quantity or value for {symbol}")
         if symbol in positions:
             raise PortfolioReadError(f"duplicate position for {symbol}")
-        positions[symbol] = Position(symbol, quantity, value)
+        # Optional and only for display (profit/loss): an unreadable average
+        # cost leaves it blank rather than failing the whole read.
+        cost: Optional[Decimal] = None
+        if entry.get("avg_cost") not in (None, ""):
+            try:
+                cost = _decimal(entry.get("avg_cost"), f"{symbol} avg_cost")
+            except PortfolioReadError:
+                cost = None
+            if cost is not None and cost <= 0:
+                cost = None
+        positions[symbol] = Position(symbol, quantity, value, cost)
 
     cash = _decimal(payload.get("cash_egp", "0"), "cash_egp")
     unsettled = _decimal(payload.get("unsettled_cash_egp", "0"), "unsettled_cash_egp")
