@@ -50,7 +50,6 @@ class SettingsTab(QWidget):
         self._secret_status: dict[str, QLabel] = {}
         self._key_rows: dict[str, int] = {}
         self._all_keys = False
-        self._sources: dict[str, str] = {}
         self._remove: set[str] = set()
         self._inputs: dict[str, QWidget] = {}
         self._signals = _TestSignals()
@@ -171,7 +170,8 @@ class SettingsTab(QWidget):
             return
         hidden = 0
         for index, (key, row) in enumerate(self._key_rows.items()):
-            shown = (self._all_keys or index == 0 or bool(self._sources.get(key))
+            shown = (self._all_keys or index == 0
+                     or bool(getattr(self, "_sources", {}).get(key))
                      or key in self._remove or bool(self._secret_inputs[key].text()))
             form.setRowVisible(row, shown)
             hidden += not shown
