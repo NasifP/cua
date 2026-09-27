@@ -435,6 +435,14 @@ STRINGS: dict[str, tuple[str, str]] = {
     "set.will_remove": ("removed on Save", "هيتمسح لما تحفظ"),
     "set.remove": ("Remove", "حذف"),
     "set.more_keys": ("Show other providers", "اعرض باقي الشركات"),
+    "field.EGX_STYLE": ("Investing style", "أسلوبك في الاستثمار"),
+    "field.EGX_STYLE.help": ("Sets how far each holding's stop and targets sit: a trader gives "
+                             "a stock little room, a long-term investor a lot.",
+                             "بيحدد بُعد الوقف والأهداف لكل سهم: المضارب بيدي السهم مساحة "
+                             "صغيرة، والمستثمر طويل المدى مساحة أكبر."),
+    "choice.EGX_STYLE.trader": ("Trader (days)", "مضارب (أيام)"),
+    "choice.EGX_STYLE.swing": ("Medium term (weeks)", "متوسط المدى (أسابيع)"),
+    "choice.EGX_STYLE.long": ("Long term (months)", "طويل المدى (شهور)"),
     "src.impact.high": ("high", "عالية"),
     "src.impact.medium": ("medium", "متوسطة"),
     "set.remove_tip": ("Remove the stored {key}", "امسح {key} المحفوظ"),

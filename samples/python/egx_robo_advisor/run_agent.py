@@ -252,6 +252,9 @@ async def main() -> None:
     from egx_advisor.memory import Memory, memory_path_for
 
     agent.memory = Memory(memory_path_for(args.bus))
+    from egx_advisor.marketdata.archive import PriceArchive, archive_path_for
+
+    agent.archive = PriceArchive(archive_path_for(args.bus))
     agent.install_signal_handlers()
 
     if args.target == "host":

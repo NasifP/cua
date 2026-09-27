@@ -36,7 +36,7 @@ ENV_FILE = PROJECT_ROOT / ".env"
 class Field:
     key: str
     label: str
-    kind: str  # "secret" | "model" | "bool" | "int" | "float"
+    kind: str  # "secret" | "model" | "bool" | "int" | "float" | "choice"
     help: str = ""
     default: str = ""
     suggestions: tuple[str, ...] = ()
@@ -99,6 +99,10 @@ BEHAVIOUR_FIELDS: tuple[Field, ...] = (
           "Trend, momentum, volume and volatility decide what to buy, sell and how much, "
           "instead of the fixed allocation. Compare them in the Strategy Lab first.",
           default="false"),
+    Field("EGX_STYLE", "Investing style", "choice",
+          "Sets how far each holding's stop and targets sit: a trader gives a stock "
+          "little room, a long-term investor a lot.", default="swing",
+          suggestions=("trader", "swing", "long")),
     Field("EGX_TICKET_FILL", "Fill buy tickets in Thndr X", "bool",
           "When on, the Thndr X tab can write an order's quantity and price into an open "
           "buy ticket when you press Fill. It never presses Buy.", default="false"),
@@ -258,6 +262,8 @@ def validate(values: Mapping[str, str]) -> dict[str, str]:
                 problems[key] = f"must be at most {spec.maximum:g}"
         elif spec.kind == "bool" and value.lower() not in ("true", "false"):
             problems[key] = "must be true or false"
+        elif spec.kind == "choice" and value and value not in spec.suggestions:
+            problems[key] = f"must be one of {', '.join(spec.suggestions)}"
     return problems
 
 

@@ -181,6 +181,13 @@ class Assistant:
             json.dumps(payload("plan"), ensure_ascii=False, indent=2),
             "</current_plan>",
             "",
+            "<stops_and_targets>",
+            "Per holding: stop, target1, target2 from the stock's average true range; "
+            "status near_stop / below_stop means the price is within one ATR of the "
+            "stop or under it. Levels to watch, never orders.",
+            json.dumps(payload("levels"), ensure_ascii=False),
+            "</stops_and_targets>",
+            "",
             "<risk_regime>",
             json.dumps(
                 {k: v for k, v in regime.items() if k != "drivers"},
@@ -235,6 +242,13 @@ class Assistant:
             saved = self._remember(question)
             if saved:
                 return saved
+        from .average import answer as average_answer
+        from .average import average_request
+
+        numbers = average_request(question)
+        if numbers is not None:
+            # Arithmetic: code answers, the model is not asked.
+            return self._kept(question, average_answer(numbers, arabic))
         top = scan_request(question)
         if top is not None:
             budget = scan_budget(question)

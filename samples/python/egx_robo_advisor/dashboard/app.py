@@ -243,6 +243,7 @@ def create_app(
                 "regime": _payload(snapshots, "regime"),
                 "portfolio": _payload(snapshots, "portfolio"),
                 "plan": _payload(snapshots, "plan"),
+                "levels": _payload(snapshots, "levels"),
                 "demo_verdict": _payload(snapshots, "demo_verdict"),
                 "chat": {
                     "enabled": app.state.assistant is not None,

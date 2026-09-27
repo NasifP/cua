@@ -113,6 +113,8 @@ class Position:
     quantity: Decimal
     #: Marked value in EGP.
     market_value: Decimal
+    #: Average cost per share in EGP, as the broker shows it; None when unread.
+    avg_cost: Optional[Decimal] = None
 
 
 @dataclass(frozen=True, slots=True)
