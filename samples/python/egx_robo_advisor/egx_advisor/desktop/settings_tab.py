@@ -48,6 +48,8 @@ class SettingsTab(QWidget):
         self._store = store or settings.SecretStore()
         self._secret_inputs: dict[str, QLineEdit] = {}
         self._secret_status: dict[str, QLabel] = {}
+        self._key_rows: dict[str, int] = {}
+        self._all_keys = False
         self._remove: set[str] = set()
         self._inputs: dict[str, QWidget] = {}
         self._signals = _TestSignals()
@@ -137,6 +139,7 @@ class SettingsTab(QWidget):
             row.addWidget(remove)
             form.addRow(spec.label, row)
             label = form.labelForField(row)
+            self._key_rows[spec.key] = form.rowCount() - 1
 
             def texts(spec=spec, edit=edit, remove=remove, label=label) -> None:
                 edit.setPlaceholderText(tr(f"field.{spec.key}.help", spec.help))
@@ -147,7 +150,32 @@ class SettingsTab(QWidget):
             self._text(texts)
             self._secret_inputs[spec.key] = edit
             self._secret_status[spec.key] = status
+        # Eight providers is a wall of empty boxes. Show the ones in use (and
+        # Gemini, the default); the rest are one click away.
+        self._keys_form = form
+        self.more_keys = QPushButton()
+        self.more_keys.setProperty("variant", "ghost")
+        self.more_keys.clicked.connect(self._show_all_keys)
+        form.addRow(self.more_keys)
+        self._text(lambda: self.more_keys.setText(tr("set.more_keys")))
         return box
+
+    def _show_all_keys(self) -> None:
+        self._all_keys = True
+        self._paint_key_rows()
+
+    def _paint_key_rows(self) -> None:
+        form = getattr(self, "_keys_form", None)
+        if form is None:
+            return
+        hidden = 0
+        for index, (key, row) in enumerate(self._key_rows.items()):
+            shown = (self._all_keys or index == 0
+                     or bool(getattr(self, "_sources", {}).get(key))
+                     or key in self._remove or bool(self._secret_inputs[key].text()))
+            form.setRowVisible(row, shown)
+            hidden += not shown
+        self.more_keys.setVisible(hidden > 0)
 
     def _models_box(self) -> QGroupBox:
         box = QGroupBox()
@@ -271,6 +299,7 @@ class SettingsTab(QWidget):
                 widget.setText(value)
 
     def _paint_statuses(self) -> None:
+        self._paint_key_rows()
         for key, status in self._secret_status.items():
             source = self._sources.get(key, "")
             if key in self._remove:

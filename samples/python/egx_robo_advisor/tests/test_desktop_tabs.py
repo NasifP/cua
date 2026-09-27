@@ -163,3 +163,16 @@ def test_a_language_switch_keeps_unsaved_settings(app, monkeypatch):
         assert tab._secret_inputs["GEMINI_API_KEY"].text() == "typed-not-saved"
     finally:
         i18n.set_language("ar")
+
+
+def test_settings_load_the_saved_values_when_the_page_opens(app, monkeypatch):
+    """A regression: initialising _sources early made the first reload skip."""
+    from egx_advisor.desktop import settings_tab
+
+    class Store:
+        available = True
+
+    monkeypatch.setattr(settings_tab.settings, "load", lambda store=None: type(
+        "State", (), {"values": {"EGX_CYCLE_SECONDS": "420"}, "secret_sources": {}})())
+    tab = settings_tab.SettingsTab(on_saved=lambda: None, store=Store())
+    assert tab._inputs["EGX_CYCLE_SECONDS"].text() == "420"
