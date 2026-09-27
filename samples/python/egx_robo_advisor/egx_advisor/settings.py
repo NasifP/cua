@@ -63,10 +63,11 @@ _MODEL_HELP = (
     "xai/..., deepseek/..., openrouter/... . Model names change often; check your "
     "provider's current list."
 )
+#: Flash first: it has a free tier. gemini-2.5-pro is no longer offered to new
+#: users, and the Pro previews have no free quota.
 _SUGGESTED_MODELS = (
-    "gemini/gemini-3.1-pro-preview",
-    "gemini/gemini-2.5-pro",
     "gemini/gemini-2.5-flash",
+    "gemini/gemini-3.1-pro-preview",
 )
 
 MODEL_FIELDS: tuple[Field, ...] = (
@@ -74,11 +75,11 @@ MODEL_FIELDS: tuple[Field, ...] = (
           _MODEL_HELP + " Falls back to the chat model when empty.",
           suggestions=_SUGGESTED_MODELS),
     Field("EGX_CHAT_MODEL", "Chat", "model", _MODEL_HELP,
-          default="gemini/gemini-2.5-pro", suggestions=_SUGGESTED_MODELS),
+          default="gemini/gemini-2.5-flash", suggestions=_SUGGESTED_MODELS),
     Field("EGX_CLASSIFIER_MODEL", "News classifier", "model",
           _MODEL_HELP + " Runs every cycle: a cheaper model is fine here, and it can "
           "only ever add caution.",
-          default="gemini/gemini-2.5-pro", suggestions=_SUGGESTED_MODELS),
+          default="gemini/gemini-2.5-flash", suggestions=_SUGGESTED_MODELS),
 )
 
 BEHAVIOUR_FIELDS: tuple[Field, ...] = (
@@ -103,6 +104,9 @@ BEHAVIOUR_FIELDS: tuple[Field, ...] = (
           "Sets how far each holding's stop and targets sit: a trader gives a stock "
           "little room, a long-term investor a lot.", default="swing",
           suggestions=("trader", "swing", "long")),
+    Field("EGX_BROWSER_SOFTWARE", "Software drawing for Thndr X", "bool",
+          "Draws the built-in browser without the graphics card. Fixes a frozen Thndr X "
+          "on some PCs. Restart the app after changing it.", default="true"),
     Field("EGX_TICKET_FILL", "Fill buy tickets in Thndr X", "bool",
           "When on, the Thndr X tab can write an order's quantity and price into an open "
           "buy ticket when you press Fill. It never presses Buy.", default="false"),
@@ -249,7 +253,7 @@ def validate(values: Mapping[str, str]) -> dict[str, str]:
         if "\n" in value:
             problems[key] = "must be one line"
         elif spec.kind == "model" and value and "/" not in value:
-            problems[key] = "use provider/model, for example gemini/gemini-2.5-pro"
+            problems[key] = "use provider/model, for example gemini/gemini-2.5-flash"
         elif spec.kind in ("int", "float"):
             try:
                 number = int(value) if spec.kind == "int" else float(value)
@@ -357,6 +361,8 @@ def test_model(
             timeout=timeout,
         )
         reply = (response["choices"][0]["message"]["content"] or "").strip()
-    except Exception as exc:  # noqa: BLE001 - show the provider's own message
-        return False, f"{type(exc).__name__}: {str(exc)[:300]}"
+    except Exception as exc:  # noqa: BLE001 - one readable line, not the provider's JSON
+        from .model_errors import explain
+
+        return False, explain(exc, model)
     return True, f"connected; the model replied {reply[:40]!r}"

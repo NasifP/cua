@@ -122,7 +122,16 @@ STRINGS: dict[str, tuple[str, str]] = {
     "mem.deleted": ("Deleted.", "اتمسح."),
     "mem.cleared": ("Conversations forgotten.", "المحادثات اتنست."),
     "mem.unreadable": ("Could not read the memory: {error}", "ماقدرتش أقرا الذاكرة: {error}"),
+    "lab.excluded": ("Left out for bad or missing Yahoo data, in both runs alike: {items}",
+                     "اتشالوا من التجربتين بسبب بيانات ناقصة أو غلط من Yahoo: {items}"),
     "lab.tested_before": ("Tested before on {date}: {verdict}", "اتجربت قبل كده يوم {date}: {verdict}"),
+    "popout.reload": ("Reload", "إعادة تحميل"),
+    "field.EGX_BROWSER_SOFTWARE": ("Software drawing for Thndr X", "رسم Thndr X بدون كارت الشاشة"),
+    "field.EGX_BROWSER_SOFTWARE.help": (
+        "Draws the built-in browser without the graphics card. Fixes a frozen Thndr X on some "
+        "PCs. Restart the app after changing it.",
+        "بيرسم المتصفح الداخلي من غير كارت الشاشة. بيحل مشكلة إن Thndr X يبان متجمد على بعض "
+        "الأجهزة. اقفل البرنامج وافتحه بعد ما تغيّره."),
     "popout.undock": ("Open in a separate window", "افتح في نافذة منفصلة"),
     "popout.dock": ("Back to main window", "رجوع للنافذة الرئيسية"),
     "popout.show": ("Show the Thndr X window", "اعرض نافذة Thndr X"),
@@ -435,6 +444,23 @@ STRINGS: dict[str, tuple[str, str]] = {
     "set.will_remove": ("removed on Save", "هيتمسح لما تحفظ"),
     "set.remove": ("Remove", "حذف"),
     "set.more_keys": ("Show other providers", "اعرض باقي الشركات"),
+    "model.gone": ("{model} is not available to this account (the provider retired it or "
+                   "does not offer it to new users). Choose another model, such as "
+                   "gemini/gemini-2.5-flash.",
+                   "الموديل {model} مش متاح للحساب ده (الشركة وقفته أو مش بتقدمه للمستخدمين "
+                   "الجداد). اختار موديل تاني، زي gemini/gemini-2.5-flash."),
+    "model.quota": ("{model} refused the request: the quota is used up, or it has no free "
+                    "tier. Choose gemini/gemini-2.5-flash or enable billing.",
+                    "الموديل {model} رفض الطلب: الحصة خلصت أو مالوش خطة مجانية. اختار "
+                    "gemini/gemini-2.5-flash أو فعّل الدفع."),
+    "model.key": ("{model}: the API key was refused or is missing. Check it in Settings, "
+                  "API keys.",
+                  "{model}: مفتاح الـ API اترفض أو مش موجود. راجعه في الإعدادات، خانة "
+                  "مفاتيح API."),
+    "model.timeout": ("{model} did not answer in time. Try again.",
+                      "{model} ماردش في الوقت. جرّب تاني."),
+    "model.other": ("{model} could not be reached: {error}",
+                    "الموديل {model} مش متاح دلوقتي: {error}"),
     "field.EGX_STYLE": ("Investing style", "أسلوبك في الاستثمار"),
     "field.EGX_STYLE.help": ("Sets how far each holding's stop and targets sit: a trader gives "
                              "a stock little room, a long-term investor a lot.",

@@ -65,7 +65,7 @@ logger = logging.getLogger(__name__)
 #: litellm-supported identifier works: "gemini/...", "anthropic/...", etc.
 def default_chat_model() -> str:
     """EGX_CHAT_MODEL, read when an assistant is built rather than at import."""
-    return os.environ.get("EGX_CHAT_MODEL", "gemini/gemini-2.5-pro")
+    return os.environ.get("EGX_CHAT_MODEL", "gemini/gemini-2.5-flash")
 
 #: Hard ceilings, so one question cannot drag the whole journal into a prompt.
 MAX_EVENTS = 40
@@ -328,18 +328,9 @@ class Assistant:
 
     def _model_problem(self, exc: Exception, arabic: bool) -> str:
         """One readable line for a failed model call, not the provider's JSON."""
-        text = str(exc)
-        if "429" in text or "RateLimit" in text or "quota" in text.lower():
-            if arabic:
-                return (f"الموديل {self.model} رفض الطلب: الحصة خلصت أو الموديل ده مش متاح "
-                        "في الخطة المجانية (limit 0). غيّر موديل الشات من الإعدادات لموديل "
-                        "أرخص زي gemini/gemini-2.5-flash، أو فعّل الدفع في Google AI Studio.")
-            return (f"{self.model} refused the request: the quota is used up, or this model "
-                    "has no free tier (limit 0). Pick a cheaper chat model in Settings, such "
-                    "as gemini/gemini-2.5-flash, or enable billing in Google AI Studio.")
-        if arabic:
-            return f"نموذج الشات مش متاح دلوقتي: {_short(exc)}"
-        return f"The chat model could not be reached: {_short(exc)}"
+        from .model_errors import explain
+
+        return explain(exc, self.model, lang="ar" if arabic else "en")
 
     # ------------------------------------------------------------------ memory
 

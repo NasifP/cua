@@ -92,7 +92,7 @@ class DashboardConfig:
     #: Chat sends your holdings and their values to a model provider, so it is
     #: opt-in. The dashboard's control surface works with it off.
     chat_enabled: bool = False
-    chat_model: str = "gemini/gemini-2.5-pro"
+    chat_model: str = "gemini/gemini-2.5-flash"
 
     def __post_init__(self) -> None:
         if not self.token:
@@ -116,7 +116,7 @@ class DashboardConfig:
             # provider, which should be a choice rather than a default.
             chat_enabled=os.environ.get("EGX_CHAT_ENABLED", "").lower()
             in ("1", "true", "yes"),
-            chat_model=os.environ.get("EGX_CHAT_MODEL", "gemini/gemini-2.5-pro"),
+            chat_model=os.environ.get("EGX_CHAT_MODEL", "gemini/gemini-2.5-flash"),
         )
 
     @property

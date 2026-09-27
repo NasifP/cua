@@ -139,5 +139,13 @@ def test_the_model_test_reports_success_and_the_provider_error() -> None:
         raise PermissionError("API key not valid")
 
     ok, message = settings.test_model("gemini/x", completion=fail)
-    assert not ok and "API key not valid" in message
+    assert not ok and "gemini/x" in message and "API" in message
+
+    def gone(**kwargs):
+        raise RuntimeError('litellm.NotFoundError: GeminiException - {"error": {"code": 404, '
+                           '"message": "This model models/gemini-2.5-pro is no longer available '
+                           'to new users."}}')
+
+    ok, message = settings.test_model("gemini/gemini-2.5-pro", completion=gone)
+    assert not ok and "gemini-2.5-flash" in message and "{" not in message
     assert settings.test_model("no-provider")[0] is False

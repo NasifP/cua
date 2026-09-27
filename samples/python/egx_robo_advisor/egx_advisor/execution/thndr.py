@@ -62,7 +62,7 @@ def default_vision_model() -> str:
     return (
         os.environ.get("EGX_VISION_MODEL")
         or os.environ.get("EGX_CHAT_MODEL")
-        or "gemini/gemini-2.5-pro"
+        or "gemini/gemini-2.5-flash"
     )
 
 

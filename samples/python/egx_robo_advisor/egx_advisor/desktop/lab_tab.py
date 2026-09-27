@@ -48,7 +48,13 @@ class _Signals(QObject):
 
 
 def load_history(years: int, synthetic: bool) -> Any:
-    """Real EGX closes from Yahoo (cached per span), or synthetic for an engine check."""
+    """Real EGX closes from Yahoo (cached per span), or synthetic for an engine check.
+
+    Returns (history, excluded): `excluded` maps each stock left out to the
+    data problem that blocked it. One stock with a bad bar or no Yahoo data
+    used to stop the whole test; now it is left out of both runs alike (the
+    comparison stays fair) and the result says which and why.
+    """
     from ..strategy.policy import AllocationPolicy
 
     universe = AllocationPolicy().universe
@@ -56,16 +62,31 @@ def load_history(years: int, synthetic: bool) -> Any:
         from ..backtest import synthetic_history
 
         return synthetic_history([i.symbol for i in universe], start=date(2020, 1, 5),
-                                 sessions=int(years * 245))
-    from ..backtest import fetch_history
+                                 sessions=int(years * 245)), {}
+    from ..backtest.sources import build_history, read_cache, write_cache
     from ..marketdata import YahooMarketData
+    from ..marketdata.quality import validate_bars
 
     HISTORY_CACHE.mkdir(parents=True, exist_ok=True)
-    history, _coverage, _quality = asyncio.run(fetch_history(
-        YahooMarketData(), universe, days=int(years * 365),
-        cache=HISTORY_CACHE / f"egx_{years}y.csv",
-    ))
-    return history
+    cache = HISTORY_CACHE / f"egx_{years}y.csv"
+    if cache.exists():
+        rows = read_cache(cache)
+    else:
+        provider = YahooMarketData(enforce_quality=False)
+        rows = asyncio.run(provider.history(universe, days=int(years * 365)))
+        write_cache(cache, rows)
+    excluded: dict[str, str] = {}
+    for instrument in universe:
+        series = rows.get(instrument.symbol) or ()
+        # Checked on every run, cached rows included.
+        blocking = validate_bars(series, instrument.symbol).blocking
+        if blocking:
+            excluded[instrument.symbol] = ", ".join(sorted({f.code for f in blocking}))
+    usable = {s: r for s, r in rows.items() if s not in excluded}
+    if len(excluded) >= len(universe):
+        raise ValueError("no stock in the plan had usable prices")
+    history, _coverage = build_history(usable, universe)
+    return history, excluded
 
 
 class LabTab(QWidget):
@@ -75,6 +96,8 @@ class LabTab(QWidget):
         self.memory = memory
         self._previous: Optional[Any] = None
         self._run_span: tuple[int, bool] = (0, False)
+        #: Stocks left out of the last run for bad data: symbol -> problem.
+        self._excluded: dict[str, str] = {}
         self._report: Optional[LabReport] = None
         self._error = ""
         #: The banner as (key, kind, values), so a language switch can redraw it.
@@ -217,6 +240,10 @@ class LabTab(QWidget):
             if self._previous is not None:
                 text += "\n\n" + tr("lab.tested_before", date=self._previous.ts[:10],
                                      verdict=self._previous.verdict)
+            if self._excluded:
+                text = tr("lab.excluded", items="; ".join(
+                    f"{s.removesuffix('.CA')} ({why})" for s, why in sorted(self._excluded.items())
+                )) + "\n\n" + text
             self.output.setPlainText(text)
         elif self._error:
             self.output.setPlainText(self._error)
@@ -274,7 +301,8 @@ class LabTab(QWidget):
 
         def work() -> None:
             try:
-                history = load_history(years, synthetic)
+                history, excluded = load_history(years, synthetic)
+                self._excluded = excluded
                 report = test(history, synthetic)
                 self._signals.done.emit(report, "")
             except Exception as exc:  # noqa: BLE001 - network, data quality, too short
