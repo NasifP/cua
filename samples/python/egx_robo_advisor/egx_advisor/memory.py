@@ -76,6 +76,14 @@ CREATE TABLE IF NOT EXISTS picks (
     reason TEXT NOT NULL,
     UNIQUE (day, source, symbol, side)
 );
+CREATE TABLE IF NOT EXISTS indicator_studies (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    ts TEXT NOT NULL,
+    key TEXT NOT NULL,
+    label TEXT NOT NULL,
+    verdict TEXT NOT NULL,
+    result TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS ui (
     key TEXT PRIMARY KEY,
     value TEXT NOT NULL,
@@ -258,10 +266,35 @@ class Memory:
     def ui_set(self, key: str, value: str) -> None:
         self._write("INSERT INTO ui (key, value, updated) VALUES (?, ?, ?) "
                     "ON CONFLICT(key) DO UPDATE SET value = excluded.value, "
-                    "updated = excluded.updated", (key, str(value)[:500], _now()))
+                    "updated = excluded.updated", (key, str(value)[:20000], _now()))
 
     def ui_items(self) -> list[tuple[str, str, str]]:
         return [tuple(r) for r in self._read("SELECT key, value, updated FROM ui ORDER BY key")]
+
+    # ------------------------------------------------------------ indicators
+
+    #: The operator's indicator set (indicators.dump_set), in the ui table.
+    INDICATORS_KEY = "indicators.set"
+
+    def add_indicator_study(self, result: dict[str, Any]) -> int:
+        """Keep one study result (indicators.study); code writes these, never the model."""
+        return self._write(
+            "INSERT INTO indicator_studies (ts, key, label, verdict, result) VALUES (?, ?, ?, ?, ?)",
+            (_now(), str(result["key"]), str(result["indicator"]), str(result["verdict"]),
+             json.dumps(result, ensure_ascii=False)))
+
+    def indicator_studies(self, latest_only: bool = True) -> list[dict[str, Any]]:
+        """Study results, newest first; by default only the newest per indicator setting."""
+        rows = self._read("SELECT ts, result FROM indicator_studies ORDER BY id DESC")
+        out, seen = [], set()
+        for ts, raw in rows:
+            result = json.loads(raw)
+            if latest_only:
+                if result.get("indicator") in seen:
+                    continue
+                seen.add(result.get("indicator"))
+            out.append({"studied": ts, **result})
+        return out
 
     # ------------------------------------------------------------ for the model
 

@@ -193,12 +193,63 @@ class Toolbox:
             "style": self.style,
             "held": held,
         }
+        result.update(self._indicator_view(symbol, bars))
         if self.memory is not None:
             result["your_notes"] = [n.text for n in self.memory.notes() if n.symbol == symbol][:5]
             result["past_picks"] = [
                 {"day": p.day.isoformat(), "source": p.source, "side": p.side, "price": p.price}
                 for p in self.memory.picks() if p.symbol == symbol][:5]
         return result
+
+    def _indicator_set(self) -> list[Any]:
+        from .. import indicators as ind
+
+        saved = self.memory.ui_get(self.memory.INDICATORS_KEY) if self.memory else None
+        return [c for c in ind.load_set(saved) if c.on]
+
+    def _indicator_view(self, symbol: str, bars: Sequence[Any]) -> dict[str, Any]:
+        """The operator's indicators on this stock, and what the last study found."""
+        from .. import indicators as ind
+
+        chosen = self._indicator_set()
+        out: dict[str, Any] = {"your_indicators": ind.for_symbol(chosen, bars)}
+        if self.memory is None:
+            return out
+        labels = {c.label() for c in chosen}
+        found = []
+        for r in self.memory.indicator_studies():
+            if r.get("indicator") not in labels:
+                continue
+            h = r.get("h20") or {}
+            here = next((b for b in r.get("best_symbols", []) + r.get("worst_symbols", [])
+                         if b["symbol"] == symbol), None)
+            found.append({"indicator": r["indicator"], "verdict": r["verdict"],
+                          "buy_signals": h.get("buy_signals"),
+                          "buy_avg_20d_pct": h.get("buy_avg_pct"),
+                          "market_avg_20d_pct": h.get("market_avg_pct"),
+                          "on_this_stock": here, "studied": str(r.get("studied", ""))[:10]})
+        if found:
+            out["indicator_study"] = found
+        return out
+
+    def study_indicators(self, symbol: str) -> dict[str, Any]:
+        """What followed the operator's indicators' signals on one stock, over ~3 years."""
+        from .. import indicators as ind
+
+        symbol = _symbol(symbol)
+        bars = self._bars(symbol, 1100)
+        if len(bars) < 120:
+            return {"symbol": symbol, "error": f"only {len(bars)} daily bars available"}
+        chosen = self._indicator_set()
+        if not chosen:
+            return {"error": "no indicators chosen yet (Training tab)"}
+        results = []
+        for c in chosen:
+            r = ind.study(c, {symbol: bars})
+            results.append({"indicator": r["indicator"], "verdict": r["verdict"],
+                            "h5": r["h5"], "h20": r["h20"]})
+        return {"symbol": symbol, "sessions": len(bars), "results": results,
+                "note": "one stock: small samples; before fees; history, not a promise"}
 
     def scan_market(self, top_n: int = 5, budget_egp: Optional[float] = None) -> dict[str, Any]:
         if self.scanner is None:
@@ -371,8 +422,9 @@ SCHEMAS: list[dict[str, Any]] = [
         "winners and losers, and holdings near or below their stop."),
     _fn("analyze_stock", "Technical picture of one EGX stock from daily prices: returns, "
         "moving averages, 52-week range, RSI, the four factors (trend, momentum, volume, "
-        "volatility), stop and targets for the operator's style, the operator's notes on it, "
-        "and whether it is held.",
+        "volatility), stop and targets for the operator's style, the operator's own "
+        "indicators (readings and latest signals) with what the EGX study found about them, "
+        "the operator's notes on it, and whether it is held.",
         {"symbol": {"type": "string", "description": "EGX ticker, e.g. COMI or COMI.CA"}},
         ["symbol"]),
     _fn("scan_market", "Rank the EGX stocks in the scan list by the four factors. Use for "
@@ -384,6 +436,10 @@ SCHEMAS: list[dict[str, Any]] = [
         {"query": {"type": "string", "description": "company name or ticker, Arabic or "
                    "English"},
          "limit": {"type": "integer"}}, ["query"]),
+    _fn("study_indicators", "Backtest the operator's own indicators on one stock over about "
+        "three years: after each buy/sell signal, the average move 5 and 20 sessions later "
+        "against the stock's usual move, and a verdict (helped, misled, no edge, too few).",
+        {"symbol": {"type": "string"}}, ["symbol"]),
     _fn("market_overview", "EGX30 index trend, the news brake's state, and the USD/EGP rate."),
     _fn("average_calculator", "Shares to buy at a price to bring an average cost to a target.",
         {"quantity": {"type": "number"}, "average": {"type": "number"},

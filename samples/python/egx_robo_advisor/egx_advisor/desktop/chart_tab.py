@@ -34,7 +34,7 @@ if (!window.TradingView) {{
 }} else new TradingView.widget({{
   container_id: "tv", autosize: true, symbol: {symbol}, interval: "D",
   timezone: "Africa/Cairo", theme: "{theme}", style: "1", locale: "{locale}",
-  allow_symbol_change: true, studies: ["MASimple@tv-basicstudies", "RSI@tv-basicstudies"]
+  allow_symbol_change: true, studies: {studies}
 }});
 </script></body></html>"""
 
@@ -56,10 +56,22 @@ def _js_string(text: str) -> str:
     return json.dumps(text).replace("<", "\\u003c")
 
 
-def widget_html(symbol: str, theme_name: str = "dark", lang: str = "ar") -> str:
+#: The chart's indicators until the operator saves their own (Training tab).
+DEFAULT_STUDIES = ("MASimple@tv-basicstudies", "RSI@tv-basicstudies")
+
+
+def _js_string_list(items: list[str]) -> str:
+    return "[" + ", ".join(_js_string(i) for i in items) + "]"
+
+
+def widget_html(symbol: str, theme_name: str = "dark", lang: str = "ar",
+                studies: Optional[list[str]] = None) -> str:
     name = theme_name if theme_name in theme.THEMES else theme.DEFAULT
     t = theme.tokens(name)
+    studies = [s for s in (DEFAULT_STUDIES if studies is None else studies)
+               if isinstance(s, str) and s.endswith("@tv-basicstudies")]
     return WIDGET_HTML.format(
+        studies=_js_string_list(studies),
         symbol=_js_string(tradingview_symbol(symbol)), theme=name, bg=t["chart_bg"],
         muted=t["muted"], locale="ar_AE" if lang == "ar" else "en",
         dir="rtl" if lang == "ar" else "ltr", failed=_js_string(tr("chart.failed", lang=lang)),
@@ -84,8 +96,11 @@ def chart_symbols() -> list[str]:
 
 
 class ChartTab(QWidget):
-    def __init__(self, parent: Optional[QWidget] = None) -> None:
+    def __init__(self, parent: Optional[QWidget] = None,
+                 studies: Optional[list[str]] = None) -> None:
         super().__init__(parent)
+        #: TradingView studies drawn on the chart (the operator's indicators).
+        self.studies = studies
         self.symbol = QComboBox()
         self.symbol.setEditable(True)
         # Not currentTextChanged: that fires on every keystroke of a typed symbol.
@@ -145,8 +160,15 @@ class ChartTab(QWidget):
         symbol = symbol.strip()
         if symbol:
             self._shown = symbol
-            self.view.setHtml(widget_html(symbol, theme.current(), i18n.current()),
+            self.view.setHtml(widget_html(symbol, theme.current(), i18n.current(),
+                                          self.studies),
                               QUrl("https://egx-robo-advisor.invalid/chart"))
+
+    def set_studies(self, studies: list[str]) -> None:
+        """The operator saved their indicators: draw those."""
+        self.studies = list(studies)
+        if self._shown:
+            self._show(self._shown)
 
     def set_theme(self, _name: str) -> None:
         if self._shown:

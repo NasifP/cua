@@ -87,6 +87,7 @@ from .popout import PopOut
 from .settings_tab import SettingsTab
 from .sources_tab import SourcesTab
 from .ticket_panel import TicketPanel
+from .training_tab import TrainingTab
 
 DEFAULT_THNDR_URL = "https://x.thndr.app"
 BROWSER_PROFILE_DIR = PROJECT_ROOT / "state" / "browser"
@@ -223,15 +224,24 @@ class MainWindow(QMainWindow):
                                  before_move=self._close_thndr_view,
                                  after_move=self._open_thndr_view,
                                  on_reload=lambda: self.thndr.reload())
-        self.chart_tab = ChartTab()
+        from .. import indicators
         from ..marketdata.archive import PriceArchive, archive_path_for
         from ..memory import Memory, memory_path_for
 
         self.memory = Memory(memory_path_for(bus_path()))
         self.archive = PriceArchive(archive_path_for(bus_path()))
+        saved = self.memory.ui_get(Memory.INDICATORS_KEY)
+        self.chart_tab = ChartTab(studies=indicators.tv_studies(indicators.load_set(saved))
+                                  if saved else None)
         self.lab_tab = LabTab(memory=self.memory)
         self.sources_tab = SourcesTab()
         self.memory_tab = MemoryTab(self.memory, self.archive)
+        self.training_tab = TrainingTab(
+            self.memory, page=lambda: self.thndr.page(), archive=self.archive,
+            on_apply=self.chart_tab.set_studies, on_taught=self.ticket_panel.reload_ticket,
+            # Teaching a box needs the Thndr X page in view.
+            on_teach_start=lambda: self.open_page(self.thndr_slot))
+        self.ticket_panel.is_teaching = lambda: self.training_tab.teach_box.picking is not None
 
         pages = (
             (self.dashboard, "dashboard", "page.dashboard"),
@@ -240,6 +250,7 @@ class MainWindow(QMainWindow):
             (self.lab_tab, "lab", "page.lab"),
             (self.sources_tab, "calendar", "page.sources"),
             (self.memory_tab, "memory", "page.memory"),
+            (self.training_tab, "training", "page.training"),
             (self.settings_tab, "settings", "page.settings"),
         )
         self.pages = QStackedWidget()
@@ -546,7 +557,7 @@ class MainWindow(QMainWindow):
         theme.apply(QApplication.instance(), theme.current())  # flips the layout direction
         self._retranslate_shell()
         for page in (self.chart_tab, self.lab_tab, self.sources_tab, self.settings_tab,
-                     self.ticket_panel, self.thndr_slot, self.memory_tab):
+                     self.ticket_panel, self.thndr_slot, self.memory_tab, self.training_tab):
             page.retranslate()
         self._sync_dashboard_theme(run_now=True)
         self._remember({"EGX_LANG": lang})

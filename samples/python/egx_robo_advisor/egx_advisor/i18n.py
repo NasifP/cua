@@ -63,6 +63,11 @@ STRINGS: dict[str, tuple[str, str]] = {
                        "panel fills a buy ticket when you press Fill, and you press Buy.",
                        "حسابك في متصفح البرنامج. البوت بيقراه بس؛ واللوحة بتملى أمر الشراء "
                        "لما تضغط املأ، وانت اللي بتضغط شراء."),
+    "page.training": ("Training", "التدريب"),
+    "page.training.sub": ("Teach the app your indicators and the Thndr X ticket boxes; it "
+                          "studies what your indicators did on the EGX",
+                          "علّم البرنامج مؤشراتك وخانات أمر Thndr X، وهو يذاكر المؤشرات "
+                          "دي عملت إيه في البورصة المصرية"),
     "page.memory": ("Memory", "الذاكرة"),
     "page.memory.sub": ("What the app remembers: your notes, conversations, lab runs and how "
                         "its picks did. All of it stays on this computer.",
@@ -234,6 +239,99 @@ STRINGS: dict[str, tuple[str, str]] = {
                      "1. في Thndr افتح أمر شراء السهم واختار أمر بسعر محدد (Limit).\n"
                      "2. اختار الأمر من القائمة تحت واضغط املأ.\n"
                      "3. راجع الأرقام في Thndr، وبعدين اضغط شراء هناك بنفسك."),
+    "ticket.taught_all": ("Ticket boxes taught.", "خانات الأمر متعلّمة."),
+    "ticket.teach_where": ("Teach the quantity and price boxes first: Training tab -> Ticket "
+                           "boxes.",
+                           "علّم خانة الكمية وخانة السعر الأول: تبويب التدريب ← خانات أمر "
+                           "الشراء."),
+    "train.ticket_intro": ("Open any stock's buy ticket in the Thndr X window, press Teach "
+                           "for a box here, then click that box in the ticket. The click only "
+                           "selects it; Thndr X never receives it.",
+                           "افتح أمر شراء أي سهم في نافذة Thndr X، اضغط «علّمها» للخانة هنا، "
+                           "وبعدين دوس على الخانة دي في الأمر. الضغطة بتحددها بس، وThndr X "
+                           "مابيستلمهاش."),
+    "train.indicators": ("Indicators", "المؤشرات"),
+    "train.ticket": ("Buy ticket boxes", "خانات أمر الشراء"),
+    "train.hint": ("Tick the indicators you use and set them (double-click the settings). "
+                   "Save puts them on the Chart tab and in the analyst's reviews. Study "
+                   "checks what followed each one's signals on every stock in the scan list, "
+                   "over about three years.",
+                   "علّم على المؤشرات اللي بتستخدمها وظبط إعداداتها (دبل كليك على "
+                   "الإعدادات). «احفظ» بيحطها على الشارت وفي تحليل المحلل. «ذاكر» بيشوف "
+                   "حصل إيه بعد إشارات كل مؤشر على كل سهم في قائمة الفرص، في حوالي 3 سنين."),
+    "train.col_indicator": ("Indicator", "المؤشر"),
+    "train.col_settings": ("Settings", "الإعدادات"),
+    "train.col_names": ("Meaning", "معناها"),
+    "train.save": ("Save and draw on the chart", "احفظ وارسم على الشارت"),
+    "train.study": ("Study on the EGX", "ذاكر على البورصة"),
+    "train.reset": ("Defaults", "الافتراضي"),
+    "train.results": ("What the study found (buy signals, 20 sessions later)",
+                      "نتيجة المذاكرة (إشارات الشراء، بعد 20 جلسة)"),
+    "train.col_signals": ("Signals", "الإشارات"),
+    "train.col_hit": ("Rose", "طلع"),
+    "train.col_avg": ("Average", "المتوسط"),
+    "train.col_market": ("Market", "السوق"),
+    "train.col_verdict": ("Verdict", "الحكم"),
+    "train.col_best": ("Worked best on", "اشتغل أحسن على"),
+    "train.results_hint": ("Average: the stock's move from the next session's open to 20 "
+                           "sessions later, after each buy signal. Market: the same move on "
+                           "any day. Helped means at least {edge}% better than the market "
+                           "and rose more often; fewer than {n} signals is too few to say. "
+                           "Before fees; history, not a promise.",
+                           "المتوسط: حركة السهم من افتتاح الجلسة اللي بعد الإشارة لحد 20 جلسة "
+                           "بعدها. السوق: نفس الحركة في أي يوم. «ساعد» يعني أحسن من السوق "
+                           "بـ {edge}% على الأقل وطلع أكتر؛ أقل من {n} إشارة يبقى قليل على "
+                           "الحكم. قبل العمولات؛ ده تاريخ مش وعد."),
+    "train.verdict.helped": ("Helped", "ساعد"),
+    "train.verdict.misled": ("Misled", "ضلّل"),
+    "train.verdict.no_edge": ("No edge", "مافرقش"),
+    "train.verdict.too_few": ("Too few signals", "إشارات قليلة"),
+    "train.studied_on": ("Studied on {day}", "اتذاكر يوم {day}"),
+    "train.saved": ("Saved: {n} indicators on. The chart and the analyst use them now.",
+                    "اتحفظ: {n} مؤشرات شغّالة. الشارت والمحلل بيستخدموها دلوقتي."),
+    "train.reset_done": ("Back to the defaults. Press Save to keep them.",
+                         "رجعت للافتراضي. اضغط احفظ عشان تتسجل."),
+    "train.none_on": ("Tick at least one indicator.", "علّم على مؤشر واحد على الأقل."),
+    "train.bad_count": ("{indicator}: write {n} numbers, separated by commas.",
+                        "{indicator}: اكتب {n} أرقام بينهم فاصلة."),
+    "train.studying": ("Studying: fetching three years of prices for the scan list. This can "
+                       "take a minute the first time.",
+                       "بيذاكر: بيجيب أسعار 3 سنين لقائمة الفرص. أول مرة ممكن تاخد دقيقة."),
+    "train.no_data": ("no price history could be fetched", "مقدرناش نجيب تاريخ الأسعار"),
+    "train.studied": ("Studied {n} indicators on {symbols} stocks: {helped} helped.",
+                      "اتذاكر {n} مؤشرات على {symbols} سهم: {helped} منهم ساعد."),
+    "ind.sma": ("Moving average", "المتوسط المتحرك"),
+    "ind.sma.tip": ("Buy when the price closes above the average, sell when below.",
+                    "شراء لما السعر يقفل فوق المتوسط، بيع لما يقفل تحته."),
+    "ind.ema_cross": ("Two averages crossing", "تقاطع متوسطين"),
+    "ind.ema_cross.tip": ("Buy when the fast average crosses above the slow one.",
+                          "شراء لما المتوسط السريع يعدّي فوق البطيء."),
+    "ind.rsi": ("RSI", "مؤشر القوة النسبية RSI"),
+    "ind.rsi.tip": ("Buy when it rises back through the low line, sell when it falls back "
+                    "through the high line.",
+                    "شراء لما يطلع تاني فوق الخط الواطي، بيع لما ينزل تحت الخط العالي."),
+    "ind.macd": ("MACD", "الماكد MACD"),
+    "ind.macd.tip": ("Buy when MACD crosses above its signal line.",
+                     "شراء لما الماكد يعدّي فوق خط الإشارة."),
+    "ind.bollinger": ("Bollinger bands", "بولينجر باندز"),
+    "ind.bollinger.tip": ("Buy when the price comes back inside from below the lower band.",
+                          "شراء لما السعر يرجع جوه من تحت الحد السفلي."),
+    "ind.stochastic": ("Stochastic", "الاستوكاستيك"),
+    "ind.stochastic.tip": ("Buy when %K crosses above %D below the low line.",
+                           "شراء لما %K يعدّي فوق %D تحت الخط الواطي."),
+    "ind.volume": ("Volume spike", "قفزة في أحجام التداول"),
+    "ind.volume.tip": ("A day with volume well above its average: buy if the price rose.",
+                       "يوم حجم تداوله أعلى بكتير من متوسطه: شراء لو السعر طلع."),
+    "ind.param.length": ("length", "المدة"),
+    "ind.param.fast": ("fast", "السريع"),
+    "ind.param.slow": ("slow", "البطيء"),
+    "ind.param.signal": ("signal", "الإشارة"),
+    "ind.param.low": ("low line", "الخط الواطي"),
+    "ind.param.high": ("high line", "الخط العالي"),
+    "ind.param.width": ("width", "العرض"),
+    "ind.param.k": ("%K", "%K"),
+    "ind.param.d": ("%D", "%D"),
+    "ind.param.ratio": ("times the average", "مرات المتوسط"),
     "ticket.teach_box": ("Ticket boxes", "خانات الأمر"),
     "ticket.field.quantity": ("quantity box", "خانة الكمية"),
     "ticket.field.price": ("price box", "خانة السعر"),
