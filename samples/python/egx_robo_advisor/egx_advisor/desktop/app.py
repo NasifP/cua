@@ -83,11 +83,23 @@ from .chart_tab import ChartTab
 from .lab_tab import LabTab
 from .memory_tab import MemoryTab
 from .nav_page import QtNavPage
+from .notifications import NotificationManager
+from .omnibar import Omnibar, QuickView
 from .popout import PopOut
+from .services import Services
 from .settings_tab import SettingsTab
 from .sources_tab import SourcesTab
 from .ticket_panel import TicketPanel
+from .today_tab import TodayTab
 from .training_tab import TrainingTab
+
+
+def _bus() -> Any:
+    """A StateBus for the calling thread; callers close it (`with`)."""
+    from ..bus import StateBus
+
+    return StateBus(bus_path())
+
 
 DEFAULT_THNDR_URL = "https://x.thndr.app"
 BROWSER_PROFILE_DIR = PROJECT_ROOT / "state" / "browser"
@@ -231,8 +243,18 @@ class MainWindow(QMainWindow):
         self.memory = Memory(memory_path_for(bus_path()))
         self.archive = PriceArchive(archive_path_for(bus_path()))
         saved = self.memory.ui_get(Memory.INDICATORS_KEY)
+        # What the Sprint 4 widgets call off the UI thread (desktop/services.py).
+        self.services = Services(
+            env=env, dashboard_port=dashboard_port, memory=self.memory, archive=self.archive,
+            # Read late: the browse channel starts with the child processes.
+            browse_env=lambda: (getattr(self, "browse_server", None).env()
+                                if getattr(self, "browse_server", None) else {}))
         self.chart_tab = ChartTab(studies=indicators.tv_studies(indicators.load_set(saved))
-                                  if saved else None)
+                                  if saved else None, marks_loader=self._load_marks)
+        self.today_tab = TodayTab(self.services,
+                                  on_opened=lambda: self.open_page(self.thndr_slot))
+        self.quick_view = QuickView(self.services, studies=lambda: self.chart_tab.studies,
+                                    go_thndr=lambda: self.open_page(self.thndr_slot))
         self.lab_tab = LabTab(memory=self.memory)
         self.sources_tab = SourcesTab()
         self.memory_tab = MemoryTab(self.memory, self.archive)
@@ -244,6 +266,8 @@ class MainWindow(QMainWindow):
         self.ticket_panel.is_teaching = lambda: self.training_tab.teach_box.picking is not None
 
         pages = (
+            (self.today_tab, "today", "page.today"),
+            (self.quick_view, "search", "page.quick"),
             (self.dashboard, "dashboard", "page.dashboard"),
             (self.thndr_slot, "browser", "page.thndr"),
             (self.chart_tab, "chart", "page.chart"),
@@ -373,6 +397,12 @@ class MainWindow(QMainWindow):
         head.setContentsMargins(24, 16, 24, 14)
         head.setSpacing(12)
         head.addLayout(titles, 1)
+        # The Omnibar: on every page, Ctrl+K from anywhere.
+        self.omnibar = Omnibar()
+        self.omnibar.bind_shortcut(self)
+        self.omnibar.set_tickers(self._known_tickers())
+        self.omnibar.searched.connect(self.quick_look)
+        head.addWidget(self.omnibar, 1)
         head.addWidget(self.state_pill)
         head.addWidget(self.phase_pill)
         head.addSpacing(8)
@@ -396,7 +426,8 @@ class MainWindow(QMainWindow):
         self._paint_icons()
         self._retranslate_shell()
 
-        self.show_page(self.dashboard)
+        # The day's cards first; START and the chat stay on the Dashboard page.
+        self.show_page(self.today_tab)
         if notice:
             # Something needs setting before the bot can read anything: open there.
             self.show_page(self.settings_tab)
@@ -413,6 +444,35 @@ class MainWindow(QMainWindow):
         self._timer.timeout.connect(self._tick)
         self._timer.start(1000)
 
+        # Stops, targets and the news brake, as Windows notifications.
+        self.notifications = NotificationManager(
+            open_bus=lambda: _bus(), icon=theme.icon("today"), on_clicked=self._from_tray,
+            parent=self).start()
+
+    # ------------------------------------------------------------ Sprint 4
+
+    @Slot(str)
+    def quick_look(self, ticker: str) -> None:
+        """The Omnibar's Enter: Quick View fills itself; the Chart tab follows."""
+        self.show_page(self.quick_view)
+        self.quick_view.show_ticker(ticker)
+        self.chart_tab.show_symbol(ticker + ".CA")
+
+    def _from_tray(self) -> None:
+        self.showNormal()
+        self.raise_()
+        self.activateWindow()
+        self.show_page(self.today_tab)
+
+    def _load_marks(self, symbol: str) -> Any:
+        """The Chart tab's Signals view (chart_marks.py). Off the UI thread."""
+        from .. import levels
+        from ..analyst.tools import yahoo_history
+        from .chart_tab import load_marks
+
+        return load_marks(symbol, history=yahoo_history(self.archive), memory=self.memory,
+                          open_bus=_bus, style=levels.style_from(self.env))
+
     # ------------------------------------------------------------ Thndr X view
 
     def _new_thndr_view(self, url: QUrl) -> QWebEngineView:
@@ -427,8 +487,8 @@ class MainWindow(QMainWindow):
         return view
 
     def _known_tickers(self) -> list[str]:
-        from ..scanner import load_universe
         from ..paths import config_path
+        from ..scanner import load_universe
 
         tickers = set()
         try:
@@ -557,8 +617,10 @@ class MainWindow(QMainWindow):
         theme.apply(QApplication.instance(), theme.current())  # flips the layout direction
         self._retranslate_shell()
         for page in (self.chart_tab, self.lab_tab, self.sources_tab, self.settings_tab,
-                     self.ticket_panel, self.thndr_slot, self.memory_tab, self.training_tab):
+                     self.ticket_panel, self.thndr_slot, self.memory_tab, self.training_tab,
+                     self.today_tab, self.quick_view, self.omnibar):
             page.retranslate()
+        self.today_tab.refresh()  # the cards' words
         self._sync_dashboard_theme(run_now=True)
         self._remember({"EGX_LANG": lang})
 
@@ -713,6 +775,10 @@ class MainWindow(QMainWindow):
 
     def closeEvent(self, event: Any) -> None:  # noqa: N802 - Qt API
         self._timer.stop()
+        self.notifications.stop()
+        from .workers import shutdown
+
+        shutdown()
         if self.launcher is not None:
             self.launcher.stop_all()  # halts the bus first
         else:
@@ -728,6 +794,7 @@ class MainWindow(QMainWindow):
         self.thndr.setPage(QWebEnginePage(self.thndr))
         page.deleteLater()
         self.chart_tab.release()
+        self.quick_view.release()
         super().closeEvent(event)
 
 

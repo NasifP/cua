@@ -8,17 +8,69 @@ the Thndr X session.
 
 from __future__ import annotations
 
+import html as _html
 import json
-from typing import Optional
+from typing import Any, Callable, Optional
 
 from PySide6.QtCore import QUrl
 from PySide6.QtWebEngineCore import QWebEnginePage, QWebEngineProfile
 from PySide6.QtWebEngineWidgets import QWebEngineView
 from PySide6.QtWidgets import QComboBox, QHBoxLayout, QLabel, QPushButton, QVBoxLayout, QWidget
 
-from .. import i18n
+from .. import chart_marks, i18n
 from ..i18n import tr
 from . import theme
+
+
+def _placeholder_html(text: str) -> str:
+    t = theme.tokens()
+    return (f'<html><body style="margin:0;background:{t["chart_bg"]};color:{t["muted"]};'
+            f'font:15px system-ui,sans-serif"><p dir="auto" style="padding:28px">'
+            f"{_html.escape(text)}</p></body></html>")
+
+
+def load_marks(symbol: str, *, history: Callable[..., Any], memory: Any = None,
+               open_bus: Optional[Callable[[], Any]] = None, style: str = "swing"
+               ) -> tuple[list[Any], list[dict[str, Any]], list[dict[str, Any]], str]:
+    """(bars, marks, price lines, legend) for the Signals view. Off the UI thread.
+
+    Bars up to the previous session; the operator's indicators and past picks
+    from memory; stop/targets and the team's view from the bus.
+    """
+    from datetime import date
+
+    from .. import indicators, levels
+    from ..browse import ticker_of
+
+    ticker = ticker_of(symbol)
+    if not ticker:
+        return [], [], [], ""
+    yahoo = ticker + ".CA"
+    today = date.today()
+    rows = sorted((r for r in (history([yahoo], 420).get(yahoo) or ()) if r.day < today),
+                  key=lambda r: r.day)
+    choices, picks = indicators.default_set(), []
+    if memory is not None:
+        saved = memory.ui_get(memory.INDICATORS_KEY)
+        choices = [c for c in indicators.load_set(saved) if c.on] if saved else choices
+        picks = memory.picks()
+    view, lv, risk_off = None, None, False
+    if open_bus is not None:
+        with open_bus() as bus:
+            view = ((bus.get("team_views") or {}).get("payload") or {}).get(ticker)
+            snap = (bus.get("levels") or {}).get("payload") or {}
+            lv = (snap.get("levels") or {}).get(yahoo)
+            risk_off = bool((snap.get("macro") or {}).get("MACRO_RISK_OFF"))
+    if lv is None and rows:
+        computed = levels.compute(yahoo, rows, float(rows[-1].close), style, None, risk_off)
+        lv = computed.to_json() if computed else None
+    marks, lines = chart_marks.build(ticker, rows, choices=choices, picks=picks, levels=lv,
+                                     view=view)
+    legend = tr("chart.legend")
+    if view and view.get("decision"):
+        legend += " · " + tr("chart.legend_team", decision=view["decision"],
+                             day=view.get("day", ""))
+    return rows, marks, lines, legend
 
 WIDGET_HTML = """<!doctype html><html><head><meta charset="utf-8">
 <style>html,body,#tv{{margin:0;height:100%;width:100%;background:{bg};color:{muted};
@@ -95,12 +147,29 @@ def chart_symbols() -> list[str]:
     return held + [s for s in universe if s not in held]
 
 
+#: marks_loader(symbol) -> (bars, marks, price lines, legend); runs off the UI thread.
+MarksLoader = Callable[[str], tuple[list[Any], list[dict[str, Any]], list[dict[str, Any]], str]]
+
+
 class ChartTab(QWidget):
     def __init__(self, parent: Optional[QWidget] = None,
-                 studies: Optional[list[str]] = None) -> None:
+                 studies: Optional[list[str]] = None,
+                 marks_loader: Optional[MarksLoader] = None) -> None:
         super().__init__(parent)
         #: TradingView studies drawn on the chart (the operator's indicators).
         self.studies = studies
+        #: Builds the Signals view (chart_marks.py); None hides that view.
+        self.marks_loader = marks_loader
+        self.mode = "tv"
+        self._request = 0
+        self.tv_button = QPushButton()
+        self.signals_button = QPushButton()
+        for button, mode in ((self.tv_button, "tv"), (self.signals_button, "signals")):
+            button.setCheckable(True)
+            button.setProperty("variant", "ghost")
+            button.clicked.connect(lambda _=False, m=mode: self.set_mode(m))
+        self.tv_button.setChecked(True)
+        self.signals_button.setVisible(marks_loader is not None)
         self.symbol = QComboBox()
         self.symbol.setEditable(True)
         # Not currentTextChanged: that fires on every keystroke of a typed symbol.
@@ -116,6 +185,8 @@ class ChartTab(QWidget):
         bar.addWidget(self.symbol)
         bar.addWidget(self.refresh)
         bar.addStretch(1)
+        bar.addWidget(self.tv_button)
+        bar.addWidget(self.signals_button)
 
         # Off-the-record profile: no cookies shared with the Thndr X tab.
         self.profile = QWebEngineProfile(self)
@@ -136,6 +207,9 @@ class ChartTab(QWidget):
         self.symbol.setToolTip(tr("chart.symbol_tip"))
         self.refresh.setText(tr("chart.refresh"))
         self.refresh.setToolTip(tr("chart.refresh_tip"))
+        self.tv_button.setText(tr("chart.mode.tv"))
+        self.signals_button.setText(tr("chart.mode.signals"))
+        self.signals_button.setToolTip(tr("chart.mode.signals_tip"))
         if self._shown:
             self._show(self._shown)
 
@@ -156,13 +230,56 @@ class ChartTab(QWidget):
         if not self._shown:
             self._show(self.symbol.currentText())
 
+    def show_symbol(self, symbol: str) -> None:
+        """Show `symbol` (the Omnibar and the cards call this)."""
+        self.symbol.setCurrentText(symbol)
+        self._show(symbol)
+
+    def set_mode(self, mode: str) -> None:
+        """"tv": TradingView's widget; "signals": our bars with buy/sell marks."""
+        self.mode = mode if mode == "tv" or self.marks_loader is not None else "tv"
+        self.tv_button.setChecked(self.mode == "tv")
+        self.signals_button.setChecked(self.mode == "signals")
+        if self._shown:
+            self._show(self._shown)
+
     def _show(self, symbol: str) -> None:
         symbol = symbol.strip()
-        if symbol:
-            self._shown = symbol
-            self.view.setHtml(widget_html(symbol, theme.current(), i18n.current(),
-                                          self.studies),
-                              QUrl("https://egx-robo-advisor.invalid/chart"))
+        if not symbol:
+            return
+        self._shown = symbol
+        if self.mode == "signals" and self.marks_loader is not None:
+            self._show_signals(symbol)
+            return
+        self.view.setHtml(widget_html(symbol, theme.current(), i18n.current(), self.studies),
+                          QUrl("https://egx-robo-advisor.invalid/chart"))
+
+    def _show_signals(self, symbol: str) -> None:
+        """Bars and marks built off the UI thread; the page is set on it."""
+        from .workers import run_async
+
+        self._request += 1
+        request, loader = self._request, self.marks_loader
+        self.view.setHtml(_placeholder_html(tr("chart.signals_loading")))
+
+        def done(result: Any, error: Optional[BaseException]) -> None:
+            if request != self._request or self.mode != "signals":
+                return  # a newer symbol or the other view: drop this one
+            if error is not None or not result or not result[0]:
+                why = f"{type(error).__name__}: {error}" if error else tr("chart.no_bars")
+                self.view.setHtml(_placeholder_html(why))
+                return
+            bars, marks, lines, legend = result
+            self.view.setHtml(chart_marks.page_html(
+                bars, marks, lines, dark=theme.current() == "dark", legend=legend,
+                failed=tr("chart.failed")), QUrl("https://egx-robo-advisor.invalid/signals"))
+
+        run_async(lambda: loader(symbol), done)
+
+    def update_marks(self, marks: list[dict[str, Any]], lines: list[dict[str, Any]]) -> None:
+        """Replace the marks on the open Signals page without reloading it (UI thread)."""
+        if self.mode == "signals":
+            self.view.page().runJavaScript(chart_marks.set_marks_script(marks, lines))
 
     def set_studies(self, studies: list[str]) -> None:
         """The operator saved their indicators: draw those."""

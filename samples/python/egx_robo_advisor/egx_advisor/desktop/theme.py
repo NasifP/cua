@@ -200,6 +200,22 @@ QTabBar::tab {{
 QTabBar::tab:selected {{ color: {t['text']}; border-bottom-color: {t['accent']}; }}
 QTabBar::tab:hover {{ color: {t['text']}; }}
 
+/* ---- Today cards, Omnibar, Quick View ---- */
+QFrame#ActionCard {{
+    background: {t['surface']}; border: 1px solid {t['border']}; border-radius: 14px;
+}}
+QFrame#ActionCard:hover {{ border-color: {t['accent']}; }}
+QLabel#CardTicker {{ font-size: 15pt; font-weight: 800; }}
+QLabel#CardSource {{ color: {t['faint']}; font-size: 8.5pt; }}
+QLabel#CardReason {{ color: {t['muted']}; }}
+QLineEdit#Omnibar {{
+    background: {t['surface']}; border: 1px solid {t['border']}; border-radius: 18px;
+    padding: 8px 16px; font-size: 11pt;
+}}
+QLineEdit#Omnibar:focus {{ border: 1px solid {t['accent']}; }}
+QLabel#QuickTitle {{ font-size: 15pt; font-weight: 800; }}
+QLabel#SectionTitle {{ color: {t['muted']}; font-weight: 700; font-size: 9.5pt; }}
+
 /* ---- scrollbars ---- */
 QScrollBar:vertical {{ background: transparent; width: 10px; margin: 2px; }}
 QScrollBar:horizontal {{ background: transparent; height: 10px; margin: 2px; }}
@@ -286,6 +302,9 @@ _ICONS = {
     "training": '<path d="M2 9l10-5 10 5-10 5z"/><path d="M6 11v5c3.5 2.5 8.5 2.5 12 0v-5"/>'
                 '<path d="M22 9v6"/>',
     "power": '<path d="M12 3v9"/><path d="M6.3 6.3a8 8 0 1 0 11.4 0"/>',
+    "today": '<rect x="4" y="3" width="16" height="18" rx="2"/><path d="M8 8l1.5 1.5L12 7'
+             'M14 8h2M8 13l1.5 1.5L12 12M14 13h2M8 18h8"/>',
+    "search": '<circle cx="11" cy="11" r="7"/><path d="M20 20l-4-4"/>',
     "sun": '<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 '
            '17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/>',
     "moon": '<path d="M20 14.5A8 8 0 1 1 9.5 4a6.5 6.5 0 0 0 10.5 10.5z"/>',
