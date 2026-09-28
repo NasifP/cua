@@ -115,6 +115,11 @@ BEHAVIOUR_FIELDS: tuple[Field, ...] = (
     Field("EGX_BROWSER_SOFTWARE", "Software drawing for Thndr X", "bool",
           "Draws the built-in browser without the graphics card. Fixes a frozen Thndr X "
           "on some PCs. Restart the app after changing it.", default="true"),
+    Field("EGX_ADTV_PCT", "Liquidity limit per buy (%)", "float",
+          "The most one buy may be, as a percent of the stock's average daily traded volume "
+          "over 20 sessions (0.5 to 10). Caps prepared buys, scan share counts and the "
+          "average calculator whatever the cash, so a position can be left quickly.",
+          default="3"),
     Field("EGX_COMMITTEE", "Analyst team (4 models)", "bool",
           "Each analysis question goes to three specialists at once (technical, news, risk), "
           "then the analyst model decides from their reports. A buy can only be prepared when "

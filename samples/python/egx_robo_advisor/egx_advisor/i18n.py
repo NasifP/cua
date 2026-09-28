@@ -563,6 +563,14 @@ STRINGS: dict[str, tuple[str, str]] = {
                    "الجداد). اختار موديل تاني، زي gemini/gemini-2.5-flash."),
     "model.budget": ("Not answered, to stay within today's model budget: {reason}.",
                      "مجاوبتش عشان مانعدّيش ميزانية الموديلات النهارده: {reason}."),
+    "field.EGX_ADTV_PCT": ("Liquidity limit per buy (%)", "حد السيولة للصفقة (%)"),
+    "field.EGX_ADTV_PCT.help": (
+        "The most one buy may be, as a percent of the stock's average daily traded volume over "
+        "20 sessions (0.5 to 10). Caps prepared buys, scan share counts and the average "
+        "calculator whatever the cash, so a position can be left quickly.",
+        "أقصى كمية للصفقة الواحدة كنسبة من متوسط حجم التداول اليومي للسهم في آخر 20 جلسة (من "
+        "0.5 لـ 10). بيحدد أوامر الشراء المجهزة وعدد الأسهم في المسح وحاسبة المتوسط مهما كان "
+        "الكاش، عشان تقدر تخرج من المركز بسرعة."),
     "field.EGX_COMMITTEE": ("Analyst team (4 models)", "فريق المحللين (4 موديلات)"),
     "field.EGX_COMMITTEE.help": (
         "Each analysis question goes to three specialists at once (technical, news, risk) on "

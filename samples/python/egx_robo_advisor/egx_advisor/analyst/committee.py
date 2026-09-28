@@ -81,7 +81,8 @@ TECH_PROMPT = (
     "أنت خبير تحليل فني متخصص في البورصة المصرية (EGX). مهمتك هي تحليل السهم المطلوب بناءً "
     "على المؤشرات الفنية ونتائج 'مذاكرة البورصة'. المطلوب منك: 1. تقييم الاتجاه العام. "
     "2. تقييم قوة الزخم. 3. تحديد مستويات الدعم والمقاومة الفنية. 4. إعطاء تقييم فني نهائي "
-    "(إيجابي، سلبي، محايد) مع ذكر الأسباب الفنية فقط.\n" + _COMMON + """
+    "(إيجابي، سلبي، محايد) مع ذكر الأسباب الفنية فقط. اعتمد على weighted_indicators: الأوزان "
+    "متظبطة على حالة السوق (regime)؛ قول الحالة، ولو فيه SECTOR MOMENTUM في المسح اذكره.\n" + _COMMON + """
 اختم تقريرك بسطر واحد بالظبط (بالإنجليزي كما هو):
 VERDICT: positive   أو   VERDICT: negative   أو   VERDICT: neutral
 """)
@@ -99,7 +100,8 @@ BRAKE: yes   (لو فيه أخبار سلبية تستدعي وقف الشراء
 RISK_PROMPT = (
     "أنت مدير مخاطر صارم. مهمتك حماية رأس المال. المطلوب منك: 1. فحص المحفظة (الكاش، تركز "
     "الأسهم، الربح والخسارة). 2. حساب حجم الصفقة المناسب (Position Sizing). 3. تحديد مستويات "
-    "وقف الخسارة بناءً على Chandelier والأهداف (ATR). 4. إعطاء توصية بالمخاطرة: (مسموح "
+    "وقف الخسارة بناءً على Chandelier والأهداف (ATR). الكمية ماتعديش حد السيولة (liquidity."
+    "max_shares في stock_levels) مهما كان الكاش كتير. 4. إعطاء توصية بالمخاطرة: (مسموح "
     "بالدخول، مسموح بكمية قليلة، مرفوض).\n" + _COMMON + """
 اختم تقريرك بسطرين بالظبط (بالإنجليزي كما هم):
 RISK: allow   (مسموح بالدخول)   أو   RISK: reduce   (بكمية قليلة)   أو   RISK: reject   (مرفوض)
@@ -201,7 +203,8 @@ class Gate:
     reasons: list[str] = field(default_factory=list)
 
 
-def decide(reports: Mapping[str, Report]) -> Gate:
+def decide(reports: Mapping[str, Report], macro: Optional[Any] = None) -> Gate:
+    """The buy gate. `macro` is market_state.MacroState; risk-off closes the gate."""
     reasons = []
     for member in MEMBERS:
         report = reports.get(member.key)
@@ -214,6 +217,8 @@ def decide(reports: Mapping[str, Report]) -> Gate:
         reasons.append("وكيل المخاطر رفض الدخول")
     if risk is not None and risk.risk == "reduce" and risk.max_egp is None:
         reasons.append("وكيل المخاطر طلب كمية قليلة من غير ما يحدد مبلغ")
+    if macro is not None and getattr(macro, "risk_off", False):
+        reasons.append("السوق في وضع MACRO_RISK_OFF: " + "; ".join(macro.reasons))
     max_egp = risk.max_egp if risk is not None else None
     return Gate(not reasons, max_egp if not reasons else None, reasons)
 
@@ -222,13 +227,26 @@ _LABELS = {"positive": "إيجابي", "negative": "سلبي", "neutral": "مح�
            "allow": "مسموح بالدخول", "reduce": "مسموح بكمية قليلة", "reject": "مرفوض"}
 
 
-def briefing(reports: Mapping[str, Report], gate: Gate) -> str:
+RISK_OFF_ADVICE = ("توصية تلقائية من مدير المخاطر (MACRO_RISK_OFF): زوّد الكاش وخفف "
+                   "المراكز (تخفيف المراكز)؛ وقف الخسارة اتشد (Chandelier أقرب) عشان "
+                   "يحمي رأس المال.")
+
+
+def briefing(reports: Mapping[str, Report], gate: Gate, macro: Optional[Any] = None,
+             sector_momentum: Optional[Mapping[str, Any]] = None) -> str:
     """The internal document the lead decides from."""
     parts = ["<briefing>", "تقارير فريق التحليل عن سؤال المستخدم."]
     for member in MEMBERS:
         r = reports.get(member.key) or Report(member.key, member.title, error="لم يُكتب")
         parts.append(f"\n## {member.title}")
         parts.append(r.text if r.text else f"(التقرير غير متاح: {r.error or 'فارغ'})")
+        if member.key == "risk" and macro is not None and getattr(macro, "risk_off", False):
+            parts.append(RISK_OFF_ADVICE)
+    if sector_momentum:
+        parts.append("\n## زخم القطاعات (من المسح، قرار الكود)")
+        parts.append(f"{sector_momentum['count']} من أفضل {sector_momentum['of']} فرص في قطاع "
+                     f"{sector_momentum['sector']} ({', '.join(sector_momentum['symbols'])}). "
+                     "قول ده للمستخدم: الفرص دي بتشيل نفس المخاطرة، ماتتركزش فيها كلها.")
     parts.append("\n## بوابة الشراء (قرار الكود، مش قابل للنقاش)")
     if gate.buy_allowed:
         cap = f"، بحد أقصى {gate.max_egp:,.0f} جنيه للصفقة" if gate.max_egp else ""
@@ -470,6 +488,7 @@ class MultiAgentAnalyzer:
                                     purpose="committee", env=self.env)
         tally = CostReport(reserved_usd=usd, reserved_calls=calls)
         stop = threading.Event()
+        macro = await asyncio.to_thread(self._macro)
         try:
             args = (question, worker_context, history, reservation, tally, stop)
             tasks = [asyncio.ensure_future(self.get_tech_analysis(*args)),
@@ -482,9 +501,11 @@ class MultiAgentAnalyzer:
                 stop.set()
                 await asyncio.wait(pending)
             reports = {r.key: r for r in (t.result() for t in tasks)}
-            gate = decide(reports)
+            gate = decide(reports, macro)
             tools = [t for t in LEAD_TOOLS if gate.buy_allowed or t != "prepare_buy"]
-            context = [*lead_context, briefing(reports, gate)]
+            scan = getattr(self.toolbox, "last_scan", None)
+            momentum = scan.sector_momentum() if hasattr(scan, "sector_momentum") else None
+            context = [*lead_context, briefing(reports, gate, macro, momentum)]
             try:
                 text = await asyncio.to_thread(
                     agent.run, question, completion=self._meter("lead", reservation, tally),
@@ -507,6 +528,17 @@ class MultiAgentAnalyzer:
         logger.info("committee: %d calls, $%.4f (reserved $%s), gate=%s", tally.calls,
                     tally.usd, usd, gate.buy_allowed)
         return Result(text, reports, gate, tally)
+
+    def _macro(self) -> Optional[Any]:
+        """MACRO_RISK_OFF once, before the specialists share the cached value."""
+        macro = getattr(self.toolbox, "macro", None)
+        if macro is None:
+            return None
+        try:
+            return macro()
+        except Exception as exc:  # noqa: BLE001 - no macro view: the gate still decides
+            logger.warning("macro check failed: %s", exc)
+            return None
 
     def run(self, question: str, **kwargs: Any) -> Result:
         """For callers without an event loop (the chat runs in a worker thread)."""

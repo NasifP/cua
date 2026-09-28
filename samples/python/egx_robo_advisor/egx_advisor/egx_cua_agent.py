@@ -686,11 +686,31 @@ class EgxCuaAgent:
                           "avg_cost": None if p.avg_cost is None else str(p.avg_cost)}
                          for p in portfolio.positions.values()]
             style = levels.style_from(os.environ)
+            macro = await self._macro_state(source)
             self.bus.put("levels", {"style": style,
                                     "stale": bool(source.stale),
-                                    "levels": levels.for_portfolio(positions, history, style)})
+                                    "macro": macro.to_json(),
+                                    "levels": levels.for_portfolio(positions, history, style,
+                                                                   macro.risk_off)})
         except Exception as exc:  # noqa: BLE001 - levels are extra, never block a cycle
             logger.warning("stops and targets unavailable: %s", exc)
+
+    async def _macro_state(self, source: Any) -> Any:
+        """MACRO_RISK_OFF from EGX30 and the news layer (market_state.py). Never raises."""
+        from .market_state import macro_risk_off
+        from .types import Instrument, Sleeve
+
+        regime = (self.bus.get("regime") or {}).get("payload") or {}
+        try:
+            index = Instrument("^CASE30", "^CASE30", Sleeve.BLUE_CHIP)
+            rows = await source.history([index], days=30)
+            today = datetime.now(timezone.utc).date()
+            series = sorted((r for r in rows.get("^CASE30") or () if r.day < today),
+                            key=lambda r: r.day)
+        except Exception as exc:  # noqa: BLE001 - no index: judge from the news layer alone
+            logger.info("EGX30 unavailable for the macro check: %s", exc)
+            series = []
+        return macro_risk_off(series, regime)
 
     def _remember_plan(self, plan: Any, allowed: Sequence[Any]) -> None:
         """Keep the plan's orders so the Memory tab can later say how they did."""

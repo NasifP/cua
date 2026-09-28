@@ -109,7 +109,7 @@ def test_scan_requests_are_recognised(question, top):
 
 def _result():
     flags = {"trend": True, "momentum": True, "volume": False, "volatility": True}
-    o = scanner.Opportunity("COMI.CA", 80.5, 4.2, 3.1, 9.8, 90, 1.6, 61, flags)
+    o = scanner.Opportunity("COMI.CA", 80.5, 4.2, 3.1, 9.8, 90, 1.6, 61, flags, adtv=10_000)
     return scanner.ScanResult(top=(o,), scanned=30, skipped=("XYZ.CA",), as_of="2026-09-25")
 
 

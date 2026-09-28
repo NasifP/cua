@@ -30,6 +30,7 @@ from typing import Any, Callable, Mapping, Optional, Sequence
 
 from .. import average as average_calc
 from .. import levels as levels_mod
+from .. import market_state as ms
 from ..scanner import analyze as four_factors
 
 HistoryFn = Callable[[Sequence[str], int], Mapping[str, Sequence[Any]]]
@@ -85,6 +86,31 @@ class Toolbox:
     last_scan: Optional[Any] = None
     #: The app's Thndr X browser (browse.BrowseClient); None outside the desktop app.
     browser: Optional[Any] = None
+    #: Environment for EGX_ADTV_PCT; os.environ when None.
+    env: Optional[Mapping[str, str]] = None
+    #: MACRO_RISK_OFF for the question being answered; reset with reset().
+    _macro: Optional[Any] = field(default=None, repr=False)
+
+    def reset(self) -> None:
+        """Forget per-question state: calls, the last scan, the macro check."""
+        self.calls.clear()
+        self.last_scan = None
+        self._macro = None
+
+    def macro(self) -> Any:
+        """MACRO_RISK_OFF (market_state.macro_risk_off), computed once per question."""
+        if self._macro is None:
+            try:
+                bars = self._bars(EGX30, 30)
+            except Exception:  # noqa: BLE001 - no index: judge from the news layer alone
+                bars = []
+            self._macro = ms.macro_risk_off(bars, self._snapshot("regime") or {})
+        return self._macro
+
+    def liquidity(self, symbol: str) -> Any:
+        """How many shares one buy of `symbol` may be (market_state.liquidity_cap)."""
+        return ms.liquidity_cap(self._bars(_symbol(symbol), 60),
+                                self.env if self.env is not None else os.environ)
 
     def __post_init__(self) -> None:
         if self.history is None:
@@ -173,8 +199,9 @@ class Toolbox:
         held = next((p for p in (self.get_portfolio().get("positions") or [])
                      if p["symbol"] == symbol), None)
         price = held["price"] if held and held.get("price") else last
+        risk_off = self.macro().risk_off
         lv = levels_mod.compute(symbol, bars, price, self.style,
-                                held.get("avg_cost") if held else None)
+                                held.get("avg_cost") if held else None, risk_off)
         result: dict[str, Any] = {
             "symbol": symbol, "data_through": bars[-1].day.isoformat(), "last_close": last,
             "returns_pct": {"1d": ret(1), "5d": ret(5), "20d": ret(20), "60d": ret(60),
@@ -192,6 +219,8 @@ class Toolbox:
             "levels": lv.to_json() if lv else None,
             "style": self.style,
             "held": held,
+            "regime": ms.detect_market_regime(bars).to_json(),
+            "macro_risk_off": risk_off,
         }
         result.update(self._indicator_view(symbol, bars))
         if self.memory is not None:
@@ -211,10 +240,20 @@ class Toolbox:
             return {"symbol": symbol, "error": f"only {len(bars)} daily bars available",
                     "held": held}
         price = held["price"] if held and held.get("price") else float(bars[-1].close)
+        macro = self.macro()
         lv = levels_mod.compute(symbol, bars, price, self.style,
-                                held.get("avg_cost") if held else None)
-        return {"symbol": symbol, "data_through": bars[-1].day.isoformat(), "price": price,
-                "levels": lv.to_json() if lv else None, "style": self.style, "held": held}
+                                held.get("avg_cost") if held else None, macro.risk_off)
+        cap = ms.liquidity_cap(bars, self.env if self.env is not None else os.environ)
+        out = {"symbol": symbol, "data_through": bars[-1].day.isoformat(), "price": price,
+               "levels": lv.to_json() if lv else None, "style": self.style, "held": held,
+               "regime": ms.detect_market_regime(bars).to_json(),
+               "liquidity": dict(cap.to_json(), max_value_egp=round((cap.max_shares or 0)
+                                                                    * price, 2)),
+               "macro": macro.to_json()}
+        if macro.risk_off:
+            out["risk_off_action"] = ("MACRO_RISK_OFF: stops tightened; recommend raising cash "
+                                      "and trimming positions (تخفيف المراكز), no new buys")
+        return out
 
     def _indicator_set(self) -> list[Any]:
         from .. import indicators as ind
@@ -227,8 +266,11 @@ class Toolbox:
         from .. import indicators as ind
 
         chosen = self._indicator_set()
-        out: dict[str, Any] = {"your_indicators": ind.for_symbol(chosen, bars)}
+        readings = ind.for_symbol(chosen, bars)
+        out: dict[str, Any] = {"your_indicators": readings}
+        verdicts: dict[str, str] = {}
         if self.memory is None:
+            out["weighted_indicators"] = self._weighted(readings, chosen, bars, verdicts)
             return out
         labels = {c.label() for c in chosen}
         found = []
@@ -243,9 +285,22 @@ class Toolbox:
                           "buy_avg_20d_pct": h.get("buy_avg_pct"),
                           "market_avg_20d_pct": h.get("market_avg_pct"),
                           "on_this_stock": here, "studied": str(r.get("studied", ""))[:10]})
+            verdicts.setdefault(r["indicator"], r["verdict"])
         if found:
             out["indicator_study"] = found
+        out["weighted_indicators"] = self._weighted(readings, chosen, bars, verdicts)
         return out
+
+    def _weighted(self, readings: Sequence[Mapping[str, Any]], chosen: Sequence[Any],
+                  bars: Sequence[Any], verdicts: Mapping[str, str]) -> dict[str, Any]:
+        """The readings weighted for this stock's regime and the operator's study."""
+        regime = ms.detect_market_regime(bars).regime
+        params = {c.key: {n: c.value(n) for n in ("low", "high")
+                          if n in dict(_catalog_params(c.key))} for c in chosen}
+        view = ms.weigh_readings(readings, regime, verdicts, params)
+        view["note"] = ("weights: the regime boosts oscillators when sideways and trend "
+                        "followers in a trend; the EGX study then raises or lowers each")
+        return view
 
     def study_indicators(self, symbol: str) -> dict[str, Any]:
         """What followed the operator's indicators' signals on one stock, over ~3 years."""
@@ -273,7 +328,12 @@ class Toolbox:
             self.scanner = yahoo_scan
         result = self.scanner(max(1, min(int(top_n or 5), 10)))
         self.last_scan = result
-        return {"ranking": result.table(budget_egp), "stale_prices": result.stale}
+        out: dict[str, Any] = {"ranking": result.table(budget_egp), "stale_prices": result.stale}
+        by_sector = getattr(result, "by_sector", None)
+        if by_sector is not None:
+            out["by_sector"] = by_sector()
+            out["sector_momentum"] = result.sector_momentum()
+        return out
 
     def search_news(self, query: str, limit: int = 8) -> dict[str, Any]:
         from ..regime.sources import parse_feed
@@ -309,16 +369,35 @@ class Toolbox:
         out["news_brake"] = {k: regime.get(k) for k in ("risk_state", "blocked_symbols")}
         out["news_brake"]["reason"] = (regime.get("drivers") or [None])[0]
         out["usd_egp"] = (self._snapshot("fx") or {}).get("usd_egp")
+        try:
+            out["egx30_regime"] = ms.detect_market_regime(self._bars(EGX30, 120)).to_json()
+        except Exception as exc:  # noqa: BLE001
+            out["egx30_regime"] = {"error": str(exc)[:200]}
+        out["macro"] = self.macro().to_json()
         return out
 
     def average_calculator(self, quantity: float, average: float, target: float,
-                           price: float) -> dict[str, Any]:
+                           price: float, symbol: str = "") -> dict[str, Any]:
         try:
             r = average_calc.shares_needed(quantity, average, target, price)
         except ValueError as exc:
             return {"error": str(exc)}
-        return {"buy": r.buy, "cost_egp": round(r.cost, 2), "new_quantity": r.new_quantity,
-                "new_average": round(r.new_average, 3), "note": "before brokerage fees"}
+        out: dict[str, Any] = {"buy": r.buy, "cost_egp": round(r.cost, 2),
+                               "new_quantity": r.new_quantity,
+                               "new_average": round(r.new_average, 3),
+                               "note": "before brokerage fees"}
+        if symbol:
+            cap = self.liquidity(symbol)
+            allowed, cut = cap.cap(r.buy)
+            out["liquidity"] = cap.to_json()
+            if cut:
+                new_q = int(quantity) + allowed
+                out.update(buy=allowed, cost_egp=round(allowed * price, 2), new_quantity=new_q,
+                           new_average=round((quantity * average + allowed * price) / new_q, 3)
+                           if new_q else None,
+                           target_reached=False, needed_for_target=r.buy,
+                           capped_by_liquidity=True)
+        return out
 
     # ------------------------------------------------------------------ Thndr X
 
@@ -373,6 +452,16 @@ class Toolbox:
             blocked=regime.get("blocked_symbols") or ())
         if problem:
             return {"prepared": False, "refused": problem}
+        try:
+            cap = self.liquidity(order["symbol"])
+        except Exception:  # noqa: BLE001 - no volume: the cap below refuses
+            cap = ms.LiquidityCap(None, ms.adtv_pct(
+                self.env if self.env is not None else os.environ), 0)
+        if cap.cap(int(order["quantity"]))[1]:
+            return {"prepared": False, "refused": (
+                f"{order['quantity']} shares is more than {cap.pct:g}% of the stock's "
+                f"20-session average daily volume ({cap.max_shares or 0} shares at most); "
+                "a smaller order can be left quickly"), "liquidity": cap.to_json()}
         now = datetime.now(timezone.utc)
         order.update(rationale=str(reason or "")[:300], ts=now.isoformat(),
                      autofill_until=(now + timedelta(seconds=browse.AUTOFILL_SECONDS))
@@ -422,6 +511,13 @@ class Toolbox:
         return json.dumps(result, ensure_ascii=False, default=str)[:12000]
 
 
+def _catalog_params(key: str) -> tuple[tuple[str, float], ...]:
+    from ..indicators import CATALOG
+
+    spec = CATALOG.get(key)
+    return spec.params if spec else ()
+
+
 def _fn(name: str, description: str, properties: Optional[dict] = None,
         required: Sequence[str] = ()) -> dict[str, Any]:
     return {"type": "function", "function": {
@@ -442,7 +538,9 @@ SCHEMAS: list[dict[str, Any]] = [
         "the operator's notes on it, and whether it is held.",
         {"symbol": {"type": "string", "description": "EGX ticker, e.g. COMI or COMI.CA"}},
         ["symbol"]),
-    _fn("scan_market", "Rank the EGX stocks in the scan list by the four factors. Use for "
+    _fn("scan_market", "Rank the EGX stocks in the scan list by the four factors, with each "
+        "one's sector, the top names grouped by sector and a sector-momentum flag when one "
+        "sector leads. Share counts for an amount are capped by liquidity. Use for "
         "'best opportunities' questions.",
         {"top_n": {"type": "integer", "description": "how many, 1-10"},
          "budget_egp": {"type": "number", "description": "amount the operator mentioned, "
@@ -455,14 +553,20 @@ SCHEMAS: list[dict[str, Any]] = [
         "three years: after each buy/sell signal, the average move 5 and 20 sessions later "
         "against the stock's usual move, and a verdict (helped, misled, no edge, too few).",
         {"symbol": {"type": "string"}}, ["symbol"]),
-    _fn("market_overview", "EGX30 index trend, the news brake's state, and the USD/EGP rate."),
+    _fn("market_overview", "EGX30 index trend and regime (uptrend / downtrend / sideways), "
+        "the news brake's state, MACRO_RISK_OFF with its reasons, and the USD/EGP rate."),
     _fn("stock_levels", "For one stock: the price, its usual daily move (ATR), the "
-        "chandelier stop and two ATR targets for the operator's style, and how much of it "
-        "is held. For position sizing and stops.",
+        "chandelier stop and two ATR targets for the operator's style (tightened under "
+        "MACRO_RISK_OFF), how much of it is held, its regime, and its liquidity limit: the "
+        "most shares one buy may be, as a share of 20-session average daily volume. For "
+        "position sizing and stops.",
         {"symbol": {"type": "string"}}, ["symbol"]),
-    _fn("average_calculator", "Shares to buy at a price to bring an average cost to a target.",
+    _fn("average_calculator", "Shares to buy at a price to bring an average cost to a target. "
+        "With symbol, the answer is capped at the stock's liquidity limit (a share of its "
+        "20-session average daily volume).",
         {"quantity": {"type": "number"}, "average": {"type": "number"},
-         "target": {"type": "number"}, "price": {"type": "number"}},
+         "target": {"type": "number"}, "price": {"type": "number"},
+         "symbol": {"type": "string", "description": "EGX ticker, for the liquidity cap"}},
         ["quantity", "average", "target", "price"]),
 ]
 TOOL_NAMES = frozenset(s["function"]["name"] for s in SCHEMAS)

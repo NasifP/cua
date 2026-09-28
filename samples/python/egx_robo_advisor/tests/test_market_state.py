@@ -1,0 +1,155 @@
+"""Sprint 3: regime, dynamic weights, liquidity sizing, macro risk-off, sectors."""
+
+from __future__ import annotations
+
+from datetime import date, timedelta
+from decimal import Decimal as D
+
+import pytest
+
+from egx_advisor import levels, market_state as ms, scanner, sectors
+from egx_advisor.analyst import committee as cm
+from egx_advisor.analyst.tools import Toolbox
+from egx_advisor.bus import StateBus
+from egx_advisor.marketdata.yahoo import YahooRow
+
+
+def _rows(closes, volume=1000):
+    end = date.today() - timedelta(days=1)
+    n = len(closes)
+    return [YahooRow(end - timedelta(days=n - 1 - i), D(str(c)), D(str(c + 1)),
+                     D(str(c - 1)), D(str(c)), D(volume)) for i, c in enumerate(closes)]
+
+
+UP = [50 + i * 0.5 for i in range(120)]
+DOWN = [110 - i * 0.5 for i in range(120)]
+FLAT = [60 + (1.5 if i % 2 else -1.5) for i in range(120)]
+
+
+# ------------------------------------------------------------------ regime
+
+
+@pytest.mark.parametrize(("closes", "regime"), [
+    (UP, ms.Regime.UPTREND), (DOWN, ms.Regime.DOWNTREND), (FLAT, ms.Regime.SIDEWAYS),
+    (UP[:30], ms.Regime.UNKNOWN)])
+def test_regime_is_read_from_prices(closes, regime):
+    assert ms.detect_market_regime(_rows(closes)).regime is regime
+    assert ms.detect_market_regime(closes).regime is regime  # plain numbers work too
+
+
+def test_sideways_boosts_oscillators_and_a_trend_boosts_trend_followers():
+    readings = [{"indicator": "rsi(14, 30, 70)", "zone": "oversold"},
+                {"indicator": "macd(12, 26, 9)", "above_signal": False}]
+    side = ms.weigh_readings(readings, ms.Regime.SIDEWAYS)
+    up = ms.weigh_readings(readings, ms.Regime.UPTREND)
+    assert side["combined_score"] > 0 > up["combined_score"]
+    assert side["indicators"][0]["weight"] == 1.5 and up["indicators"][1]["weight"] == 1.5
+
+
+def test_the_operators_study_still_weighs_on_top_of_the_regime():
+    readings = [{"indicator": "rsi(14, 30, 70)", "zone": "oversold"}]
+    misled = ms.weigh_readings(readings, ms.Regime.SIDEWAYS, {"rsi(14, 30, 70)": "misled"})
+    assert misled["indicators"][0]["weight"] == 0.75
+
+
+# ------------------------------------------------------------------ liquidity
+
+
+def test_a_buy_is_capped_at_a_share_of_average_daily_volume():
+    cap = ms.liquidity_cap(_rows(UP, volume=10_000), env={"EGX_ADTV_PCT": "2"})
+    assert cap.max_shares == 200 and cap.cap(5_000) == (200, True) and cap.cap(50) == (50, False)
+
+
+def test_unknown_volume_fails_closed_and_the_setting_is_clamped():
+    assert ms.liquidity_cap(_rows(UP[:5])).cap(10) == (0, True)
+    assert ms.adtv_pct({"EGX_ADTV_PCT": "90"}) == 10.0
+    assert ms.adtv_pct({"EGX_ADTV_PCT": "nan"}) == ms.DEFAULT_ADTV_PCT
+
+
+def test_the_scan_caps_share_counts_by_liquidity():
+    flags = dict.fromkeys(("trend", "momentum", "volume", "volatility"), True)
+    o = scanner.Opportunity("COMI.CA", 10.0, 1, 1, 1, 100, 1, 50, flags, adtv=1_000)
+    assert o.buys(1_000_000, env={"EGX_ADTV_PCT": "3"}) == (30, True)
+
+
+# ------------------------------------------------------------------ risk-off
+
+
+def test_macro_risk_off_on_a_hard_egx30_fall_or_a_news_halt():
+    assert ms.macro_risk_off([100, 100, 100, 100, 100, 95]).risk_off  # -5% in a session
+    assert ms.macro_risk_off([100, 99, 98, 96, 94, 92.5]).risk_off   # -7.5% in five
+    assert ms.macro_risk_off(UP, {"risk_state": "buys_halted"}).risk_off
+    assert not ms.macro_risk_off(UP, {"risk_state": "risk_on"}).risk_off
+
+
+def test_risk_off_tightens_the_chandelier_stop():
+    rows = _rows(UP)
+    calm = levels.compute("X", rows, UP[-1], "swing")
+    tight = levels.compute("X", rows, UP[-1], "swing", risk_off=True)
+    assert tight.stop > calm.stop and tight.stop_atr == 1.25 and tight.to_json()[
+        "risk_off_tightened"]
+    assert levels.stop_multiple("trader", True) == 1.0
+
+
+# ------------------------------------------------------------------ sectors
+
+
+def test_every_scanned_stock_has_a_sector_and_dominance_is_flagged():
+    assert sectors.sector_of("COMI") == sectors.BANKS
+    flag = sectors.sector_momentum(["TMGH.CA", "PHDC.CA", "COMI.CA", "OCDI.CA"])
+    assert flag["sector"] == sectors.REAL_ESTATE and flag["count"] == 3
+    assert sectors.sector_momentum(["TMGH.CA", "COMI.CA", "ETEL.CA"]) is None
+
+
+# ------------------------------------------------------------------ tools and committee
+
+
+@pytest.fixture
+def bus(tmp_path):
+    bus = StateBus(tmp_path / "s.db")
+    bus.put("portfolio", {"as_of": "2026-09-27", "total_value": "1000000",
+                          "cash_egp": "1000000", "positions": []})
+    bus.resume(actor="test")
+    return bus
+
+
+def _toolbox(bus, egx30=UP, volume=1000):
+    def history(symbols, days):
+        return {s: _rows(egx30 if s == "^CASE30" else UP, volume) for s in symbols}
+    return Toolbox(bus=bus, history=history, env={"EGX_ADTV_PCT": "3"})
+
+
+def test_prepare_buy_refuses_more_than_the_liquidity_limit_whatever_the_cash(bus):
+    box = _toolbox(bus)
+    last = UP[-1]
+    refused = box.prepare_buy("COMI", 100, last)  # 3% of 1,000 = 30 shares
+    assert refused["prepared"] is False and "average daily volume" in refused["refused"]
+    assert box.prepare_buy("COMI", 30, last)["prepared"] is True
+
+
+def test_the_risk_tools_show_regime_liquidity_and_risk_off(bus):
+    bus.put("regime", {"risk_state": "buys_halted", "drivers": ["CBE surprise"]})
+    box = _toolbox(bus)
+    out = box.stock_levels("COMI")
+    assert out["liquidity"]["max_shares"] == 30 and out["regime"]["regime"] == "uptrend"
+    assert out["macro"]["MACRO_RISK_OFF"] and "تخفيف المراكز" in out["risk_off_action"]
+    assert out["levels"]["risk_off_tightened"]
+    capped = box.average_calculator(100, 90, 70, 60, symbol="COMI")  # needs 200
+    assert capped["buy"] == 30 and capped["capped_by_liquidity"]
+
+
+def test_the_technical_view_carries_weighted_indicators(bus):
+    view = _toolbox(bus).analyze_stock("COMI")
+    assert view["regime"]["regime"] == "uptrend"
+    assert view["weighted_indicators"]["regime"] == "uptrend"
+
+
+def test_risk_off_closes_the_buy_gate_and_the_briefing_advises_trimming():
+    good = {m.key: cm.parse_report(m, t) for m, t in zip(cm.MEMBERS, (
+        "VERDICT: positive", "VERDICT: positive\nBRAKE: no", "RISK: allow\nMAX_EGP: none"))}
+    macro = ms.macro_risk_off([100, 100, 100, 100, 100, 95])
+    gate = cm.decide(good, macro)
+    assert not gate.buy_allowed and any("MACRO_RISK_OFF" in r for r in gate.reasons)
+    text = cm.briefing(good, gate, macro, {"sector": "Banks", "count": 3, "of": 5,
+                                           "symbols": ["COMI.CA", "CIEB.CA", "ADIB.CA"]})
+    assert "تخفيف المراكز" in text and "زخم القطاعات" in text

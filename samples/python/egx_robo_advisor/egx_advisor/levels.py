@@ -17,6 +17,12 @@ The multiples come from the operator's style (Settings: EGX_STYLE): a trader
 gives a stock little room and expects small moves, a long-term investor a lot
 of room and larger ones.
 
+Under MACRO_RISK_OFF (market_state.macro_risk_off: EGX30 falling hard, or the
+news layer halting buys) the stop multiple is multiplied by
+RISK_OFF_STOP_FACTOR, never below RISK_OFF_MIN_STOP_ATR: a swing stop of 2.5
+ATR becomes 1.25, so a stop is hit sooner and capital is kept. Targets do not
+change.
+
 These are levels to watch, not orders. The app shows where the price sits
 between stop and target and warns when it is within one ATR of the stop or
 below it. Nothing here sells anything.
@@ -37,6 +43,9 @@ DEFAULT_STYLE = "swing"
 ATR_DAYS = 14
 STOP_LOOKBACK = 22
 RESISTANCE_LOOKBACK = 60
+#: Stop multiple under MACRO_RISK_OFF: halved (e.g. 3 ATR -> 1.5), floored.
+RISK_OFF_STOP_FACTOR = 0.5
+RISK_OFF_MIN_STOP_ATR = 1.0
 
 
 @dataclass(frozen=True)
@@ -48,6 +57,9 @@ class Levels:
     target1: float
     target2: float
     avg_cost: Optional[float] = None
+    #: The stop multiple used, in ATRs, and whether risk-off tightened it.
+    stop_atr: Optional[float] = None
+    risk_off: bool = False
 
     @property
     def status(self) -> str:
@@ -75,6 +87,7 @@ class Levels:
             "target2": round(self.target2, 2), "status": self.status,
             "position": round(self.position, 3),
             "avg_cost": None if self.avg_cost is None else round(self.avg_cost, 3),
+            "stop_atr": self.stop_atr, "risk_off_tightened": self.risk_off,
         }
 
 
@@ -91,12 +104,21 @@ def atr(rows: Sequence[Any], days: int = ATR_DAYS) -> Optional[float]:
     return value if value > 0 else None
 
 
+def stop_multiple(style: str = DEFAULT_STYLE, risk_off: bool = False) -> float:
+    """The chandelier multiple of ATR for a style, tightened under risk-off."""
+    k_stop = STYLES.get(style, STYLES[DEFAULT_STYLE])[0]
+    if risk_off:
+        k_stop = min(k_stop, max(k_stop * RISK_OFF_STOP_FACTOR, RISK_OFF_MIN_STOP_ATR))
+    return k_stop
+
+
 def compute(symbol: str, rows: Sequence[Any], price: float, style: str = DEFAULT_STYLE,
-            avg_cost: Optional[float] = None) -> Optional[Levels]:
+            avg_cost: Optional[float] = None, risk_off: bool = False) -> Optional[Levels]:
     """Levels for one holding, or None without enough history or a price."""
     if price <= 0:
         return None
-    k_stop, k1, k2 = STYLES.get(style, STYLES[DEFAULT_STYLE])
+    _k, k1, k2 = STYLES.get(style, STYLES[DEFAULT_STYLE])
+    k_stop = stop_multiple(style, risk_off)
     rows = list(rows)
     move = atr(rows)
     if move is None:
@@ -106,12 +128,13 @@ def compute(symbol: str, rows: Sequence[Any], price: float, style: str = DEFAULT
     resistance = max(float(r.high) for r in rows[-RESISTANCE_LOOKBACK:])
     target1 = resistance if resistance >= price + move else price + k1 * move
     target2 = max(price + k2 * move, target1 + move)
-    return Levels(symbol, price, move, stop, target1, target2, avg_cost)
+    return Levels(symbol, price, move, stop, target1, target2, avg_cost, k_stop,
+                  risk_off and k_stop < STYLES.get(style, STYLES[DEFAULT_STYLE])[0])
 
 
 def for_portfolio(positions: Sequence[Mapping[str, Any]],
-                  history: Mapping[str, Sequence[Any]], style: str = DEFAULT_STYLE
-                  ) -> dict[str, dict[str, Any]]:
+                  history: Mapping[str, Sequence[Any]], style: str = DEFAULT_STYLE,
+                  risk_off: bool = False) -> dict[str, dict[str, Any]]:
     """Levels for every held position with a price and enough history."""
     out: dict[str, dict[str, Any]] = {}
     for p in positions:
@@ -122,7 +145,7 @@ def for_portfolio(positions: Sequence[Mapping[str, Any]],
             continue
         cost = p.get("avg_cost")
         levels = compute(symbol, history.get(symbol) or (), value / quantity, style,
-                         float(cost) if cost not in (None, "") else None)
+                         float(cost) if cost not in (None, "") else None, risk_off)
         if levels is not None:
             out[symbol] = levels.to_json()
     return out

@@ -23,6 +23,7 @@ out and listed as skipped.
 from __future__ import annotations
 
 import asyncio
+import os
 import re
 import tomllib
 from dataclasses import dataclass, field
@@ -31,6 +32,7 @@ from decimal import Decimal
 from pathlib import Path
 from typing import Any, Mapping, Optional, Sequence
 
+from .market_state import adtv, adtv_pct
 from .strategy.four_factor import FourFactorParams
 from .types import Instrument, Sleeve
 
@@ -49,6 +51,24 @@ class Opportunity:
     volatility: float       # daily %, std
     rsi: float
     agree: dict[str, bool]
+    #: Average daily traded volume over 20 sessions, shares; None if unknown.
+    adtv: Optional[float] = None
+
+    @property
+    def sector(self) -> str:
+        from .sectors import sector_of
+
+        return sector_of(self.symbol)
+
+    def buys(self, budget: float, env: Optional[Mapping[str, str]] = None) -> tuple[int, bool]:
+        """(whole shares `budget` buys, capped by liquidity; whether the cap cut it)."""
+        from .market_state import adtv_pct
+
+        wanted = shares(budget, self.close)
+        if self.adtv is None:
+            return 0, wanted > 0
+        limit = int(self.adtv * adtv_pct(env if env is not None else os.environ) / 100)
+        return min(wanted, limit), wanted > limit
 
     @property
     def agreeing(self) -> int:
@@ -80,7 +100,9 @@ class ScanResult:
                          "archive and may be a few days old; say so")
         if budget:
             lines.append(f"the operator mentioned an amount of {budget:,.0f} EGP; 'buys' is how "
-                         f"many whole shares that amount buys at the close, before fees")
+                         f"many whole shares that amount buys at the close, before fees, "
+                         f"capped at {adtv_pct(os.environ):g}% of the stock's 20-session "
+                         f"average daily volume (liquidity)")
         for rank, o in enumerate(self.top, 1):
             flags = ", ".join(f"{k} {'yes' if v else 'no'}" for k, v in o.agree.items())
             lines.append(
@@ -88,12 +110,28 @@ class ScanResult:
                 f"vs {self.params.trend_days}-day average {o.trend_pct:+.1f}%; "
                 f"20-day {o.momentum_20:+.1f}%, 60-day {o.momentum_60:+.1f}%; "
                 f"volume {o.volume_ratio:.0f}% of average; volatility {o.volatility:.1f}%/day; "
-                f"RSI {o.rsi:.0f}"
-                + (f"; buys {shares(budget, o.close)} shares" if budget else "")
+                f"RSI {o.rsi:.0f}; sector {o.sector}"
+                + (f"; 20-session average volume {o.adtv:,.0f} shares" if o.adtv else "")
+                + (_buys_text(o, budget) if budget else "")
             )
+        momentum = self.sector_momentum()
+        if momentum:
+            lines.append(f"SECTOR MOMENTUM: {momentum['count']} of the top {momentum['of']} are "
+                         f"{momentum['sector']} ({', '.join(momentum['symbols'])}); one sector "
+                         "leading means the picks share one risk")
         if self.skipped:
             lines.append("skipped (no usable prices): " + ", ".join(self.skipped))
         return "\n".join(lines)
+
+    def by_sector(self) -> dict[str, list[str]]:
+        from .sectors import group
+
+        return group(o.symbol for o in self.top)
+
+    def sector_momentum(self) -> Optional[dict[str, Any]]:
+        from .sectors import sector_momentum
+
+        return sector_momentum(o.symbol for o in self.top)
 
     def summary(self, arabic: bool, budget: Optional[float] = None) -> str:
         """The ranking for a person to read, when no model explains it."""
@@ -111,14 +149,14 @@ class ScanResult:
                 line = (f"{rank}. {name}: إغلاق {o.close:.2f} ج.م | {o.agreeing} من 4 متفقة "
                         f"({flags}) | 60 يوم {o.momentum_60:+.1f}% | تذبذب {o.volatility:.1f}%/يوم")
                 if budget:
-                    line += f" | بمبلغ {budget:,.0f} ج.م: {shares(budget, o.close)} سهم"
+                    line += f" | بمبلغ {budget:,.0f} ج.م: {o.buys(budget)[0]} سهم"
             else:
                 flags = " ".join(f"{k} {'✓' if v else '✗'}" for k, v in o.agree.items())
                 line = (f"{rank}. {name}: close {o.close:.2f} EGP | {o.agreeing}/4 agree "
                         f"({flags}) | 60-day {o.momentum_60:+.1f}% | "
                         f"volatility {o.volatility:.1f}%/day")
                 if budget:
-                    line += f" | {budget:,.0f} EGP buys {shares(budget, o.close)} shares"
+                    line += f" | {budget:,.0f} EGP buys {o.buys(budget)[0]} shares"
             lines.append(line)
         if arabic:
             lines.append(f"\nفحص {self.scanned} سهم بقواعد العوامل الأربعة على أسعار لحد آخر "
@@ -133,6 +171,13 @@ class ScanResult:
             if self.skipped:
                 lines.append("Skipped (not enough prices): " + ", ".join(self.skipped))
         return "\n".join(lines)
+
+
+def _buys_text(o: Opportunity, budget: float) -> str:
+    count, capped = o.buys(budget)
+    if o.adtv is None:
+        return "; buys 0 shares (volume unknown: no liquidity check possible)"
+    return f"; buys {count} shares" + (" (capped by liquidity)" if capped else "")
 
 
 def shares(budget: float, close: float) -> int:
@@ -168,10 +213,11 @@ def analyze(symbol: str, closes: Sequence[Decimal], volumes: Sequence[Decimal],
     returns = [(b / a - 1) * 100 for a, b in zip(window, window[1:], strict=False) if a]
     mean = sum(returns) / len(returns)
     volatility = (sum((r - mean) ** 2 for r in returns) / len(returns)) ** 0.5
+    average_volume = adtv(volumes)
     return Opportunity(
         symbol=symbol, close=last, trend_pct=(last / average - 1) * 100,
         momentum_20=momentum_20, momentum_60=momentum_60, volume_ratio=volume_ratio,
-        volatility=volatility, rsi=_rsi(prices),
+        volatility=volatility, rsi=_rsi(prices), adtv=average_volume,
         agree={
             "trend": last > average,
             "momentum": momentum_n > 0,

@@ -364,8 +364,7 @@ class Assistant:
             content = str(turn.get("content", ""))[:MAX_QUESTION_CHARS]
             if role in ("user", "assistant") and content:
                 turns.append({"role": role, "content": content})
-        self.toolbox.calls.clear()
-        self.toolbox.last_scan = None
+        self.toolbox.reset()
         if self.committee:
             text = self._committee(question, turns)
             if self.toolbox.last_scan is not None:
