@@ -76,6 +76,11 @@ CREATE TABLE IF NOT EXISTS picks (
     reason TEXT NOT NULL,
     UNIQUE (day, source, symbol, side)
 );
+CREATE TABLE IF NOT EXISTS ui (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL,
+    updated TEXT NOT NULL
+);
 """
 
 
@@ -242,6 +247,21 @@ class Memory:
             + (" WHERE source = ?" if source else "") + " ORDER BY day DESC, id",
             (source,) if source else ())
         return [Pick(date.fromisoformat(r[0]), r[1], r[2], r[3], r[4], r[5]) for r in rows]
+
+    # ------------------------------------------------------------ the Thndr X layout
+
+    def ui_get(self, key: str) -> Optional[str]:
+        """What the app learned about the Thndr X pages, e.g. the stock-page address."""
+        rows = self._read("SELECT value FROM ui WHERE key = ?", (key,))
+        return rows[0][0] if rows else None
+
+    def ui_set(self, key: str, value: str) -> None:
+        self._write("INSERT INTO ui (key, value, updated) VALUES (?, ?, ?) "
+                    "ON CONFLICT(key) DO UPDATE SET value = excluded.value, "
+                    "updated = excluded.updated", (key, str(value)[:500], _now()))
+
+    def ui_items(self) -> list[tuple[str, str, str]]:
+        return [tuple(r) for r in self._read("SELECT key, value, updated FROM ui ORDER BY key")]
 
     # ------------------------------------------------------------ for the model
 

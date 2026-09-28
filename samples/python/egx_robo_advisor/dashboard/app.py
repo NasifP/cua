@@ -152,6 +152,7 @@ def create_app(
 
         from egx_advisor import levels
         from egx_advisor.analyst.tools import Toolbox
+        from egx_advisor.browse import BrowseClient
 
         memory = Memory(memory_path_for(config.bus_path))
         archive = PriceArchive(archive_path_for(config.bus_path))
@@ -161,14 +162,18 @@ def create_app(
             bus=bus, model=os.environ.get("EGX_ANALYST_MODEL") or config.chat_model,
             use_model=config.chat_enabled, memory=memory, archive=archive,
             toolbox=Toolbox(bus=bus, memory=memory, archive=archive,
-                            style=levels.style_from(os.environ)))
+                            style=levels.style_from(os.environ),
+                            # Set only when the desktop app started us: its
+                            # Thndr X window, under browse.py's checks.
+                            browser=BrowseClient.from_env(os.environ)))
     templates = Jinja2Templates(directory=str(Path(__file__).parent / "templates"))
 
     app = FastAPI(title="EGX Robo-Advisor", docs_url=None, redoc_url=None)
     app.state.config = config
     app.state.bus = bus
-    # The assistant reads the bus and returns text. It is given no other
-    # collaborator, so there is nothing it could act through.
+    # The assistant reads the bus and returns text. In the desktop app its
+    # analyst can also use the Thndr X window through browse.py, which never
+    # presses Buy, Sell or anything that moves money.
     app.state.assistant = assistant
     app.state.chat_busy = False
 

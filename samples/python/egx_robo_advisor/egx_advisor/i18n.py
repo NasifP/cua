@@ -252,6 +252,13 @@ STRINGS: dict[str, tuple[str, str]] = {
     "ticket.no_orders": ("No buy orders in the current plan.", "مفيش أوامر شراء في الخطة الحالية."),
     "ticket.order_line": ("{symbol}  ·  {quantity} shares  ·  limit {price}",
                           "{symbol}  ·  {quantity} سهم  ·  بسعر {price}"),
+    "ticket.proposal_line": ("Analyst  ·  {symbol}  ·  {quantity} shares  ·  limit {price}",
+                             "من المحلل  ·  {symbol}  ·  {quantity} سهم  ·  حد {price}"),
+    "ticket.waiting": ("Prepared: press Buy on {ticker}'s page in Thndr X. The quantity and "
+                       "price are written as soon as the ticket opens; then check them and "
+                       "press the final Buy yourself.",
+                       "الأمر جاهز: اضغط شراء في صفحة {ticker} في Thndr X. الكمية والسعر "
+                       "هيتكتبوا أول ما الأمر يفتح؛ راجعهم واضغط شراء النهائي بنفسك."),
     "ticket.fill": ("Fill the ticket", "املأ الأمر"),
     "ticket.filled": ("Written: {quantity} shares of {symbol} at {price}. Check the ticket in "
                       "Thndr and press Buy yourself.",
@@ -305,6 +312,13 @@ STRINGS: dict[str, tuple[str, str]] = {
                                    "الاتجاه والزخم والحجم والتذبذب بيحددوا تشتري إيه وتبيع "
                                    "إيه وبكام، بدل التوزيع الثابت. قارنهم في معمل "
                                    "الاستراتيجيات الأول."),
+    "field.EGX_BROWSE": ("Let the analyst use Thndr X", "المحلل يتصفح Thndr X"),
+    "field.EGX_BROWSE.help": ("The chat analyst can open stock pages, tabs and search in the "
+                              "Thndr X window, and get a buy ready. It can never press Buy, "
+                              "Sell or anything that moves money. HALT stops it.",
+                              "المحلل في الشات يقدر يفتح صفحات الأسهم والتبويبات ويبحث في "
+                              "نافذة Thndr X، ويجهّز أمر شراء. عمره ما يقدر يضغط شراء أو بيع "
+                              "أو أي حاجة فيها فلوس. زرار الإيقاف بيوقفه."),
     "field.EGX_TICKET_FILL": ("Fill buy tickets in Thndr X", "تجهيز أوامر الشراء في Thndr X"),
     "field.EGX_TICKET_FILL.help": ("When on, the Thndr X page can write an order's quantity and "
                                    "price into an open buy ticket when you press Fill. It never "
