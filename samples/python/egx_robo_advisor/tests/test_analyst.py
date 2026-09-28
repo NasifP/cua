@@ -237,3 +237,19 @@ def test_the_browse_prompt_is_added_only_with_the_browser(toolbox):
     agent.run("hi", completion=completion, model="m", toolbox=toolbox)
     assert agent.BROWSE_PROMPT in [m["content"] for m in seen[1]["messages"]]
     assert any(t["function"]["name"] == "prepare_buy" for t in seen[1]["tools"])
+
+
+def test_the_analyst_reads_the_operators_indicators_and_their_study(toolbox):
+    from egx_advisor import indicators as ind
+
+    memory = toolbox.memory
+    chosen = [ind.Choice("rsi", True, {"length": 14, "low": 30, "high": 70}),
+              ind.Choice("macd", True, {"fast": 12, "slow": 26, "signal": 9})]
+    memory.ui_set(memory.INDICATORS_KEY, ind.dump_set(chosen))
+    memory.add_indicator_study(ind.study(chosen[0], {"COMI.CA": _bars()}))
+    result = toolbox.analyze_stock("COMI")
+    assert [r["indicator"] for r in result["your_indicators"]] == ["rsi(14, 30, 70)",
+                                                                 "macd(12, 26, 9)"]
+    assert result["indicator_study"][0]["indicator"] == "rsi(14, 30, 70)"
+    study = json.loads(toolbox.call("study_indicators", {"symbol": "COMI"}))
+    assert [r["indicator"] for r in study["results"]] == ["rsi(14, 30, 70)", "macd(12, 26, 9)"]

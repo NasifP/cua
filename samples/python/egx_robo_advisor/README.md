@@ -371,8 +371,9 @@ You always press Buy yourself.
 1. **Turn it on.** Settings -> *Fill buy tickets in Thndr X*. It is off by
    default (`EGX_TICKET_FILL=false`).
 2. **Teach the two boxes, once.** Open any stock's buy ticket in the Thndr X
-   tab. In the panel beside it press *Teach* for the quantity box and click
-   that box, then do the same for the price box. The click only selects the
+   window. In the Training tab -> *Buy ticket boxes* press *Teach* for the
+   quantity box and click that box in the ticket, then do the same for the
+   price box. The click only selects the
    box; Thndr X never receives it. The result is kept in
    `config/thndr.ticket.toml`. Delete that file to teach the boxes again.
 3. **Fill.** Open the buy ticket of the stock you want, choose a limit
@@ -426,6 +427,30 @@ It can never press Buy, Sell, confirm, or anything that moves money
 The app learns a stock page's address the first time one is opened (by you
 or by a search), and opens stock pages directly from then on. The learned
 address is kept in `state/memory/memory.db`.
+
+## Training: your indicators, and what they did on the EGX
+
+The Training tab holds what you teach the app: the Thndr X ticket boxes
+(above) and the indicators you use.
+
+- **Choose and set them.** Moving average, two averages crossing, RSI, MACD,
+  Bollinger bands, Stochastic, volume spikes; tick the ones you use and set
+  their numbers (double-click the settings). *Save* draws them on the Chart
+  tab and the analyst reads them for every stock it reviews: where each one
+  stands now, its latest signal, and whether they agree.
+- **Study them.** *Study on the EGX* fetches about three years of daily
+  prices for every stock in the scan list (through the price archive) and,
+  for each chosen indicator, measures what the price did 5 and 20 sessions
+  after every buy and sell signal, against the stock's ordinary move over
+  the same span. Each gets a verdict (helped, misled, no edge, too few
+  signals) and the stocks it worked best on. Results are kept in
+  `state/memory/memory.db`; the analyst weighs each indicator by them and can
+  run the same study on one stock (`study_indicators`).
+
+The study is arithmetic (`egx_advisor/indicators.py`), with no look-ahead:
+a signal on a day uses bars up to that day and the trade starts at the next
+session's open. It is history, not a promise: signals overlap, fees are not
+counted, and a small sample is marked as such.
 
 ## The loop, and why the gates are in this order
 

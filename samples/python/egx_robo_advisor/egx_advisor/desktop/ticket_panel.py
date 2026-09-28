@@ -1,8 +1,9 @@
 """The panel beside the Thndr X browser that fills a buy ticket on request.
 
 The logic and its safety checks are in execution/ticket_fill.py. This file is
-the form: teach the two boxes, pick an order from the plan, press Fill, read
-what happened. Every fill and refusal also goes to the bot's log.
+the form: pick an order from the plan, press Fill, read what happened. The two
+boxes are taught in the Training tab (teach_box.py). Every fill and refusal
+also goes to the bot's log.
 
 A buy the chat analyst prepared (prepare_buy, "ticket_proposal" on the bus)
 is listed first. For AUTOFILL_SECONDS after it was prepared the panel also
@@ -20,7 +21,6 @@ from typing import Any, Callable, Optional
 from PySide6.QtCore import Qt, QTimer, Slot
 from PySide6.QtWebEngineCore import QWebEnginePage, QWebEngineScript
 from PySide6.QtWidgets import (
-    QGridLayout,
     QGroupBox,
     QLabel,
     QListWidget,
@@ -36,10 +36,7 @@ from ..paths import bus_path, config_path
 from . import theme
 
 TICKET_FILE = config_path("thndr.ticket.toml")
-PICK_POLL_MS = 300
 READBACK_DELAY_MS = 400
-#: Teaching gives up after this long: a page that navigated away has lost the picker.
-PICK_TIMEOUT_MS = 120_000
 
 
 class TicketPanel(QWidget):
@@ -58,13 +55,9 @@ class TicketPanel(QWidget):
         self._autofill_busy = False
         self._plan_key: Any = None
         self._halted = True
-        self._picking: Optional[str] = None
+        #: True while the Training tab is teaching a box: no fill meanwhile.
+        self.is_teaching: Callable[[], bool] = lambda: False
         self._message: tuple[str, str, dict] = ("", "info", {})
-        self._pick_timer = QTimer(self)
-        self._pick_timer.timeout.connect(self._poll_picker)
-        self._pick_deadline = QTimer(self)
-        self._pick_deadline.setSingleShot(True)
-        self._pick_deadline.timeout.connect(self.cancel_teaching)
 
         self.setMinimumWidth(300)
         self.setMaximumWidth(420)
@@ -77,26 +70,9 @@ class TicketPanel(QWidget):
         self.state = QLabel()
         self.state.setWordWrap(True)
 
-        self.teach_box = QGroupBox()
-        grid = QGridLayout(self.teach_box)
-        self._field_labels: dict[str, QLabel] = {}
-        self._field_states: dict[str, QLabel] = {}
-        self._teach_buttons: dict[str, QPushButton] = {}
-        for row, name in enumerate(tf.FIELDS):
-            label, status, button = QLabel(), QLabel(), QPushButton()
-            status.setAlignment(Qt.AlignCenter)
-            button.clicked.connect(lambda _=False, n=name: self.teach(n))
-            grid.addWidget(label, row, 0)
-            grid.addWidget(status, row, 1)
-            grid.addWidget(button, row, 2)
-            self._field_labels[name] = label
-            self._field_states[name] = status
-            self._teach_buttons[name] = button
-        self.cancel_button = QPushButton()
-        self.cancel_button.setProperty("variant", "ghost")
-        self.cancel_button.clicked.connect(self.cancel_teaching)
-        self.cancel_button.hide()
-        grid.addWidget(self.cancel_button, len(tf.FIELDS), 0, 1, 3)
+        self.teach_state = QLabel()
+        self.teach_state.setWordWrap(True)
+        self.teach_state.setProperty("muted", "true")
 
         self.orders_box = QGroupBox()
         orders_layout = QVBoxLayout(self.orders_box)
@@ -121,7 +97,7 @@ class TicketPanel(QWidget):
         layout.addWidget(self.title)
         layout.addWidget(self.intro)
         layout.addWidget(self.state)
-        layout.addWidget(self.teach_box)
+        layout.addWidget(self.teach_state)
         layout.addWidget(self.orders_box, 1)
         layout.addWidget(self.message)
         # Takes the free space only when the orders box is hidden (switched off).
@@ -132,19 +108,18 @@ class TicketPanel(QWidget):
 
     @staticmethod
     def _load_ticket() -> tf.TicketMap:
-        try:
-            return tf.load_ticket_map(TICKET_FILE)
-        except Exception:  # noqa: BLE001 - an unreadable file means "teach again"
-            return tf.TicketMap()
+        from .teach_box import load_ticket
+
+        return load_ticket(TICKET_FILE)
+
+    def reload_ticket(self) -> None:
+        """The boxes were taught again (Training tab)."""
+        self._ticket = self._load_ticket()
+        self._paint_fields()
 
     def retranslate(self) -> None:
         self.title.setText(tr("ticket.title"))
         self.intro.setText(tr("ticket.intro"))
-        self.teach_box.setTitle(tr("ticket.teach_box"))
-        for name in tf.FIELDS:
-            self._field_labels[name].setText(tr(f"ticket.field.{name}"))
-            self._teach_buttons[name].setText(tr("ticket.teach"))
-        self.cancel_button.setText(tr("ticket.cancel"))
         self.orders_box.setTitle(tr("ticket.orders_box"))
         self.steps.setText(tr("ticket.steps"))
         self.fill_button.setText(tr("ticket.fill"))
@@ -190,7 +165,7 @@ class TicketPanel(QWidget):
         # Switched off (the default): only the title and one line saying how to
         # switch it on, instead of a column of disabled boxes beside Thndr X.
         on = tf.enabled(os.environ)
-        for widget in (self.intro, self.teach_box, self.orders_box):
+        for widget in (self.intro, self.teach_state, self.orders_box):
             widget.setVisible(on)
         self.setMinimumWidth(300 if on else 200)
         self.setMaximumWidth(420 if on else 240)
@@ -202,13 +177,10 @@ class TicketPanel(QWidget):
             theme.say(self.state, "", "info")
 
     def _paint_fields(self) -> None:
-        for name in tf.FIELDS:
-            taught = name in self._ticket.fields
-            status = self._field_states[name]
-            status.setText(tr("ticket.taught") if taught else tr("ticket.not_taught"))
-            theme.restyle_pill(status, "ok" if taught else "muted")
-            self._teach_buttons[name].setEnabled(self._picking is None)
-        self.cancel_button.setVisible(self._picking is not None)
+        taught = self._ticket.complete
+        self.teach_state.setText(tr("ticket.taught_all") if taught else tr("ticket.teach_where"))
+        self.teach_state.setProperty("muted", "true" if taught else "false")
+        theme.restyle(self.teach_state)
 
     def _paint_orders(self) -> None:
         selected = self.orders.currentRow()
@@ -237,52 +209,9 @@ class TicketPanel(QWidget):
         self._message = (key, kind, values)
         theme.say(self.message, tr(key, **values) if key else "", kind)
 
-    # --------------------------------------------------------------- teaching
-
     def _run(self, script: str, callback: Callable[[Any], None]) -> None:
         # The app's own world: the page's scripts cannot see or change these.
         self._page().runJavaScript(script, QWebEngineScript.ApplicationWorld, callback)
-
-    @Slot()
-    def teach(self, name: str) -> None:
-        self._picking = name
-        self._paint_fields()
-        self._say("ticket.picking", "info", field=tr(f"ticket.field.{name}"))
-        self._pick_deadline.start(PICK_TIMEOUT_MS)
-        self._run(tf.PICKER_SCRIPT, lambda _result: self._pick_timer.start(PICK_POLL_MS))
-
-    @Slot()
-    def cancel_teaching(self) -> None:
-        self._pick_timer.stop()
-        self._pick_deadline.stop()
-        self._picking = None
-        self._run(tf.CANCEL_PICKER_SCRIPT, lambda _result: None)
-        self._paint_fields()
-        self._say("")
-
-    def _poll_picker(self) -> None:
-        self._run(tf.PICKED_SCRIPT, self._picked)
-
-    def _picked(self, result: Any) -> None:
-        picked = tf.parse_result(result)
-        name = self._picking
-        if not picked or name is None:
-            return
-        if not picked.get("ok"):
-            self._say("ticket.not_a_box", "bad")
-            return
-        try:
-            self._ticket = self._ticket.with_field(name, tf.field_from_picked(picked))
-            tf.save_ticket_map(TICKET_FILE, self._ticket)
-        except (ValueError, OSError) as exc:
-            self._say("ticket.page_error", "bad")
-            self.message.setToolTip(str(exc))
-        else:
-            self._say("ticket.picked", "ok", field=tr(f"ticket.field.{name}"))
-        self._pick_timer.stop()
-        self._pick_deadline.stop()
-        self._picking = None
-        self._paint_fields()
 
     # ------------------------------------------------------------------ filling
 
@@ -322,7 +251,7 @@ class TicketPanel(QWidget):
         if self._autofill_key == done_key:
             return
         now = datetime.now(timezone.utc)
-        if now > until or self._picking is not None:
+        if now > until or self.is_teaching():
             return
         refusal = tf.check_fill(order, plan_ts=self._order_ts.get(order), now=now,
                                 halted=self._halted, switched_on=tf.enabled(os.environ),

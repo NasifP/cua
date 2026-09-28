@@ -41,6 +41,10 @@ Buy / Add / Hold / Trim / Sell (in Arabic: شراء / زيادة / احتفاظ 
 - the main risks, and what would change the view;
 - your confidence (low / medium / high) and the horizon that matches the
   operator's style;
+- the operator's own indicators (your_indicators): say what each one shows
+  now and whether they agree; weigh each by what the EGX study found
+  (indicator_study: helped / misled / no edge / too few signals), and use
+  study_indicators for a stock the study has not covered;
 - the operator's own notes (their reasons for holding, their exit rule) and
   preferences: respect them, and say plainly when the data contradicts them.
 Be concrete and short: a verdict line per stock, then the reasons. Size
