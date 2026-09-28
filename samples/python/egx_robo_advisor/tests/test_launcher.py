@@ -95,3 +95,19 @@ def test_the_agent_always_runs_as_a_dry_run() -> None:
 
 def test_specs_are_plain_data() -> None:
     assert all(isinstance(s, ProcessSpec) for s in build_specs({}))
+
+
+def test_a_process_can_get_environment_the_others_do_not(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(launcher_module, "LOG_DIR", tmp_path / "logs")
+    seen: dict = {}
+
+    def popen(argv, **kwargs):
+        seen[argv[0]] = kwargs["env"]
+        return FakeProcess([], argv[0])
+
+    specs = [ProcessSpec("dashboard", ["dash"], env={"EGX_NAV_SECRET": "s"}),
+             ProcessSpec("agent", ["agent"])]
+    Launcher(specs=specs, env={"SHARED": "1"}, popen=popen, probe=lambda p, h: "free",
+             halt=lambda reason: None, say=lambda _: None).start_all()
+    assert seen["dash"]["EGX_NAV_SECRET"] == "s" and seen["dash"]["SHARED"] == "1"
+    assert "EGX_NAV_SECRET" not in seen["agent"]

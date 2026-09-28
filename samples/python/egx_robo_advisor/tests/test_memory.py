@@ -220,3 +220,12 @@ def test_the_scorecard_counts_only_reached_horizons():
     assert five.average == pytest.approx(0.0)
     assert "right 1 of 2" in describe(scores, arabic=False)
     assert "5 جلسات" in describe([], arabic=True)
+
+
+def test_the_thndr_layout_is_kept_by_key(tmp_path):
+    memory = mem.Memory(tmp_path / "m.db")
+    assert memory.ui_get("thndr.stock_url") is None
+    memory.ui_set("thndr.stock_url", "https://x.thndr.app/stocks/{ticker}")
+    memory.ui_set("thndr.stock_url", "https://x.thndr.app/s/{ticker}")
+    assert memory.ui_get("thndr.stock_url") == "https://x.thndr.app/s/{ticker}"
+    assert [k for k, _, _ in memory.ui_items()] == ["thndr.stock_url"]

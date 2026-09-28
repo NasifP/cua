@@ -3,6 +3,12 @@
 The logic and its safety checks are in execution/ticket_fill.py. This file is
 the form: teach the two boxes, pick an order from the plan, press Fill, read
 what happened. Every fill and refusal also goes to the bot's log.
+
+A buy the chat analyst prepared (prepare_buy, "ticket_proposal" on the bus)
+is listed first. For AUTOFILL_SECONDS after it was prepared the panel also
+fills it on its own as soon as the operator opens that stock's buy ticket,
+under the same check_fill conditions as a press on Fill. It still only writes
+the two numbers; the operator checks them and presses Buy.
 """
 
 from __future__ import annotations
@@ -43,7 +49,13 @@ class TicketPanel(QWidget):
         self._page = page
         self._ticket = self._load_ticket()
         self._orders: list[tf.TicketOrder] = []
+        #: When each listed order was made: the plan's time, or the proposal's.
+        self._order_ts: dict[tf.TicketOrder, Optional[datetime]] = {}
         self._plan_ts: Optional[datetime] = None
+        self._proposal: Optional[tf.TicketOrder] = None
+        self._autofill_until: Optional[datetime] = None
+        self._autofill_key: Any = None
+        self._autofill_busy = False
         self._plan_key: Any = None
         self._halted = True
         self._picking: Optional[str] = None
@@ -150,17 +162,29 @@ class TicketPanel(QWidget):
             with StateBus(bus_path()) as bus:
                 halted = bus.control_state().halted
                 plan = bus.get("plan") or {}
+                proposal = (bus.get("ticket_proposal") or {}).get("payload") or {}
         except Exception:  # noqa: BLE001 - no bus: nothing may be filled
-            halted, plan = True, {}
-        key = (plan.get("ts"), halted, tf.enabled(os.environ))
-        if key == self._plan_key:
-            return
-        self._plan_key = key
-        self._halted = halted
-        self._plan_ts = tf.parse_ts(plan.get("ts"))
-        self._orders = [o for o in tf.orders_from_plan(plan.get("payload")) if o.side == "buy"]
-        self._paint_orders()
-        self._paint_state()
+            halted, plan, proposal = True, {}, {}
+        key = (plan.get("ts"), proposal.get("ts"), halted, tf.enabled(os.environ))
+        if key != self._plan_key:
+            self._plan_key = key
+            self._halted = halted
+            self._plan_ts = tf.parse_ts(plan.get("ts"))
+            planned = [o for o in tf.orders_from_plan(plan.get("payload")) if o.side == "buy"]
+            self._order_ts = {o: self._plan_ts for o in planned}
+            self._proposal, self._autofill_until = None, None
+            proposed = tf.orders_from_plan({"orders": [proposal]}) if proposal else []
+            made = tf.parse_ts(proposal.get("ts"))
+            if proposed and proposed[0].side == "buy" and made is not None \
+                    and datetime.now(timezone.utc) - made <= tf.MAX_PLAN_AGE:
+                self._proposal = proposed[0]
+                self._autofill_until = tf.parse_ts(proposal.get("autofill_until"))
+                self._order_ts[self._proposal] = made
+            self._orders = ([self._proposal] if self._proposal else []) + \
+                [o for o in planned if o != self._proposal]
+            self._paint_orders()
+            self._paint_state()
+        self._autofill()
 
     def _paint_state(self) -> None:
         # Switched off (the default): only the title and one line saying how to
@@ -190,7 +214,8 @@ class TicketPanel(QWidget):
         selected = self.orders.currentRow()
         self.orders.clear()
         for order in self._orders:
-            item = QListWidgetItem(tr("ticket.order_line", symbol=order.symbol,
+            line = "ticket.proposal_line" if order == self._proposal else "ticket.order_line"
+            item = QListWidgetItem(tr(line, symbol=order.symbol,
                                       quantity=order.quantity_text, price=order.price_text))
             item.setToolTip(order.rationale)
             self.orders.addItem(item)
@@ -275,8 +300,8 @@ class TicketPanel(QWidget):
             self._say("ticket.plan_changed", "bad")
             return
         refusal = tf.check_fill(
-            order, plan_ts=self._plan_ts, now=datetime.now(timezone.utc), halted=self._halted,
-            switched_on=tf.enabled(os.environ), ticket=self._ticket,
+            order, plan_ts=self._order_ts.get(order), now=datetime.now(timezone.utc),
+            halted=self._halted, switched_on=tf.enabled(os.environ), ticket=self._ticket,
         )
         if refusal is not None:
             key, values = refusal
@@ -285,6 +310,42 @@ class TicketPanel(QWidget):
             return
         self.fill_button.setEnabled(False)
         self._run(tf.fill_script(order, self._ticket), lambda result: self._filled(order, result))
+
+    # ------------------------------------------------------- the analyst's buy
+
+    def _autofill(self) -> None:
+        """Fill the analyst's prepared buy once its ticket is open. Every tick."""
+        order, until = self._proposal, self._autofill_until
+        if order is None or until is None or self._autofill_busy:
+            return
+        done_key = (order, until)
+        if self._autofill_key == done_key:
+            return
+        now = datetime.now(timezone.utc)
+        if now > until or self._picking is not None:
+            return
+        refusal = tf.check_fill(order, plan_ts=self._order_ts.get(order), now=now,
+                                halted=self._halted, switched_on=tf.enabled(os.environ),
+                                ticket=self._ticket)
+        if refusal is not None:
+            self._autofill_key = done_key  # say it once, not every second
+            key, values = refusal
+            self._say(key, "bad", **values)
+            return
+        self._autofill_busy = True
+
+        def result(value: Any) -> None:
+            self._autofill_busy = False
+            outcome = tf.parse_result(value) or {}
+            # The ticket is not open yet: keep waiting for the operator.
+            if outcome.get("reason") in ("field_missing", "symbol_not_on_page"):
+                if not self._message[0]:
+                    self._say("ticket.waiting", "info", ticker=order.ticker)
+                return
+            self._autofill_key = done_key
+            self._filled(order, value)
+
+        self._run(tf.fill_script(order, self._ticket), result)
 
     def _filled(self, order: tf.TicketOrder, result: Any) -> None:
         outcome = tf.parse_result(result)

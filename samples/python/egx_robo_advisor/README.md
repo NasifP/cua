@@ -393,6 +393,40 @@ It writes two values and nothing else: no click, no key, no Enter, and it
 never looks for the Buy button. Every fill and every refusal is written to
 the bot's log.
 
+## The analyst in Thndr X: browsing and getting a buy ready
+
+In the desktop app the chat analyst can use the Thndr X window
+(`EGX_BROWSE=true`, the default; Settings -> *Let the analyst use Thndr X*):
+
+- open a stock's page, a tab (news, financials, order book) or search, and
+  read the figures on the page;
+- get a buy ready when you ask for one ("جهّزلي شراء 10 COMI بـ 90"): it checks
+  the order (whole shares, limit within 10% of the last price, not more than
+  your cash, not blocked by the news brake, not halted), lists it first in
+  the ticket panel, opens the stock and outlines its Buy button.
+
+You press Buy on the stock page. With ticket filling on and the boxes taught
+(above), the panel writes the quantity and price into the ticket within three
+minutes of the order being prepared. Then you check them and press the final
+Buy.
+
+It can never press Buy, Sell, confirm, or anything that moves money
+(`egx_advisor/browse.py`):
+
+- clicks naming an order or money action, in English or Arabic, are
+  refused, both the text asked for and the element's own text, label and
+  title;
+- nothing that submits a form, and nothing inside a form or dialog with a
+  number box (an order ticket), is clicked;
+- it navigates only on the Thndr X host;
+- HALT stops it, and so does `EGX_BROWSE=false`;
+- only the dashboard process, where the chat runs, gets this channel; the
+  bot's agent keeps its read-only bridge.
+
+The app learns a stock page's address the first time one is opened (by you
+or by a search), and opens stock pages directly from then on. The learned
+address is kept in `state/memory/memory.db`.
+
 ## The loop, and why the gates are in this order
 
 Each cycle runs the cheap, safe, offline checks first and only then reaches for

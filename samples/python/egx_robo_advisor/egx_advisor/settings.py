@@ -112,6 +112,10 @@ BEHAVIOUR_FIELDS: tuple[Field, ...] = (
     Field("EGX_BROWSER_SOFTWARE", "Software drawing for Thndr X", "bool",
           "Draws the built-in browser without the graphics card. Fixes a frozen Thndr X "
           "on some PCs. Restart the app after changing it.", default="true"),
+    Field("EGX_BROWSE", "Let the analyst use Thndr X", "bool",
+          "The chat analyst can open stock pages, tabs and search in the Thndr X window, and "
+          "get a buy ready. It can never press Buy, Sell or anything that moves money. HALT "
+          "stops it.", default="true"),
     Field("EGX_TICKET_FILL", "Fill buy tickets in Thndr X", "bool",
           "When on, the Thndr X tab can write an order's quantity and price into an open "
           "buy ticket when you press Fill. It never presses Buy.", default="false"),

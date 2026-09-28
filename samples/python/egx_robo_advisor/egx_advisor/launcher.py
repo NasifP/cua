@@ -59,6 +59,8 @@ class ProcessSpec:
     health: str = ""
     #: Restart if it exits unexpectedly.
     restart: bool = True
+    #: Extra environment for this process only (on top of the launcher's).
+    env: dict[str, str] = field(default_factory=dict)
 
 
 @dataclass
@@ -102,7 +104,7 @@ class Launcher:
         kwargs: dict[str, Any] = {
             "cwd": str(PROJECT_ROOT),
             # The child halts the bus and exits if this process disappears.
-            "env": {**self.env, "EGX_PARENT_PID": str(os.getpid())},
+            "env": {**self.env, **spec.env, "EGX_PARENT_PID": str(os.getpid())},
             "stdout": log,
             "stderr": subprocess.STDOUT,
         }

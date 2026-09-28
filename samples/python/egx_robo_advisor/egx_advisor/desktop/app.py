@@ -21,6 +21,12 @@ Thndr X tab only through `bridge.BridgeServer`, which offers three reads and
 no input at all, so it cannot click anything anywhere -- on Thndr X, on the
 dashboard, or on any other window.
 
+The chat analyst (in the dashboard process) gets a second, separate channel,
+`browse.BrowseServer`: it can open Thndr X pages, click tabs and links, search
+and get a buy ready, under the checks in browse.py. It can never press Buy,
+Sell, confirm or anything that moves money; HALT stops it. The agent process
+is never given this channel.
+
 Sign in to Thndr X yourself in its tab; the session is kept in state/browser
 so it survives a restart. That folder holds a logged-in broker session: do not
 copy or share it.
@@ -76,6 +82,7 @@ from .bridge import BridgeServer
 from .chart_tab import ChartTab
 from .lab_tab import LabTab
 from .memory_tab import MemoryTab
+from .nav_page import QtNavPage
 from .popout import PopOut
 from .settings_tab import SettingsTab
 from .sources_tab import SourcesTab
@@ -387,6 +394,7 @@ class MainWindow(QMainWindow):
         # Through a function: the view is replaced when Thndr X changes window.
         self.page = QtPage(lambda: self.thndr)
         self.bridge: Optional[BridgeServer] = None
+        self.browse_server: Optional[Any] = None
         self.launcher: Optional[Launcher] = None
         self._dashboard_loaded = False
 
@@ -402,8 +410,70 @@ class MainWindow(QMainWindow):
         view.egx_loading = True
         view.loadStarted.connect(lambda v=view: setattr(v, "egx_loading", True))
         view.loadFinished.connect(lambda ok, v=view: setattr(v, "egx_loading", False))
+        # Learn the stock-page address from pages the operator opens.
+        view.urlChanged.connect(lambda u: self._learn_address(u.toString()))
         view.load(url)
         return view
+
+    def _known_tickers(self) -> list[str]:
+        from ..scanner import load_universe
+        from ..paths import config_path
+
+        tickers = set()
+        try:
+            tickers.update(s.removesuffix(".CA") for s in
+                           load_universe(config_path("scan_universe.toml")))
+        except Exception:  # noqa: BLE001 - no list: learn from the portfolio only
+            pass
+        try:
+            from ..bus import StateBus
+
+            with StateBus(bus_path()) as bus:
+                portfolio = (bus.get("portfolio") or {}).get("payload") or {}
+            tickers.update(p["symbol"].removesuffix(".CA") for p in portfolio.get("positions", []))
+        except Exception:  # noqa: BLE001
+            pass
+        return sorted(tickers)
+
+    def _learn_address(self, url: str) -> None:
+        from .. import browse
+
+        try:
+            pattern = browse.stock_pattern(url, self._known_tickers(),
+                                           self._thndr_home.toString())
+            if pattern and pattern != self.memory.ui_get(browse.STOCK_URL_KEY):
+                self.memory.ui_set(browse.STOCK_URL_KEY, pattern)
+        except Exception:  # noqa: BLE001 - learning is a convenience, never a failure
+            pass
+
+    def _browser(self) -> Any:
+        """The analyst's hands in Thndr X, with every check in browse.py."""
+        from .. import browse
+
+        def halted() -> bool:
+            try:
+                from ..bus import StateBus
+
+                with StateBus(bus_path()) as bus:
+                    return bus.control_state().halted
+            except Exception:  # noqa: BLE001 - no bus: treat as halted
+                return True
+
+        def log(message: str) -> None:
+            kind = "guard" if message.startswith("guard:") else "ui_action"
+            try:
+                from ..bus import EventKind, StateBus
+
+                with StateBus(bus_path()) as bus:
+                    bus.publish(EventKind(kind), message, phase="browse")
+            except Exception:  # noqa: BLE001 - the log is a record, never a gate
+                pass
+
+        return browse.Browser(
+            page=QtNavPage(lambda: self.thndr), home=self._thndr_home.toString(),
+            is_halted=halted, is_enabled=lambda: browse.enabled(os.environ),
+            remember=self.memory.ui_set, recall=self.memory.ui_get,
+            known_tickers=self._known_tickers, log=log)
 
     def _close_thndr_view(self) -> None:
         """Before Thndr X changes window: close the view instead of moving it.
@@ -530,6 +600,9 @@ class MainWindow(QMainWindow):
     def start_processes(self, bridge_running: bool = False) -> None:
         if not bridge_running:
             self.bridge = BridgeServer(self.page).start()
+            from ..browse import BrowseServer
+
+            self.browse_server = BrowseServer(self._browser()).start()
         child_env = dict(os.environ)
         child_env.update(self.bridge.env())
         # No window to bring forward here: the agent reads the app's own browser.
@@ -538,6 +611,8 @@ class MainWindow(QMainWindow):
             ProcessSpec(
                 "dashboard", child_command("dashboard"),
                 port=self.dashboard_port, health="/healthz",
+                # Only the dashboard, where the chat analyst runs, may browse.
+                env=self.browse_server.env() if self.browse_server else {},
             ),
             ProcessSpec(
                 "agent",
@@ -633,6 +708,8 @@ class MainWindow(QMainWindow):
             _halt_bus("desktop app closed")
         if self.bridge is not None:
             self.bridge.stop()
+        if self.browse_server is not None:
+            self.browse_server.stop()
         self.thndr_slot.shutdown()
         # A page must go before its profile, or Qt warns and may lose the
         # session it was about to write.
