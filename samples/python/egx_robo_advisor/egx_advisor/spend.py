@@ -243,9 +243,13 @@ def metered(
 ) -> Callable[..., Any]:
     """Wrap a litellm-style `completion` so every call is checked and counted.
 
-    With a `reservation`, a call spends from it: it goes ahead while the
-    reservation has calls left, and its cost comes off the reservation as it
-    is added to the day. Without one, live reservations count as spent.
+    With a `reservation`, a call spends from it: the run's own reservation is
+    left out of what is held, so its reserved headroom is usable, and its cost
+    comes off the reservation as it is added to the day. Both limits are still
+    checked on every call: a run whose real spending passes its estimate (or
+    that reserved no dollars because its model has no price) is refused once
+    the day is spent, like any other call. Without a reservation, live
+    reservations count as spent.
     `on_cost` gets each call's dollars (None when unpriced), for a run's total.
     """
 
@@ -265,15 +269,16 @@ def metered(
             current = today(bus, now())
             own = (current.get("reservations") or {}).get(reservation.id) \
                 if reservation is not None else None
+            # The run's own reservation is excluded, never skipped past: the
+            # checks below hold for reserved calls too.
             held_usd, held_calls = reserved(current, now(),
                                             exclude=reservation.id if own else "")
-            covered = own is not None and int(own.get("calls", 0)) >= 1
-            if not covered and current["calls"] + held_calls >= call_limit:
+            if current["calls"] + held_calls >= call_limit:
                 raise BudgetExceeded(
                     f"daily model call limit reached ({current['calls']}/{call_limit}); "
                     "raise EGX_DAILY_CALL_LIMIT in Settings to allow more"
                 )
-            if not covered and current["usd"] + held_usd >= usd_limit:
+            if current["usd"] + held_usd >= usd_limit:
                 raise BudgetExceeded(
                     f"daily model spend limit reached ({current['usd'] * rate:.2f}/"
                     f"{usd_limit * rate:.2f} EGP); raise the daily model spend limit "

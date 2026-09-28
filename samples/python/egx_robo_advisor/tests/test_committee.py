@@ -110,7 +110,7 @@ def analyzer(toolbox, bus, script, **kwargs):
 
 
 def test_reports_are_read_from_their_last_lines():
-    risk = cm.parse_report(cm.MEMBERS[2], "blah RISK: allow ... RISK: reduce\nMAX_EGP: ٢٬٥٠٠")
+    risk = cm.parse_report(cm.MEMBERS[2], "blah RISK: allow ...\n**RISK: reduce**\nMAX_EGP: ٢٬٥٠٠")
     assert risk.ok and risk.risk == "reduce" and risk.max_egp == 2500
     assert not cm.parse_report(cm.MEMBERS[1], "VERDICT: positive").ok  # BRAKE missing
     assert not cm.parse_report(cm.MEMBERS[0], "", error="boom").ok
@@ -298,3 +298,73 @@ def test_the_chat_uses_the_committee_when_switched_on(toolbox, bus, monkeypatch)
     assert "فريق التحليل" in text
     assert {k["model"] for w, k in script.seen if w != "lead"} == {"cheap"}
     assert {k["model"] for w, k in script.seen if w == "lead"} == {"strong"}
+
+
+# --------------------------------------------------------------------------- #
+# Security fixes: anchored report lines, a symbol-bound gate, the ledger
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.parametrize("text", [
+    "VERDICT: negative\nBRAKE: now",                       # not "no"
+    "VERDICT: negative\nBRAKE: none",
+    "VERDICT: negative\nthe headline says BRAKE: no",       # not a whole line
+    "BRAKE: no\n" + "\n".join(f"line {i}" for i in range(6)) + "\nVERDICT: neutral",  # not the tail
+])
+def test_a_brake_line_that_is_not_a_whole_tail_line_is_no_report(text):
+    report = cm.parse_report(cm.MEMBERS[1], text)
+    assert report.brake is None and not report.ok
+    assert not cm.decide(_reports(news=text)).buy_allowed
+
+
+def test_repeated_lines_are_read_cautiously():
+    news = cm.parse_report(cm.MEMBERS[1], "VERDICT: positive\nBRAKE: yes\nBRAKE: no")
+    risk = cm.parse_report(cm.MEMBERS[2], "RISK: reject\nRISK: allow\nMAX_EGP: 5000\n"
+                                          "MAX_EGP: 900")
+    assert news.brake == "yes" and risk.risk == "reject" and risk.max_egp == 900
+
+
+def test_the_lead_cannot_buy_a_stock_the_team_did_not_analyse(toolbox, bus):
+    other = [("prepare_buy", {"symbol": "TMGH", "quantity": 1, "limit_price": 90})]
+    script = Script(GOOD, lead_calls=other)
+    result = analyzer(toolbox, bus, script).run("اشتري COMI")
+    assert result.gate.symbols == frozenset({"COMI"}) and result.gate.buy_allowed
+    tool_msg = [m for m in [k for w, k in script.seen if w == "lead"][1]["messages"]
+                if m["role"] == "tool"][0]
+    assert "analysed only COMI" in tool_msg["content"]
+    assert bus.get("ticket_proposal") is None
+
+
+def test_no_stock_analysed_closes_the_gate():
+    gate = cm.decide(_reports(), symbols=frozenset())
+    assert not gate.buy_allowed and not gate.allows("COMI")
+
+
+def test_a_reservation_does_not_skip_the_daily_spend_check(bus):
+    held = spend.reserve(bus, usd=0.0, calls=5, purpose="t", env=ENV)  # unpriced: no dollars
+    mine = spend.metered(lambda **k: "r", purpose="mine", bus_factory=lambda: bus, env=ENV,
+                         cost=lambda r, m: 0.25, reservation=held)
+    mine()  # $0.25 spent: the $0.20 day is gone
+    with pytest.raises(spend.BudgetExceeded):
+        mine()  # the reservation still has 4 calls, but the day has no money left
+    assert spend.today(bus)["reservations"][held.id]["calls"] == 4
+
+
+def test_an_unpriced_committee_runs_its_specialists_one_at_a_time(toolbox, bus):
+    active, peak, lock = [0], [0], threading.Lock()
+    script = Script(GOOD)
+
+    def tracked(**kwargs):
+        with lock:
+            active[0] += 1
+            peak[0] = max(peak[0], active[0])
+        try:
+            return script(**kwargs)
+        finally:
+            with lock:
+                active[0] -= 1
+
+    a = cm.MultiAgentAnalyzer(toolbox, tracked, worker_model="x", lead_model="y", bus=bus,
+                              price=lambda m: None, cost=lambda r, m: None)
+    result = a.run("COMI")
+    assert peak[0] == 1 and all(r.ok for r in result.reports.values())

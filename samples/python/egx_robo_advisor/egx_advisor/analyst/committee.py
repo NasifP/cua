@@ -57,6 +57,9 @@ RISK_TOOLS = ("get_portfolio", "portfolio_report", "stock_levels", "average_calc
 LEAD_TOOLS = ("thndr_read_page", "thndr_open_stock", "thndr_click", "thndr_search",
               "thndr_open", "prepare_buy")
 
+#: Tools whose `symbol` argument means the specialist studied that stock.
+SYMBOL_TOOLS = frozenset({"analyze_stock", "stock_levels", "study_indicators"})
+
 #: Upper bound on tokens per character of prompt text, for the worst case.
 #: One token per character is above what the supported tokenizers produce
 #: for Arabic or English text, so the reservation is never too small.
@@ -145,16 +148,39 @@ MEMBERS = (
 # Reports and the buy gate
 # --------------------------------------------------------------------------- #
 
-_VERDICT = re.compile(r"VERDICT\s*[:：]\s*(positive|negative|neutral)", re.I)
-_BRAKE = re.compile(r"BRAKE\s*[:：]\s*(yes|no)", re.I)
-_RISK = re.compile(r"RISK\s*[:：]\s*(allow|reduce|reject)", re.I)
-_MAX = re.compile(r"MAX_EGP\s*[:：]\s*([0-9٠-٩][0-9٠-٩,.٬٫]*|none)", re.I)
+def _line(name: str, value: str) -> re.Pattern:
+    """One whole fixed line, e.g. "BRAKE: no": nothing before or after the value.
+
+    Markdown emphasis around the line (**, `, _) and a final full stop are
+    allowed; "BRAKE: now", "BRAKE: none" or "... BRAKE: no" inside a sentence
+    are not a BRAKE line.
+    """
+    return re.compile(rf"^[\s*_`]*{name}[\s*_`]*[:：][\s*_`]*({value})[\s*_`]*[.。]?[\s*_`]*$",
+                      re.I)
+
+
+_VERDICT = _line("VERDICT", "positive|negative|neutral")
+_BRAKE = _line("BRAKE", "yes|no")
+_RISK = _line("RISK", "allow|reduce|reject")
+_MAX = _line("MAX_EGP", "[0-9٠-٩][0-9٠-٩,.٬٫]*|none")
 _DIGITS = str.maketrans("٠١٢٣٤٥٦٧٨٩٫", "0123456789.")
+#: The fixed lines are read only from the end of a report: its last few
+#: non-empty lines. Text quoted earlier (a headline, a page) cannot set them.
+TAIL_LINES = 4
+#: When the tail repeats a line with different values, the most cautious wins.
+_CAUTION = {"brake": ("no", "yes"), "risk": ("allow", "reduce", "reject")}
 
 
-def _last(pattern: re.Pattern, text: str) -> Optional[str]:
-    found = pattern.findall(text or "")
-    return found[-1].lower() if found else None
+def _tail(text: str) -> list[str]:
+    return [ln for ln in (text or "").splitlines() if ln.strip()][-TAIL_LINES:]
+
+
+def _values(pattern: re.Pattern, text: str) -> list[str]:
+    return [m.group(1).lower() for ln in _tail(text) if (m := pattern.match(ln))]
+
+
+def _most_cautious(values: Sequence[str], order: Sequence[str]) -> Optional[str]:
+    return max(values, key=order.index) if values else None
 
 
 @dataclass
@@ -182,16 +208,21 @@ class Report:
 
 def parse_report(member: Member, text: str, error: str = "") -> Report:
     report = Report(member.key, member.title, (text or "").strip(), error)
-    report.verdict = _last(_VERDICT, report.text)
-    report.brake = _last(_BRAKE, report.text)
-    report.risk = _last(_RISK, report.text)
-    amount = _last(_MAX, report.text)
-    if amount and amount != "none":
+    verdicts = _values(_VERDICT, report.text)
+    report.verdict = verdicts[-1] if verdicts else None
+    report.brake = _most_cautious(_values(_BRAKE, report.text), _CAUTION["brake"])
+    report.risk = _most_cautious(_values(_RISK, report.text), _CAUTION["risk"])
+    amounts = []
+    for amount in _values(_MAX, report.text):
+        if amount == "none":
+            continue
         try:
             value = float(amount.translate(_DIGITS).replace(",", "").replace("٬", ""))
-            report.max_egp = value if value > 0 else None
         except ValueError:
-            report.max_egp = None
+            continue
+        if value > 0 and value != float("inf"):
+            amounts.append(value)
+    report.max_egp = min(amounts) if amounts else None
     return report
 
 
@@ -201,10 +232,23 @@ class Gate:
     buy_allowed: bool
     max_egp: Optional[float] = None
     reasons: list[str] = field(default_factory=list)
+    #: Tickers (browse.ticker_of) the specialists looked up with data; a buy is
+    #: allowed only for one of these. None: not bound (callers outside analyze).
+    symbols: Optional[frozenset[str]] = None
+
+    def allows(self, symbol: Any) -> bool:
+        from .. import browse
+
+        return self.symbols is None or browse.ticker_of(str(symbol or "")) in self.symbols
 
 
-def decide(reports: Mapping[str, Report], macro: Optional[Any] = None) -> Gate:
-    """The buy gate. `macro` is market_state.MacroState; risk-off closes the gate."""
+def decide(reports: Mapping[str, Report], macro: Optional[Any] = None,
+           symbols: Optional[frozenset[str]] = None) -> Gate:
+    """The buy gate. `macro` is market_state.MacroState; risk-off closes the gate.
+
+    `symbols` are the tickers the specialists analysed; an empty set closes
+    the gate, since no stock was checked.
+    """
     reasons = []
     for member in MEMBERS:
         report = reports.get(member.key)
@@ -219,8 +263,10 @@ def decide(reports: Mapping[str, Report], macro: Optional[Any] = None) -> Gate:
         reasons.append("وكيل المخاطر طلب كمية قليلة من غير ما يحدد مبلغ")
     if macro is not None and getattr(macro, "risk_off", False):
         reasons.append("السوق في وضع MACRO_RISK_OFF: " + "; ".join(macro.reasons))
+    if symbols is not None and not symbols:
+        reasons.append("الفريق ماحللش أي سهم بعينه، فمفيش سهم متراجع يتجهز له أمر")
     max_egp = risk.max_egp if risk is not None else None
-    return Gate(not reasons, max_egp if not reasons else None, reasons)
+    return Gate(not reasons, max_egp if not reasons else None, reasons, symbols)
 
 
 _LABELS = {"positive": "إيجابي", "negative": "سلبي", "neutral": "محايد",
@@ -250,7 +296,9 @@ def briefing(reports: Mapping[str, Report], gate: Gate, macro: Optional[Any] = N
     parts.append("\n## بوابة الشراء (قرار الكود، مش قابل للنقاش)")
     if gate.buy_allowed:
         cap = f"، بحد أقصى {gate.max_egp:,.0f} جنيه للصفقة" if gate.max_egp else ""
-        parts.append(f"تجهيز أمر شراء مسموح لو المستخدم طلبه{cap}.")
+        only = (f" للأسهم اللي الفريق حللها بس: {', '.join(sorted(gate.symbols))}"
+                if gate.symbols is not None else "")
+        parts.append(f"تجهيز أمر شراء مسموح لو المستخدم طلبه{only}{cap}.")
     else:
         parts.append("تجهيز أمر شراء مقفول في الإجابة دي: " + "؛ ".join(gate.reasons) + ".")
     parts.append("</briefing>")
@@ -426,9 +474,29 @@ class MultiAgentAnalyzer:
 
     # ------------------------------------------------------------------ members
 
+    def _recording(self, execute: Callable[[str, Mapping[str, Any]], str],
+                   seen: set[str]) -> Callable[[str, Mapping[str, Any]], str]:
+        """Run a tool; note the ticker when it is a stock lookup that found data."""
+        from .. import browse
+
+        def run(name: str, arguments: Mapping[str, Any]) -> str:
+            result = execute(name, arguments)
+            if name in SYMBOL_TOOLS:
+                ticker = browse.ticker_of(str((arguments or {}).get("symbol") or ""))
+                try:
+                    failed = "error" in json.loads(result)
+                except (TypeError, ValueError):
+                    failed = True
+                if ticker and not failed:
+                    with self._lock:
+                        seen.add(ticker)
+            return result
+        return run
+
     async def _member(self, member: Member, question: str, context: Sequence[str],
                       history: Sequence[Mapping[str, str]], reservation: spend.Reservation,
-                      tally: CostReport, stop: threading.Event) -> Report:
+                      tally: CostReport, stop: threading.Event,
+                      seen: Optional[set[str]] = None) -> Report:
         try:
             text = await asyncio.to_thread(
                 agent.run, question, completion=self._meter(member.key, reservation, tally),
@@ -436,7 +504,8 @@ class MultiAgentAnalyzer:
                 history=history, timeout=self.timeout, max_tokens=self.worker_tokens,
                 max_steps=self.worker_steps, system_prompt=member.prompt, tools=member.tools,
                 max_calls_per_step=self.calls_per_step, should_stop=stop.is_set,
-                execute=self._bounded(self.toolbox.call))
+                execute=self._bounded(self._recording(self.toolbox.call,
+                                                      seen if seen is not None else set())))
         except Exception as exc:  # noqa: BLE001 - one member failing is a report too
             logger.warning("committee member %s failed: %s", member.key, exc)
             return parse_report(member, "", error=f"{type(exc).__name__}: {str(exc)[:200]}")
@@ -465,6 +534,12 @@ class MultiAgentAnalyzer:
                 if not gate.buy_allowed:
                     return json.dumps({"prepared": False, "refused": "committee: " +
                                        "; ".join(gate.reasons)}, ensure_ascii=False)
+                if not gate.allows(arguments.get("symbol")):
+                    return json.dumps({"prepared": False, "refused": (
+                        f"committee: the team analysed only "
+                        f"{', '.join(sorted(gate.symbols or ())) or 'no stock'}; a buy of "
+                        f"{arguments.get('symbol')!r} was not checked by the risk and news "
+                        "specialists. Ask the operator to analyse that stock first.")})
                 if gate.max_egp is not None:
                     try:
                         value = float(arguments.get("quantity")) * \
@@ -490,18 +565,25 @@ class MultiAgentAnalyzer:
         stop = threading.Event()
         macro = await asyncio.to_thread(self._macro)
         try:
-            args = (question, worker_context, history, reservation, tally, stop)
-            tasks = [asyncio.ensure_future(self.get_tech_analysis(*args)),
-                     asyncio.ensure_future(self.get_news_analysis(*args)),
-                     asyncio.ensure_future(self.get_risk_analysis(*args))]
-            _done, pending = await asyncio.wait(tasks, timeout=self.deadline)
-            if pending:
-                # No new rounds start; a call already in flight finishes and is
-                # counted, and the reservation is held until it has.
-                stop.set()
-                await asyncio.wait(pending)
+            seen: set[str] = set()
+            args = (question, worker_context, history, reservation, tally, stop, seen)
+            if usd is None:
+                # A model without a price reserves no dollars, so the ledger's
+                # own check is the only brake: run the specialists one after
+                # another, so no two calls pass that check together.
+                tasks = await self._in_turn(args, stop)
+            else:
+                tasks = [asyncio.ensure_future(self.get_tech_analysis(*args)),
+                         asyncio.ensure_future(self.get_news_analysis(*args)),
+                         asyncio.ensure_future(self.get_risk_analysis(*args))]
+                _done, pending = await asyncio.wait(tasks, timeout=self.deadline)
+                if pending:
+                    # No new rounds start; a call already in flight finishes and
+                    # is counted, and the reservation is held until it has.
+                    stop.set()
+                    await asyncio.wait(pending)
             reports = {r.key: r for r in (t.result() for t in tasks)}
-            gate = decide(reports, macro)
+            gate = decide(reports, macro, frozenset(seen))
             tools = [t for t in LEAD_TOOLS if gate.buy_allowed or t != "prepare_buy"]
             scan = getattr(self.toolbox, "last_scan", None)
             momentum = scan.sector_momentum() if hasattr(scan, "sector_momentum") else None
@@ -528,6 +610,20 @@ class MultiAgentAnalyzer:
         logger.info("committee: %d calls, $%.4f (reserved $%s), gate=%s", tally.calls,
                     tally.usd, usd, gate.buy_allowed)
         return Result(text, reports, gate, tally)
+
+    async def _in_turn(self, args: tuple, stop: threading.Event) -> list[asyncio.Future]:
+        """The three specialists one at a time, under the same overall deadline."""
+        loop = asyncio.get_running_loop()
+        end = loop.time() + self.deadline
+        tasks = []
+        for get in (self.get_tech_analysis, self.get_news_analysis, self.get_risk_analysis):
+            task = asyncio.ensure_future(get(*args))
+            _done, pending = await asyncio.wait([task], timeout=max(end - loop.time(), 0))
+            if pending:
+                stop.set()
+                await asyncio.wait(pending)
+            tasks.append(task)
+        return tasks
 
     def _macro(self) -> Optional[Any]:
         """MACRO_RISK_OFF once, before the specialists share the cached value."""
