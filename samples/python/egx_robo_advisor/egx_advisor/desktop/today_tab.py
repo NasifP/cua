@@ -165,7 +165,7 @@ class CardWidget(QFrame):
             return
         self._busy(tr("today.preparing"))
         card, services = self.card, self.services
-        run_async(lambda: prepare(services, card, quantity, price), self._prepared)
+        run_async(lambda: prepare(services, card, quantity, price), self._prepared, owner=self)
 
     def _prepared(self, result: Optional[dict[str, Any]], error: Optional[BaseException]
                   ) -> None:
@@ -182,7 +182,7 @@ class CardWidget(QFrame):
     def _open(self) -> None:
         self._busy(tr("today.opening"))
         services, ticker = self.services, self.card.ticker
-        run_async(lambda: open_stock(services, ticker), self._opened)
+        run_async(lambda: open_stock(services, ticker), self._opened, owner=self)
 
     def _opened(self, result: Optional[dict[str, Any]], error: Optional[BaseException]
                 ) -> None:
@@ -255,7 +255,7 @@ class TodayTab(QWidget):
             return
         self._loading = True
         services = self.services
-        run_async(lambda: load_cards(services), self._loaded)
+        run_async(lambda: load_cards(services), self._loaded, owner=self)
 
     def _loaded(self, result: Any, error: Optional[BaseException]) -> None:
         self._loading = False

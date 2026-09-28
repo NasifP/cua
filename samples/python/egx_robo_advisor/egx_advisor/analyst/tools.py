@@ -22,6 +22,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import threading
 import urllib.parse
 import urllib.request
 from dataclasses import dataclass, field
@@ -90,6 +91,7 @@ class Toolbox:
     env: Optional[Mapping[str, str]] = None
     #: MACRO_RISK_OFF for the question being answered; reset with reset().
     _macro: Optional[Any] = field(default=None, repr=False)
+    _macro_lock: Any = field(default_factory=threading.Lock, repr=False, compare=False)
 
     def reset(self) -> None:
         """Forget per-question state: calls, the last scan, the macro check."""
@@ -99,13 +101,15 @@ class Toolbox:
 
     def macro(self) -> Any:
         """MACRO_RISK_OFF (market_state.macro_risk_off), computed once per question."""
-        if self._macro is None:
-            try:
-                bars = self._bars(EGX30, 30)
-            except Exception:  # noqa: BLE001 - no index: judge from the news layer alone
-                bars = []
-            self._macro = ms.macro_risk_off(bars, self._snapshot("regime") or {})
-        return self._macro
+        # The specialists call tools from their own threads: one fetch, one value.
+        with self._macro_lock:
+            if self._macro is None:
+                try:
+                    bars = self._bars(EGX30, 30)
+                except Exception:  # noqa: BLE001 - no index: judge from the news layer alone
+                    bars = []
+                self._macro = ms.macro_risk_off(bars, self._snapshot("regime") or {})
+            return self._macro
 
     def liquidity(self, symbol: str) -> Any:
         """How many shares one buy of `symbol` may be (market_state.liquidity_cap)."""

@@ -153,3 +153,26 @@ def test_risk_off_closes_the_buy_gate_and_the_briefing_advises_trimming():
     text = cm.briefing(good, gate, macro, {"sector": "Banks", "count": 3, "of": 5,
                                            "symbols": ["COMI.CA", "CIEB.CA", "ADIB.CA"]})
     assert "تخفيف المراكز" in text and "زخم القطاعات" in text
+
+
+def test_zero_prices_are_skipped_not_a_crash():
+    closes = [D("10")] * 150 + [D("0")] * 30
+    assert scanner.analyze("X.CA", closes, [D(1000)] * 180) is None
+
+
+def test_the_macro_check_is_fetched_once_across_specialist_threads(bus):
+    import threading as th
+
+    fetched = []
+
+    def history(symbols, days):
+        fetched.append(tuple(symbols))
+        return {s: _rows(UP) for s in symbols}
+
+    box = Toolbox(bus=bus, history=history)
+    workers = [th.Thread(target=box.macro) for _ in range(8)]
+    for w in workers:
+        w.start()
+    for w in workers:
+        w.join()
+    assert sum(1 for f in fetched if "^CASE30" in f) == 1

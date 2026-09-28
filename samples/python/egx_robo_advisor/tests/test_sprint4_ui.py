@@ -247,3 +247,25 @@ def test_load_marks_uses_the_bus_view_and_levels(tmp_path):
         "COMI", history=lambda symbols, days: {s: _bars(300) for s in symbols},
         open_bus=lambda: StateBus(path))
     assert rows and marks[-1]["text"] == "Team: buy" and {l["title"] for l in lines} >= {"Stop"}
+
+
+# --------------------------------------------------------------------------- review fixes
+
+
+def test_a_callback_for_a_deleted_widget_is_skipped(app):
+    from PySide6.QtWidgets import QLabel
+
+    from egx_advisor.desktop.workers import run_async
+
+    label, got = QLabel(), []
+    run_async(lambda: time.sleep(0.2) or "late", lambda r, e: got.append(r), owner=label)
+    label.deleteLater()
+    # processEvents() leaves deferred deletes queued; the app's event loop runs them.
+    from PySide6.QtCore import QCoreApplication, QEvent
+
+    QCoreApplication.sendPostedEvents(None, QEvent.DeferredDelete)
+    wait_for(app, lambda: False, timeout=0.6)
+    assert got == [], "the result of a deleted widget's job must not reach it"
+    other = QLabel()
+    run_async(lambda: "on time", lambda r, e: got.append(r), owner=other)
+    assert wait_for(app, lambda: got == ["on time"])

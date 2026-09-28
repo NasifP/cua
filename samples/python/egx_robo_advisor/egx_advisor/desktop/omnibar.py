@@ -197,11 +197,11 @@ class QuickView(QWidget):
                            QUrl("https://egx-robo-advisor.invalid/quick"))
         # 1, 2, 4: in parallel, off the UI thread.
         run_async(lambda: fetch_opinion(services, ticker),
-                  lambda r, e: self._opinion(request, r, e))
+                  lambda r, e: self._opinion(request, r, e), owner=self)
         run_async(lambda: fetch_news(services, ticker),
-                  lambda r, e: self._news(request, r, e))
+                  lambda r, e: self._news(request, r, e), owner=self)
         run_async(lambda: open_in_thndr(services, ticker),
-                  lambda r, e: self._thndr(request, r, e))
+                  lambda r, e: self._thndr(request, r, e), owner=self)
 
     def _current(self, request: int) -> bool:
         return request == self.request

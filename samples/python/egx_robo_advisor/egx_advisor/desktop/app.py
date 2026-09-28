@@ -439,6 +439,9 @@ class MainWindow(QMainWindow):
         self.browse_server: Optional[Any] = None
         self.launcher: Optional[Launcher] = None
         self._dashboard_loaded = False
+        self._probing = False
+        #: Bumped on every restart of the child processes.
+        self._launch_count = 0
 
         self._timer = QTimer(self)
         self._timer.timeout.connect(self._tick)
@@ -708,6 +711,7 @@ class MainWindow(QMainWindow):
             self.launcher = None
         os.environ.update(settings.effective_values())
         self._dashboard_loaded = False
+        self._launch_count += 1
         self.dashboard.setHtml(_placeholder(tr("app.restarting")))
         self.start_processes(bridge_running=True)
 
@@ -722,12 +726,25 @@ class MainWindow(QMainWindow):
     def _tick(self) -> None:
         if self.launcher is not None:
             self.launcher.supervise_once()
-        if not self._dashboard_loaded and _probe_port(self.dashboard_port, "/healthz") == "ours":
+        if not self._dashboard_loaded and not self._probing:
+            # An HTTP probe (up to 1.5 s): off the UI thread, one at a time.
+            from .workers import run_async
+
+            self._probing = True
+            started = self._launch_count
+            port = self.dashboard_port
+            run_async(lambda: _probe_port(port, "/healthz"),
+                      lambda r, _e: self._probed(r, started), owner=self)
+        self._refresh_status()
+        self.ticket_panel.refresh()
+
+    def _probed(self, result: Any, started: int) -> None:
+        self._probing = False
+        # A probe from before a restart says nothing about the new dashboard.
+        if result == "ours" and started == self._launch_count and not self._dashboard_loaded:
             self._dashboard_loaded = True
             link = make_login_path(self.env["EGX_DASHBOARD_TOKEN"])
             self.dashboard.load(QUrl(f"http://127.0.0.1:{self.dashboard_port}{link}"))
-        self._refresh_status()
-        self.ticket_panel.refresh()
 
     def _refresh_status(self) -> None:
         try:

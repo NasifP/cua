@@ -274,7 +274,7 @@ class ChartTab(QWidget):
                 bars, marks, lines, dark=theme.current() == "dark", legend=legend,
                 failed=tr("chart.failed")), QUrl("https://egx-robo-advisor.invalid/signals"))
 
-        run_async(lambda: loader(symbol), done)
+        run_async(lambda: loader(symbol), done, owner=self)
 
     def update_marks(self, marks: list[dict[str, Any]], lines: list[dict[str, Any]]) -> None:
         """Replace the marks on the open Signals page without reloading it (UI thread)."""

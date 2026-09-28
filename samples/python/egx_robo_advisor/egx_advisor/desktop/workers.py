@@ -52,13 +52,31 @@ def _get_relay() -> _Relay:
     return _relay
 
 
-def run_async(fn: Callable[[], Any], on_done: Callable[[Any, Optional[BaseException]], None]
-              ) -> None:
+def alive(owner: Optional[QObject]) -> bool:
+    """Whether a widget still exists on the C++ side (deleteLater may have run)."""
+    if owner is None:
+        return True
+    import shiboken6
+
+    return shiboken6.isValid(owner)
+
+
+def run_async(fn: Callable[[], Any], on_done: Callable[[Any, Optional[BaseException]], None],
+              owner: Optional[QObject] = None) -> None:
     """Run `fn` off the UI thread; call `on_done(result, error)` on the UI thread.
+
+    With `owner`, the callback is skipped when that widget was deleted while
+    the work ran (a refreshed card grid, a closed window).
 
     Call from the UI thread (the relay is created there on first use).
     """
     relay = _get_relay()
+    if owner is not None:
+        callback = on_done
+
+        def on_done(result: Any, error: Optional[BaseException]) -> None:
+            if alive(owner):
+                callback(result, error)
 
     def job() -> None:
         try:

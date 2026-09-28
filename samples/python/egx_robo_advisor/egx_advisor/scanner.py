@@ -201,6 +201,9 @@ def analyze(symbol: str, closes: Sequence[Decimal], volumes: Sequence[Decimal],
     if len(closes) < need:
         return None
     prices = [float(c) for c in closes]
+    # A zero or negative close (bad data, a suspended name) cannot be ranked.
+    if min(prices[-need:]) <= 0:
+        return None
     last = prices[-1]
     average = sum(prices[-params.trend_days:]) / params.trend_days
     momentum_20 = (last / prices[-21] - 1) * 100
