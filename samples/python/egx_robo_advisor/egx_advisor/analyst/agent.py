@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import Any, Callable, Mapping, Sequence
+from typing import Any, Callable, Mapping, Optional, Sequence
 
 from .tools import Toolbox
 
@@ -110,25 +110,52 @@ def run(
     timeout: float = 90.0,
     max_tokens: int = 1800,
     max_steps: int = MAX_STEPS,
+    system_prompt: Optional[str] = None,
+    tools: Optional[Sequence[str]] = None,
+    max_calls_per_step: Optional[int] = None,
+    execute: Optional[Callable[[str, Mapping[str, Any]], str]] = None,
+    should_stop: Callable[[], bool] = lambda: False,
 ) -> str:
-    messages: list[dict[str, Any]] = [{"role": "system", "content": ANALYST_PROMPT}]
-    if toolbox.browser is not None:
+    """Ask, run the tools the model asks for, repeat; end with the model's text.
+
+    The single analyst uses the defaults. The committee (committee.py) runs one
+    loop per member with its own `system_prompt` and only its own `tools`:
+    a call to any other tool is refused here, in code, whatever the model
+    asks for. `max_calls_per_step` bounds how much one round can add to the
+    next prompt, so a run's cost has a known ceiling. `should_stop` is checked
+    before every model call; a stopped run returns "".
+    """
+    if tools is None:
+        schemas = toolbox.schemas()
+    else:
+        wanted = set(tools)
+        schemas = [s for s in toolbox.schemas() if s["function"]["name"] in wanted]
+    allowed = {s["function"]["name"] for s in schemas}
+    execute = execute or toolbox.call
+
+    messages: list[dict[str, Any]] = [{"role": "system",
+                                       "content": system_prompt or ANALYST_PROMPT}]
+    if system_prompt is None and toolbox.browser is not None:
         messages.append({"role": "system", "content": BROWSE_PROMPT})
     messages += [{"role": "system", "content": block} for block in context if block]
     messages += [dict(turn) for turn in history]
     messages.append({"role": "user", "content": question})
 
     for step in range(max_steps + 1):
-        final = step == max_steps
+        if should_stop():
+            return ""
+        final = step == max_steps or not schemas
         kwargs: dict[str, Any] = dict(model=model, messages=messages, timeout=timeout,
                                       max_tokens=max_tokens)
         if not final:
-            kwargs.update(tools=toolbox.schemas(), tool_choice="auto")
+            kwargs.update(tools=schemas, tool_choice="auto")
         response = completion(**kwargs)
         message = _get(_get(response, "choices")[0], "message")
         calls = [] if final else _tool_calls(message)
         if not calls:
             return (_get(message, "content") or "").strip()
+        if max_calls_per_step is not None:
+            calls = calls[:max_calls_per_step]
         messages.append({
             "role": "assistant", "content": _get(message, "content") or "",
             "tool_calls": [{"id": c["id"], "type": "function",
@@ -137,8 +164,12 @@ def run(
         })
         for c in calls:
             logger.info("analyst tool %s %s", c["name"], c["arguments"])
+            if c["name"] in allowed:
+                result = execute(c["name"], c["arguments"])
+            else:
+                result = json.dumps({"error": f"{c['name']} is not one of your tools"})
             messages.append({"role": "tool", "tool_call_id": c["id"], "name": c["name"],
-                             "content": toolbox.call(c["name"], c["arguments"])})
+                             "content": result})
     return ""
 
 

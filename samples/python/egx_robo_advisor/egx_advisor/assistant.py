@@ -151,6 +151,13 @@ class Assistant:
     #: The analyst's read-only tools (analyst/tools.py). With them the model
     #: looks things up itself and gives views; without, it only explains.
     toolbox: Optional[Any] = None
+    #: Answer as a committee (analyst/committee.py): three specialists on
+    #: `worker_model` in parallel, then the lead on `model`.
+    committee: bool = False
+    worker_model: Optional[str] = None
+    #: The unmetered model client for the committee, which meters every call
+    #: itself against one reservation. None: litellm's.
+    raw_completion: Optional[Callable[..., Any]] = None
 
     # ------------------------------------------------------------------ context
 
@@ -359,12 +366,34 @@ class Assistant:
                 turns.append({"role": role, "content": content})
         self.toolbox.calls.clear()
         self.toolbox.last_scan = None
+        if self.committee:
+            text = self._committee(question, turns)
+            if self.toolbox.last_scan is not None:
+                self._keep_picks(self.toolbox.last_scan)
+            return text
         text = agent.run(question, completion=completion, model=self.model,
                          toolbox=self.toolbox, context=context, history=turns,
                          timeout=max(self.timeout, 90.0), max_tokens=max(self.max_tokens, 1800))
         if self.toolbox.last_scan is not None:
             self._keep_picks(self.toolbox.last_scan)
         return text
+
+    def _committee(self, question: str, turns: Sequence[Mapping[str, str]]) -> str:
+        from .analyst.committee import MultiAgentAnalyzer
+
+        raw = self.raw_completion
+        if raw is None:
+            from litellm import completion as raw
+        memory = [self._memory_context(question, include_conversation=False)] \
+            if self.memory is not None else []
+        analyzer = MultiAgentAnalyzer(
+            self.toolbox, raw, worker_model=self.worker_model or self.model,
+            lead_model=self.model, bus=self.bus)
+        result = analyzer.run(
+            question, worker_context=memory,
+            lead_context=["Current state of the bot:\n\n" + self.build_context(), *memory],
+            history=turns)
+        return result.text
 
     def _figures_only(self, question: str, arabic: bool) -> str:
         try:

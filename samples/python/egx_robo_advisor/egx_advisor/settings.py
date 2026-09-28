@@ -81,6 +81,9 @@ MODEL_FIELDS: tuple[Field, ...] = (
           "stronger model answers much better. Empty: the chat model.",
           suggestions=("anthropic/claude-sonnet-5", "gemini/gemini-3.1-pro-preview",
                        "gemini/gemini-2.5-flash")),
+    Field("EGX_COMMITTEE_MODEL", "Analyst team specialists", "model",
+          _MODEL_HELP + " The fast, cheap model the three specialists (technical, news, "
+          "risk) use. Empty: the chat model.", suggestions=_SUGGESTED_MODELS),
     Field("EGX_CLASSIFIER_MODEL", "News classifier", "model",
           _MODEL_HELP + " Runs every cycle: a cheaper model is fine here, and it can "
           "only ever add caution.",
@@ -112,6 +115,11 @@ BEHAVIOUR_FIELDS: tuple[Field, ...] = (
     Field("EGX_BROWSER_SOFTWARE", "Software drawing for Thndr X", "bool",
           "Draws the built-in browser without the graphics card. Fixes a frozen Thndr X "
           "on some PCs. Restart the app after changing it.", default="true"),
+    Field("EGX_COMMITTEE", "Analyst team (4 models)", "bool",
+          "Each analysis question goes to three specialists at once (technical, news, risk), "
+          "then the analyst model decides from their reports. A buy can only be prepared when "
+          "the risk and news specialists allow it. About 4 model calls per question.",
+          default="true"),
     Field("EGX_BROWSE", "Let the analyst use Thndr X", "bool",
           "The chat analyst can open stock pages, tabs and search in the Thndr X window, and "
           "get a buy ready. It can never press Buy, Sell or anything that moves money. HALT "

@@ -201,6 +201,21 @@ class Toolbox:
                 for p in self.memory.picks() if p.symbol == symbol][:5]
         return result
 
+    def stock_levels(self, symbol: str) -> dict[str, Any]:
+        """Price, ATR, chandelier stop and ATR targets for one stock; what is held of it."""
+        symbol = _symbol(symbol)
+        bars = self._bars(symbol, 200)
+        held = next((p for p in (self.get_portfolio().get("positions") or [])
+                     if p["symbol"] == symbol), None)
+        if len(bars) < levels_mod.ATR_DAYS + 1:
+            return {"symbol": symbol, "error": f"only {len(bars)} daily bars available",
+                    "held": held}
+        price = held["price"] if held and held.get("price") else float(bars[-1].close)
+        lv = levels_mod.compute(symbol, bars, price, self.style,
+                                held.get("avg_cost") if held else None)
+        return {"symbol": symbol, "data_through": bars[-1].day.isoformat(), "price": price,
+                "levels": lv.to_json() if lv else None, "style": self.style, "held": held}
+
     def _indicator_set(self) -> list[Any]:
         from .. import indicators as ind
 
@@ -441,6 +456,10 @@ SCHEMAS: list[dict[str, Any]] = [
         "against the stock's usual move, and a verdict (helped, misled, no edge, too few).",
         {"symbol": {"type": "string"}}, ["symbol"]),
     _fn("market_overview", "EGX30 index trend, the news brake's state, and the USD/EGP rate."),
+    _fn("stock_levels", "For one stock: the price, its usual daily move (ATR), the "
+        "chandelier stop and two ATR targets for the operator's style, and how much of it "
+        "is held. For position sizing and stops.",
+        {"symbol": {"type": "string"}}, ["symbol"]),
     _fn("average_calculator", "Shares to buy at a price to bring an average cost to a target.",
         {"quantity": {"type": "number"}, "average": {"type": "number"},
          "target": {"type": "number"}, "price": {"type": "number"}},

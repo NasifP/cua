@@ -452,6 +452,36 @@ a signal on a day uses bars up to that day and the trade starts at the next
 session's open. It is history, not a promise: signals overlap, fees are not
 counted, and a small sample is marked as such.
 
+## The analyst team (committee)
+
+With `EGX_COMMITTEE=true` (the default) each analysis question in the chat is
+answered by a team instead of one model (`egx_advisor/analyst/committee.py`):
+
+| Member | Model | Tools |
+|---|---|---|
+| Technical analyst | `EGX_COMMITTEE_MODEL` (empty: the chat model) | analyze_stock, study_indicators, scan_market |
+| News and macro analyst | same | search_news, market_overview |
+| Risk manager | same | get_portfolio, portfolio_report, stock_levels, average_calculator |
+| Lead (the Robo-Advisor) | `EGX_ANALYST_MODEL` | thndr_*, prepare_buy (desktop app only) |
+
+The three specialists run at the same time; the lead then decides from their
+reports. A member can use only its own tools: any other call is refused in
+code. Each report ends with fixed lines (`VERDICT`, `BRAKE`, `RISK`,
+`MAX_EGP`) that the code reads. prepare_buy is taken away from the lead when
+the news analyst calls for the news brake, the risk manager rejects (or says
+"reduce" without an amount), or any report is missing; with an amount, a
+prepared buy may not be worth more. Under the answer, one line says what
+each member concluded and what the answer cost.
+
+The spending cap holds for the whole team. Before any call, the answer's
+worst case -- every round, every token, at each model's price, with each
+round's tool results cut to a fixed size -- is reserved from today's budget
+in one step; if it does not fit, nothing is called. Each call then spends
+from the reservation and the rest is released, and every other model call
+in the app counts live reservations as spent. With Gemini Flash specialists
+the reservation is about 6 EGP with a Flash lead and about 13 EGP with a Pro
+lead, released down to what was actually spent.
+
 ## The loop, and why the gates are in this order
 
 Each cycle runs the cheap, safe, offline checks first and only then reaches for

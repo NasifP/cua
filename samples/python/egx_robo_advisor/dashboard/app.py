@@ -161,6 +161,9 @@ def create_app(
         assistant = Assistant(
             bus=bus, model=os.environ.get("EGX_ANALYST_MODEL") or config.chat_model,
             use_model=config.chat_enabled, memory=memory, archive=archive,
+            # Specialists on the cheap model, the lead on the analyst model.
+            committee=(os.environ.get("EGX_COMMITTEE") or "true").strip().lower() != "false",
+            worker_model=os.environ.get("EGX_COMMITTEE_MODEL") or config.chat_model,
             toolbox=Toolbox(bus=bus, memory=memory, archive=archive,
                             style=levels.style_from(os.environ),
                             # Set only when the desktop app started us: its

@@ -10,7 +10,11 @@ from .i18n import tr
 
 
 def explain(exc: BaseException, model: str, lang: str | None = None) -> str:
+    from .spend import BudgetExceeded
+
     text = str(exc)
+    if isinstance(exc, BudgetExceeded):
+        return tr("model.budget", lang=lang, reason=text)
     lower = text.lower()
     if "404" in text or "notfound" in lower or "no longer available" in lower \
             or "not found" in lower:

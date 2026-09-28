@@ -561,6 +561,22 @@ STRINGS: dict[str, tuple[str, str]] = {
                    "gemini/gemini-2.5-flash.",
                    "الموديل {model} مش متاح للحساب ده (الشركة وقفته أو مش بتقدمه للمستخدمين "
                    "الجداد). اختار موديل تاني، زي gemini/gemini-2.5-flash."),
+    "model.budget": ("Not answered, to stay within today's model budget: {reason}.",
+                     "مجاوبتش عشان مانعدّيش ميزانية الموديلات النهارده: {reason}."),
+    "field.EGX_COMMITTEE": ("Analyst team (4 models)", "فريق المحللين (4 موديلات)"),
+    "field.EGX_COMMITTEE.help": (
+        "Each analysis question goes to three specialists at once (technical, news, risk) on "
+        "a fast model, then the analyst model decides from their reports. A buy can only be "
+        "prepared when the risk and news specialists allow it. About 4 model calls per "
+        "question; the worst case is reserved from the daily budget first.",
+        "كل سؤال تحليل بيروح لتلات متخصصين في نفس الوقت (فني، أخبار، مخاطر) على موديل سريع، "
+        "وبعدين موديل المحلل بيقرر من تقاريرهم. تجهيز أمر شراء مسموح بس لو وكيل المخاطر "
+        "والأخبار سمحوا. حوالي 4 استدعاءات للموديل في السؤال؛ وأقصى تكلفة ممكنة بتتحجز من "
+        "ميزانية اليوم الأول."),
+    "field.EGX_COMMITTEE_MODEL": ("Analyst team specialists", "متخصصين فريق المحللين"),
+    "field.EGX_COMMITTEE_MODEL.help": (
+        "The fast, cheap model the three specialists use. Empty: the chat model.",
+        "الموديل السريع الرخيص اللي المتخصصين التلاتة بيستخدموه. فاضي: نفس موديل الشات."),
     "model.quota": ("{model} refused the request: the quota is used up, or it has no free "
                     "tier. Choose gemini/gemini-2.5-flash or enable billing.",
                     "الموديل {model} رفض الطلب: الحصة خلصت أو مالوش خطة مجانية. اختار "
