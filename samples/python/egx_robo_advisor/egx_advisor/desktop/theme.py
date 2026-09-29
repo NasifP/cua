@@ -301,6 +301,7 @@ _ICONS = {
               '2.8 3 3 0 0 1-1 4.9A3 3 0 0 1 15 20a3 3 0 0 1-3-3"/>',
     "training": '<path d="M2 9l10-5 10 5-10 5z"/><path d="M6 11v5c3.5 2.5 8.5 2.5 12 0v-5"/>'
                 '<path d="M22 9v6"/>',
+    "learn": '<circle cx="12" cy="12" r="9"/><path d="M8 12.5l2.5 2.5L16 9.5"/>',
     "power": '<path d="M12 3v9"/><path d="M6.3 6.3a8 8 0 1 0 11.4 0"/>',
     "today": '<rect x="4" y="3" width="16" height="18" rx="2"/><path d="M8 8l1.5 1.5L12 7'
              'M14 8h2M8 13l1.5 1.5L12 12M14 13h2M8 18h8"/>',

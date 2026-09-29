@@ -68,6 +68,34 @@ STRINGS: dict[str, tuple[str, str]] = {
                           "studies what your indicators did on the EGX",
                           "علّم البرنامج مؤشراتك وخانات أمر Thndr X، وهو يذاكر المؤشرات "
                           "دي عملت إيه في البورصة المصرية"),
+    "page.learn": ("Learn", "التعلّم"),
+    "page.learn.sub": ("What the bot must learn before it may speculate; each tick is earned "
+                       "by evidence on this computer",
+                       "البوت لازم يتعلم إيه قبل ما يضارب؛ كل علامة صح بتيجي من دليل "
+                       "حقيقي على الجهاز ده"),
+    # --- Learn tab ---
+    "learn.refresh": ("Check again", "افحص تاني"),
+    "learn.checking": ("Checking what the bot has learned ...", "بنشوف البوت اتعلم إيه ..."),
+    "learn.failed": ("Could not check: {error}", "الفحص ما نجحش: {error}"),
+    "learn.summary": ("{done} of {all} checkpoints learned  ·  {locked} more need development",
+                      "اتعلم {done} من {all}  ·  و{locked} محتاجين تطوير"),
+    "learn.col.checkpoint": ("Checkpoint", "المرحلة"),
+    "learn.col.progress": ("Progress", "التقدم"),
+    "learn.col.since": ("Learned on", "اتعلمها يوم"),
+    "learn.needs_dev": ("needs development", "محتاجة تطوير"),
+    "learn.yes": ("done", "تم"),
+    "learn.not_yet": ("not yet", "لسه"),
+    "learn.count": ("{have} of {need}", "{have} من {need}"),
+    "learn.edge": ("average {move}% vs costs {cost}%", "متوسط {move}% مقابل مصاريف {cost}%"),
+    "learn.right": ("{rate} right", "{rate} صح"),
+    "learn.pick": ("Pick a checkpoint to see what earns it.",
+                   "اختار مرحلة علشان تشوف إيه اللي يخليها تتعلّم."),
+    "learn.note": ("A tick comes only from evidence the app counts: prices kept, rules tested, "
+                   "picks measured weeks later. Passing every checkpoint is not a promise of "
+                   "profit, and the bot never presses Buy by itself.",
+                   "علامة الصح بتيجي بس من دليل البرنامج بيعدّه: أسعار محفوظة، قواعد "
+                   "اتجربت، اختيارات اتقاست بعد أسابيع. إن البوت يعدّي كل المراحل مش ضمان "
+                   "مكسب، والبوت عمره ما بيدوس Buy لوحده."),
     "page.memory": ("Memory", "الذاكرة"),
     "page.memory.sub": ("What the app remembers: your notes, conversations, lab runs and how "
                         "its picks did. All of it stays on this computer.",

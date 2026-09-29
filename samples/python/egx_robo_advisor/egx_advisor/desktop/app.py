@@ -91,6 +91,7 @@ from .settings_tab import SettingsTab
 from .sources_tab import SourcesTab
 from .ticket_panel import TicketPanel
 from .today_tab import TodayTab
+from .learn_tab import LearnTab, app_gather, app_remember
 from .training_tab import TrainingTab
 
 
@@ -264,9 +265,12 @@ class MainWindow(QMainWindow):
             # Teaching a box needs the Thndr X page in view.
             on_teach_start=lambda: self.open_page(self.thndr_slot))
         self.ticket_panel.is_teaching = lambda: self.training_tab.teach_box.picking is not None
+        self.learn_tab = LearnTab(app_gather(self.memory, self.archive, _bus),
+                                  app_remember(self.memory))
 
         pages = (
             (self.today_tab, "today", "page.today"),
+            (self.learn_tab, "learn", "page.learn"),
             (self.quick_view, "search", "page.quick"),
             (self.dashboard, "dashboard", "page.dashboard"),
             (self.thndr_slot, "browser", "page.thndr"),
@@ -621,7 +625,7 @@ class MainWindow(QMainWindow):
         self._retranslate_shell()
         for page in (self.chart_tab, self.lab_tab, self.sources_tab, self.settings_tab,
                      self.ticket_panel, self.thndr_slot, self.memory_tab, self.training_tab,
-                     self.today_tab, self.quick_view, self.omnibar):
+                     self.learn_tab, self.today_tab, self.quick_view, self.omnibar):
             page.retranslate()
         self.today_tab.refresh()  # the cards' words
         self._sync_dashboard_theme(run_now=True)
