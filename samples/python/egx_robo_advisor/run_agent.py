@@ -255,6 +255,9 @@ async def main() -> None:
     from egx_advisor.marketdata.archive import PriceArchive, archive_path_for
 
     agent.archive = PriceArchive(archive_path_for(args.bus))
+    from egx_advisor.paper import PaperBook
+
+    agent.paper = PaperBook.from_env(memory_path_for(args.bus), os.environ)
     agent.install_signal_handlers()
 
     if args.target == "host":

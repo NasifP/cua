@@ -73,6 +73,58 @@ STRINGS: dict[str, tuple[str, str]] = {
                        "by evidence on this computer",
                        "البوت لازم يتعلم إيه قبل ما يضارب؛ كل علامة صح بتيجي من دليل "
                        "حقيقي على الجهاز ده"),
+    "page.paper": ("Paper trading", "التداول التجريبي"),
+    "page.paper.sub": ("Virtual trades with a stop, a target and real costs; no money moves",
+                       "صفقات وهمية بـ Stop وهدف ومصاريف حقيقية؛ مافيش فلوس بتتحرك"),
+    # --- Paper trading tab ---
+    "paper.refresh": ("Update prices", "حدّث الأسعار"),
+    "paper.resume": ("Resume paper trading", "كمّل التداول التجريبي"),
+    "paper.open": ("Open paper trade", "افتح صفقة تجريبية"),
+    "paper.close": ("Close selected by hand", "اقفل المختارة باليد"),
+    "paper.ticker": ("Ticker, e.g. COMI", "رمز السهم، مثلاً COMI"),
+    "paper.checking": ("Updating ...", "بيحدّث ..."),
+    "paper.failed": ("Could not update: {error}", "التحديث ما نجحش: {error}"),
+    "paper.need_symbol": ("Type a ticker first.", "اكتب رمز السهم الأول."),
+    "paper.opening": ("Placing the stop and target ...", "بيحسب الـ Stop والهدف ..."),
+    "paper.opened": ("Paper trade: {qty} {symbol} at {entry}, stop {stop}, target {target}",
+                     "صفقة تجريبية: {qty} {symbol} بسعر {entry}، Stop {stop}، هدف {target}"),
+    "paper.pick_open": ("Select an open trade first.", "اختار صفقة مفتوحة الأول."),
+    "paper.no_price": ("No price yet for that trade: update prices first.",
+                       "مافيش سعر للصفقة دي لسه: حدّث الأسعار الأول."),
+    "paper.summary": ("Paper account {equity} EGP (started {capital})  ·  closed {realised}  ·  "
+                      "open {open}  ·  today {today}%  ·  drawdown {drawdown}%  ·  "
+                      "{closed} closed, {rate} won",
+                      "الحساب التجريبي {equity} جنيه (بدأ بـ {capital})  ·  المقفول {realised}  ·  "
+                      "المفتوح {open}  ·  النهارده {today}%  ·  التراجع {drawdown}%  ·  "
+                      "{closed} مقفولة، كسبان {rate}"),
+    "paper.active": ("Active", "شغّال"),
+    "paper.paused.daily": ("Paused for today: daily loss limit", "واقف النهارده: حد الخسارة اليومي"),
+    "paper.paused.drawdown": ("Paused: maximum drawdown", "واقف: أقصى تراجع"),
+    "paper.breach": ("Loss limit reached: {what}", "وصل لحد الخسارة: {what}"),
+    "paper.open_title": ("Open trades ({count})", "الصفقات المفتوحة ({count})"),
+    "paper.closed_title": ("Closed trades ({count})", "الصفقات المقفولة ({count})"),
+    "paper.col.symbol": ("Stock", "السهم"),
+    "paper.col.opened": ("Opened", "اتفتحت"),
+    "paper.col.closed": ("Closed", "اتقفلت"),
+    "paper.col.qty": ("Shares", "الكمية"),
+    "paper.col.entry": ("Entry", "الدخول"),
+    "paper.col.stop": ("Stop", "الـ Stop"),
+    "paper.col.target": ("Target", "الهدف"),
+    "paper.col.last": ("Last close", "آخر إقفال"),
+    "paper.col.exit": ("Exit", "الخروج"),
+    "paper.col.why": ("Why", "السبب"),
+    "paper.col.pnl": ("Result (EGP)", "النتيجة (جنيه)"),
+    "paper.why.stop": ("stop", "Stop"),
+    "paper.why.target": ("target", "الهدف"),
+    "paper.why.manual": ("by hand", "باليد"),
+    "paper.note": ("Every buy the bot's plan wants becomes a paper trade. Shares are sized so the "
+                   "stop loses the risk set in Settings; trades close at the first session that "
+                   "reaches the stop or target (both in one session counts as the stop), after "
+                   "costs. Closing by hand counts against exit discipline on the Learn page.",
+                   "كل شرا بتطلبه خطة البوت بيبقى صفقة تجريبية. الكمية بتتحسب علشان الخسارة عند "
+                   "الـ Stop تبقى المخاطرة اللي في الإعدادات؛ والصفقة بتتقفل في أول جلسة توصل "
+                   "للـ Stop أو الهدف (لو الاتنين في نفس الجلسة بتتحسب Stop)، بعد المصاريف. "
+                   "القفل باليد بيتحسب ضد الالتزام بالخروج في صفحة التعلّم."),
     # --- Learn tab ---
     "learn.refresh": ("Check again", "افحص تاني"),
     "learn.checking": ("Checking what the bot has learned ...", "بنشوف البوت اتعلم إيه ..."),
@@ -88,6 +140,10 @@ STRINGS: dict[str, tuple[str, str]] = {
     "learn.count": ("{have} of {need}", "{have} من {need}"),
     "learn.edge": ("average {move}% vs costs {cost}%", "متوسط {move}% مقابل مصاريف {cost}%"),
     "learn.right": ("{rate} right", "{rate} صح"),
+    "learn.share": ("{have} of exits by rule (need {need})",
+                    "{have} من الخروج بالقاعدة (المطلوب {need})"),
+    "learn.days": ("day {have} of {need}", "يوم {have} من {need}"),
+    "learn.excess": ("{have} points vs EGX 30", "{have} نقطة مقابل EGX 30"),
     "learn.pick": ("Pick a checkpoint to see what earns it.",
                    "اختار مرحلة علشان تشوف إيه اللي يخليها تتعلّم."),
     "learn.note": ("A tick comes only from evidence the app counts: prices kept, rules tested, "
@@ -719,6 +775,27 @@ STRINGS: dict[str, tuple[str, str]] = {
                       "{model} ماردش في الوقت. جرّب تاني."),
     "model.other": ("{model} could not be reached: {error}",
                     "الموديل {model} مش متاح دلوقتي: {error}"),
+    "field.EGX_DAILY_LOSS_PCT": ("Daily loss limit (%)", "حد الخسارة اليومي (%)"),
+    "field.EGX_DAILY_LOSS_PCT.help": (
+        "If the portfolio falls this much in one day (0.5 to 20), the bot halts by itself until "
+        "you resume it. The paper account pauses at the same limit.",
+        "لو المحفظة نزلت النسبة دي في يوم واحد (من 0.5 لـ 20)، البوت يقف لوحده لحد ما إنت "
+        "تشغّله تاني. الحساب التجريبي بيقف عند نفس الحد."),
+    "field.EGX_MAX_DRAWDOWN_PCT": ("Maximum drawdown (%)", "أقصى تراجع (%)"),
+    "field.EGX_MAX_DRAWDOWN_PCT.help": (
+        "If the portfolio falls this much below its highest value (2 to 50), the bot halts. "
+        "Resuming accepts the loss and starts counting again from there.",
+        "لو المحفظة نزلت النسبة دي تحت أعلى قيمة وصلتلها (من 2 لـ 50)، البوت يقف. لما "
+        "تشغّله تاني بتقبل الخسارة والعد بيبدأ من جديد من النقطة دي."),
+    "field.EGX_RISK_PER_TRADE_PCT": ("Risk per paper trade (%)", "المخاطرة في الصفقة التجريبية (%)"),
+    "field.EGX_RISK_PER_TRADE_PCT.help": (
+        "What one paper trade may lose at its stop, as a percent of the paper account (0.1 to "
+        "5). The share count follows from it.",
+        "أقصى خسارة للصفقة التجريبية الواحدة عند الـ Stop، كنسبة من الحساب التجريبي (من 0.1 "
+        "لـ 5). عدد الأسهم بيتحسب منها."),
+    "field.EGX_PAPER_CAPITAL": ("Paper account (EGP)", "الحساب التجريبي (جنيه)"),
+    "field.EGX_PAPER_CAPITAL.help": ("The pretend money the paper trading journal starts with.",
+                                     "الفلوس الوهمية اللي دفتر التداول التجريبي بيبدأ بيها."),
     "field.EGX_STYLE": ("Investing style", "أسلوبك في الاستثمار"),
     "field.EGX_STYLE.help": ("Sets how far each holding's stop and targets sit: a trader gives "
                              "a stock little room, a long-term investor a lot.",

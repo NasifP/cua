@@ -12,10 +12,11 @@ The stages build on each other:
 2. The operator's style: indicators, preferences, a thesis per holding.
 3. Testing ideas: rules tested on real EGX history, and one that passed.
 4. A track record: picks measured weeks later, beating the round-trip costs.
-5. Speculation: what short-term trading needs and the app does not have yet.
-   These stay locked ("needs development") until the feature is built.
-6. Real money: only after months of paper trading that beat the EGX 30 after
-   costs. Even then the operator presses Buy; nothing here changes that.
+5. Speculation: what short-term trading needs. The paper journal, risk sizing,
+   exit discipline and the loss limits are measured (paper.py,
+   risk_limits.py); the rest stay locked ("needs development") until built.
+6. Real money: only after three months of paper trading that beat the EGX 30
+   after costs. Even then the operator presses Buy; nothing here changes that.
 
 Passing every checkpoint is not a promise of profit. It is the least the bot
 must show before it is worth trying.
@@ -23,6 +24,7 @@ must show before it is worth trying.
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass, field
 from decimal import Decimal
 from pathlib import Path
@@ -41,6 +43,12 @@ TRACK_PICKS = 30
 HIT_RATE = 0.5
 #: memory.ui key prefix for the day a checkpoint was first reached.
 DONE_KEY = "learn.done."
+#: Paper trades for the journal and sizing checkpoints; closed ones for discipline.
+PAPER_TRADES = 20
+SIZED_TRADES = 10
+DISCIPLINE_TRADES = 10
+RULE_EXIT_SHARE = 0.9
+PAPER_DAYS = 90
 
 
 def round_trip_cost_pct() -> float:
@@ -87,6 +95,16 @@ class Evidence:
     picks: int = 0
     horizons: Mapping[int, Record] = field(default_factory=dict)
     cost_pct: float = 0.8
+    paper_opened: int = 0
+    paper_closed: int = 0
+    rule_exits: int = 0
+    guard_active: bool = False
+    #: Days since the first paper trade.
+    paper_days: int = 0
+    #: Paper return minus the EGX 30's over the same days, in points; None: unknown.
+    paper_excess: Optional[float] = None
+    #: The paper account is paused for its drawdown.
+    paper_drawdown: bool = False
 
     def record(self, horizon: int) -> Record:
         return self.horizons.get(horizon, Record())
@@ -100,10 +118,13 @@ class Progress:
     unit: str = "count"
     #: For a track record: the share of picks that went the right way.
     hit_rate: Optional[float] = None
+    #: Any further condition, e.g. no drawdown pause.
+    ok: bool = True
 
     @property
     def done(self) -> bool:
-        return self.have >= self.need and (self.hit_rate is None or self.hit_rate >= HIT_RATE)
+        return (self.have >= self.need and self.ok
+                and (self.hit_rate is None or self.hit_rate >= HIT_RATE))
 
 
 Check = Callable[[Evidence], Progress]
@@ -135,12 +156,25 @@ def _edge(horizon: int) -> Check:
     return check
 
 
+def _discipline(e: Evidence) -> Progress:
+    if e.paper_closed < DISCIPLINE_TRADES:
+        return Progress(e.paper_closed, DISCIPLINE_TRADES)
+    return Progress(round(e.rule_exits / e.paper_closed, 3), RULE_EXIT_SHARE, "share")
+
+
+def _beat_index(e: Evidence) -> Progress:
+    if e.paper_days < PAPER_DAYS or e.paper_excess is None:
+        # Too early, or no EGX 30 prices to compare with: not judged.
+        return Progress(e.paper_days, PAPER_DAYS, "days", ok=e.paper_excess is not None)
+    return Progress(round(e.paper_excess, 2), 0.01, "excess", ok=not e.paper_drawdown)
+
+
 STAGES: tuple[tuple[str, str], ...] = (
     ("Reading the market", "قراءة السوق"),
     ("Your style", "أسلوبك في التداول"),
     ("Testing ideas", "اختبار الأفكار"),
     ("A real track record", "سجل حقيقي"),
-    ("Speculation (needs development)", "المضاربة (محتاجة تطوير)"),
+    ("Speculation", "المضاربة"),
     ("Real money", "فلوس حقيقية"),
 )
 
@@ -280,30 +314,35 @@ CHECKPOINTS: tuple[Checkpoint, ...] = (
     Checkpoint(
         "sizing", 5,
         ("Position size from risk", "حجم الصفقة من المخاطرة"),
-        ("Size each trade from its stop distance (ATR) so one loss is a fixed small share "
-         "of the account, e.g. 1%.",
-         "حجم كل صفقة يتحسب من المسافة للـ Stop (ATR)، علشان الخسارة الواحدة تبقى نسبة "
-         "صغيرة ثابتة من الحساب، زي 1%.")),
+        (f"{SIZED_TRADES} paper trades sized from their stop distance (ATR), so one loss is a "
+         "fixed small share of the account (Settings: risk per paper trade, 1%).",
+         f"{SIZED_TRADES} صفقات تجريبية حجمها اتحسب من المسافة للـ Stop (ATR)، علشان الخسارة "
+         "الواحدة تبقى نسبة صغيرة ثابتة من الحساب (الإعدادات: المخاطرة في الصفقة، 1%)."),
+        lambda e: Progress(e.paper_opened, SIZED_TRADES)),
     Checkpoint(
         "paper", 5,
         ("Paper trading journal", "دفتر تداول تجريبي"),
-        ("Every virtual trade written down: entry, stop, target, exit, fees and result. "
-         "The track record speculation is judged on.",
-         "كل صفقة وهمية متسجلة: الدخول، الـ Stop، الهدف، الخروج، المصاريف والنتيجة. ده "
-         "السجل اللي المضاربة بتتحاسب عليه.")),
+        (f"{PAPER_TRADES} virtual trades closed and written down: entry, stop, target, exit, "
+         "fees and result. Every buy the bot's plan wants becomes one (Paper trading page).",
+         f"{PAPER_TRADES} صفقة وهمية اتقفلت واتسجلت: الدخول، الـ Stop، الهدف، الخروج، "
+         "المصاريف والنتيجة. كل شرا بتطلبه خطة البوت بيبقى صفقة (صفحة التداول التجريبي)."),
+        lambda e: Progress(e.paper_closed, PAPER_TRADES)),
     Checkpoint(
         "exits", 5,
         ("Exit discipline", "الالتزام بالخروج"),
-        ("Every paper trade leaves at its stop or target, never held \"until it comes back\". "
-         "Measured on the paper journal.",
-         "كل صفقة تجريبية بتخرج عند الـ Stop أو الهدف، مش بتفضل مستنية \"لحد ما ترجع\". "
-         "بيتقاس من دفتر التداول التجريبي.")),
+        (f"At least {RULE_EXIT_SHARE:.0%} of {DISCIPLINE_TRADES} or more closed paper trades "
+         "left at their stop or target, not closed by hand or held \"until it comes back\".",
+         f"على الأقل {RULE_EXIT_SHARE:.0%} من {DISCIPLINE_TRADES} صفقات تجريبية مقفولة أو أكتر "
+         "خرجوا عند الـ Stop أو الهدف، مش اتقفلوا باليد أو فضلوا مستنيين \"لحد ما ترجع\"."),
+        _discipline),
     Checkpoint(
         "loss_limits", 5,
         ("Daily loss limit and drawdown", "حد خسارة يومي وأقصى تراجع"),
-        ("A daily loss limit and a maximum drawdown that halt the bot by themselves.",
+        ("A daily loss limit and a maximum drawdown that halt the bot by themselves, "
+         "checked at least once on the real portfolio or the paper account (Settings).",
          "حد أقصى للخسارة في اليوم وحد لأقصى تراجع في الحساب، ولو اتعدوا البوت يقف "
-         "لوحده.")),
+         "لوحده. بيتعلّم لما يتفحصوا مرة على الأقل على المحفظة أو الحساب التجريبي."),
+        lambda e: _flag(e.guard_active)),
     Checkpoint(
         "walk_forward", 5,
         ("Tested on unseen years", "اختبار على سنين ما شافهاش"),
@@ -326,7 +365,8 @@ CHECKPOINTS: tuple[Checkpoint, ...] = (
          "breaking the loss limits. Only then is real money worth trying, and you still "
          "press Buy yourself.",
          "3 شهور تداول تجريبي كسبوا أكتر من EGX 30 بعد كل المصاريف، من غير ما يعدّوا حدود "
-         "الخسارة. ساعتها بس يستاهل نجرب بفلوس حقيقية، وبرضه إنت اللي بتدوس Buy.")),
+         "الخسارة. ساعتها بس يستاهل نجرب بفلوس حقيقية، وبرضه إنت اللي بتدوس Buy."),
+        _beat_index),
 )
 
 
@@ -438,6 +478,8 @@ def gather(memory: Memory, archive: Any = None, bus: Any = None,
                 for h, r in horizons.items() if r.count}
 
     views = _snapshot(bus, "team_views") or {}
+    paper = _paper_evidence(memory, archive, today)
+    guarded = paper.pop("guarded")
     return Evidence(
         universe=len(universe),
         priced=priced,
@@ -456,4 +498,35 @@ def gather(memory: Memory, archive: Any = None, bus: Any = None,
         picks=len(picks),
         horizons=horizons,
         cost_pct=round_trip_cost_pct(),
+        guard_active=bool(_snapshot(bus, "loss_guard")) or guarded,
+        **paper,
     )
+
+
+def _paper_evidence(memory: Memory, archive: Any, today: Any) -> dict[str, Any]:
+    """What the paper journal (paper.py), kept next to the memory, shows."""
+    from .paper import RULE_EXITS, PaperBook
+
+    book = PaperBook.from_env(memory.path, os.environ)
+    trades = book.trades()
+    closed = [t for t in trades if t.status == "closed"]
+    guard = book.guard()
+    out: dict[str, Any] = {
+        "paper_opened": len(trades), "paper_closed": len(closed),
+        "rule_exits": sum(1 for t in closed if t.exit_reason in RULE_EXITS),
+        "paper_drawdown": "drawdown" in (guard.get("fired") or {}),
+        "guarded": bool(guard), "paper_days": 0, "paper_excess": None,
+    }
+    curve = book.equity_curve()
+    if not trades or not curve:
+        return out
+    first = min(t.opened for t in trades)
+    out["paper_days"] = (today - first).days
+    if archive is None:
+        return out
+    index = [r for r in archive.series("^CASE30", first) if r.day <= curve[-1][0]]
+    if len(index) >= 2 and float(index[0].close) > 0:
+        index_return = (float(index[-1].close) / float(index[0].close) - 1) * 100
+        paper_return = (curve[-1][1] / book.capital - 1) * 100
+        out["paper_excess"] = paper_return - index_return
+    return out

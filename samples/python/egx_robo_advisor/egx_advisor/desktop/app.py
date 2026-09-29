@@ -92,6 +92,7 @@ from .sources_tab import SourcesTab
 from .ticket_panel import TicketPanel
 from .today_tab import TodayTab
 from .learn_tab import LearnTab, app_gather, app_remember
+from .paper_tab import PaperTab
 from .training_tab import TrainingTab
 
 
@@ -267,10 +268,18 @@ class MainWindow(QMainWindow):
         self.ticket_panel.is_teaching = lambda: self.training_tab.teach_box.picking is not None
         self.learn_tab = LearnTab(app_gather(self.memory, self.archive, _bus),
                                   app_remember(self.memory))
+        from .. import levels
+        from ..analyst.tools import yahoo_history
+        from ..paper import PaperBook
+
+        self.paper_tab = PaperTab(
+            book=lambda: PaperBook.from_env(self.memory.path, os.environ),
+            history=yahoo_history(self.archive), style=lambda: levels.style_from(os.environ))
 
         pages = (
             (self.today_tab, "today", "page.today"),
             (self.learn_tab, "learn", "page.learn"),
+            (self.paper_tab, "paper", "page.paper"),
             (self.quick_view, "search", "page.quick"),
             (self.dashboard, "dashboard", "page.dashboard"),
             (self.thndr_slot, "browser", "page.thndr"),
@@ -625,7 +634,8 @@ class MainWindow(QMainWindow):
         self._retranslate_shell()
         for page in (self.chart_tab, self.lab_tab, self.sources_tab, self.settings_tab,
                      self.ticket_panel, self.thndr_slot, self.memory_tab, self.training_tab,
-                     self.learn_tab, self.today_tab, self.quick_view, self.omnibar):
+                     self.learn_tab, self.paper_tab, self.today_tab, self.quick_view,
+                     self.omnibar):
             page.retranslate()
         self.today_tab.refresh()  # the cards' words
         self._sync_dashboard_theme(run_now=True)

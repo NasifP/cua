@@ -49,7 +49,7 @@ def test_nothing_is_ticked_without_evidence_and_speculation_stays_locked(tmp_pat
     statuses = cur.evaluate(cur.gather(memory, config_dir=tmp_path, universe=["A.CA"]))
     assert all(s.state != "done" for s in statuses)
     locked = {s.checkpoint.key for s in statuses if s.state == "locked"}
-    assert {"intraday", "paper", "loss_limits", "paper_3m"} <= locked
+    assert locked == {"intraday", "order_book", "walk_forward", "egx_rules"}
     assert all(s.checkpoint.stage >= 5 for s in statuses if s.state == "locked")
 
 
@@ -152,3 +152,43 @@ def test_the_tab_shows_ticks_from_evidence(app, tmp_path):
     marks = [tab.tree.topLevelItem(i).text(0) for i in range(tab.tree.topLevelItemCount())]
     assert marks.count("✓") == 1 and "—" in marks
     assert tab.bar.value() == 1
+
+
+def test_the_paper_journal_ticks_sizing_discipline_and_the_loss_limit(tmp_path):
+    from egx_advisor.paper import PaperBook
+
+    memory = Memory(tmp_path / "m.db")
+    book = PaperBook(memory.path, capital=10_000_000)
+    day = date(2026, 1, 5)
+    for i in range(cur.DISCIPLINE_TRADES):
+        t = book.open_trade(f"S{i}", 10.0, 9.0, 12.0, source="plan", today=day)
+        if i == 0:
+            book.close_by_hand(t.id, 10.5, day + timedelta(days=1))
+    bars = [Row(day + timedelta(days=1), 12.5)]
+    for b in bars:
+        b.open = b.high = b.low = b.close
+    book.settle(lambda s: bars, day + timedelta(days=2))
+    s = by_key(cur.evaluate(cur.gather(memory, config_dir=tmp_path, today=day + timedelta(3))))
+    assert s["sizing"].state == "done"                   # 10 trades sized from their stop
+    assert s["loss_limits"].state == "done"              # the guard has run
+    assert s["paper"].progress.have == cur.DISCIPLINE_TRADES
+    # 9 of 10 left at their target, 1 by hand: exactly the 90% needed.
+    assert s["exits"].progress.have == 0.9 and s["exits"].state == "done"
+    assert s["paper_3m"].state == "learning" and s["paper_3m"].progress.unit == "days"
+
+
+def test_the_paper_page_shows_the_journal(app, tmp_path):
+    from egx_advisor.desktop.paper_tab import PaperTab
+    from egx_advisor.paper import PaperBook
+
+    book = PaperBook(tmp_path / "p.db")
+    day = date(2026, 1, 5)
+    book.open_trade("COMI", 10.0, 9.0, 12.0, source="you", today=day)
+    t = book.open_trade("ETEL", 20.0, 19.0, 24.0, source="plan", today=day)
+    book.close_by_hand(t.id, 21.0, day + timedelta(days=1))
+    tab = PaperTab(lambda: book, lambda symbols, days: {}, lambda: "swing")
+    tab.show_snapshot({"trades": book.trades(), "stats": book.stats({"COMI": 10.5}),
+                       "marks": {"COMI": 10.5}, "paused": "drawdown", "guard": {}})
+    assert tab.open_table.rowCount() == 1 and tab.closed_table.rowCount() == 1
+    assert tab.open_table.item(0, 0).text() == "COMI"
+    assert not tab.resume_button.isHidden()

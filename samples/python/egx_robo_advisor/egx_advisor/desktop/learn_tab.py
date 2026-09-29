@@ -50,6 +50,12 @@ def describe(progress: Optional[cur.Progress]) -> str:
         if progress.hit_rate is not None:
             text += "  ·  " + tr("learn.right", rate=f"{progress.hit_rate:.0%}")
         return text
+    if progress.unit == "share":
+        return tr("learn.share", have=f"{progress.have:.0%}", need=f"{progress.need:.0%}")
+    if progress.unit == "days":
+        return tr("learn.days", have=f"{progress.have:g}", need=f"{progress.need:g}")
+    if progress.unit == "excess":
+        return tr("learn.excess", have=f"{progress.have:+.2f}")
     return tr("learn.count", have=f"{progress.have:g}", need=f"{progress.need:g}")
 
 

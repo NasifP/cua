@@ -120,6 +120,20 @@ BEHAVIOUR_FIELDS: tuple[Field, ...] = (
           "over 20 sessions (0.5 to 10). Caps prepared buys, scan share counts and the "
           "average calculator whatever the cash, so a position can be left quickly.",
           default="3"),
+    Field("EGX_DAILY_LOSS_PCT", "Daily loss limit (%)", "float",
+          "If the portfolio falls this much in one day (0.5 to 20), the bot halts by itself "
+          "until you resume it. The paper account pauses at the same limit.", default="2",
+          minimum=0.5, maximum=20),
+    Field("EGX_MAX_DRAWDOWN_PCT", "Maximum drawdown (%)", "float",
+          "If the portfolio falls this much below its highest value (2 to 50), the bot halts. "
+          "Resuming accepts the loss and starts counting again from there.", default="10",
+          minimum=2, maximum=50),
+    Field("EGX_RISK_PER_TRADE_PCT", "Risk per paper trade (%)", "float",
+          "What one paper trade may lose at its stop, as a percent of the paper account "
+          "(0.1 to 5). The share count follows from it.", default="1", minimum=0.1, maximum=5),
+    Field("EGX_PAPER_CAPITAL", "Paper account (EGP)", "float",
+          "The pretend money the paper trading journal starts with.", default="100000",
+          minimum=1000, maximum=100000000),
     Field("EGX_COMMITTEE", "Analyst team (4 models)", "bool",
           "Each analysis question goes to three specialists at once (technical, news, risk), "
           "then the analyst model decides from their reports. A buy can only be prepared when "
