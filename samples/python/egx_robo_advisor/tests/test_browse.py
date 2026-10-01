@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import time
 import os
 import urllib.error
 import urllib.request
@@ -360,3 +361,19 @@ def test_real_page_search_types_into_the_search_box(tab):
 def test_real_page_pointing_at_buy_clicks_nothing(tab):
     assert js(tab, browse.POINT_AT_BUY_SCRIPT)["marked"] >= 1
     assert tab.evaluate("window.log") == []
+
+
+def test_a_move_waits_until_the_page_stops_changing_not_a_fixed_time():
+    page = FakePage()
+    drawn = iter(["1:a", "5:ab", "9:abc", "9:abc", "9:abc", "9:abc"])
+    page.run = lambda script: next(drawn) if "slice(-300)" in script else "{}"
+    waits: list[float] = []
+    b = browse.Browser(page, HOME, settle=3.0, sleep=waits.append)
+    b._wait_drawn()
+    assert waits == [0.25] * 5, "done once the text held still twice in a row"
+    # A page that never settles is left after `settle` seconds, not waited on forever.
+    page.run = lambda script: str(time.monotonic())
+    b2 = browse.Browser(page, HOME, settle=0.3, sleep=lambda s: time.sleep(0.05))
+    started = time.monotonic()
+    b2._wait_drawn()
+    assert time.monotonic() - started < 1.0

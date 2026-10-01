@@ -349,11 +349,33 @@ class ThndrExecutor:
             )
         screenshot = await self.interface.screenshot()
         payload = await self._extract_portfolio(screenshot)
+        self._check_against_ocr(screenshot, payload)
         cash_visible = payload.get("cash_egp") not in (None, "")
         verdict = await self.interface.assert_demo_now()
         portfolio = _parse_portfolio(payload, demo_confirmed=verdict.state.may_click)
         publish_portfolio(self.bus, portfolio, cash_visible=cash_visible)
         return portfolio
+
+    def _check_against_ocr(self, screenshot: bytes, payload: Mapping[str, Any]) -> None:
+        """Warn when the vision model read a number OCR cannot find on the screenshot.
+
+        A warning, not a refusal: OCR misreads digits too, and on this path it
+        is the weaker of the two readers. The desktop app's page-text read is
+        the exact one.
+        """
+        from ..safety.vision import ocr_screen_lines
+
+        lines, why = ocr_screen_lines(screenshot)
+        if not lines:
+            return
+        missing = ungrounded(payload, "\n".join(lines))
+        if missing:
+            self.bus.publish(
+                EventKind.GUARD,
+                "check these on screen: the model read numbers OCR could not find: "
+                + ", ".join(missing[:6]),
+                phase="reading_portfolio",
+            )
 
     async def _extract_portfolio(self, screenshot: bytes) -> Mapping[str, Any]:
         """Turn the portfolio screen into structured data with a vision model.
@@ -689,6 +711,143 @@ async def extract_positions(
             if isinstance(entry, dict) and entry.get("symbol"):
                 entry["symbol"] = ui.canonical_symbol(str(entry["symbol"]))
     return payload
+
+
+# --------------------------------------------------------------------------- #
+# Reading the positions table without a model, and checking what a model read
+# --------------------------------------------------------------------------- #
+
+_PAGE_DIGITS = str.maketrans("٠١٢٣٤٥٦٧٨٩٫٬", "0123456789.,")
+_PAGE_NUMBER = re.compile(r"\d[\d,]*(?:\.\d+)?")
+_TICKER = re.compile(r"[A-Z]{3,5}")
+_CASH_LABELS = ("buying power", "purchasing power", "available cash", "cash balance", "cash",
+                "القوة الشرائية", "الرصيد النقدي", "النقدية")
+
+
+def _page_number(text: str) -> Optional[Decimal]:
+    """One cell as a number: "99,310.20", "٩٠٢", "EGP 1,200". None if it holds none."""
+    found = _PAGE_NUMBER.findall(str(text or "").translate(_PAGE_DIGITS))
+    if len(found) != 1:
+        return None
+    try:
+        return Decimal(found[0].replace(",", ""))
+    except InvalidOperation:
+        return None
+
+
+def page_numbers(text: str) -> set[Decimal]:
+    """Every number written on a page, normalised (commas, Arabic digits, trailing zeros)."""
+    out = set()
+    for raw in _PAGE_NUMBER.findall(str(text or "").translate(_PAGE_DIGITS)):
+        try:
+            out.add(Decimal(raw.replace(",", "")).normalize())
+        except InvalidOperation:
+            continue
+    return out
+
+
+def _cash_on_page(lines: list[str]) -> Optional[Decimal]:
+    """The cash balance when a line names it: the number on that line or the next."""
+    for i, line in enumerate(lines):
+        low = line.strip().lower()
+        label = next((lab for lab in _CASH_LABELS if low.startswith(lab)), None)
+        if label is None:
+            continue
+        # "Cash" itself, not "Cash flow" or "Cashback"; a currency may follow.
+        rest = low[len(label):].strip(" :\t-").removeprefix("egp").removeprefix("جنيه").strip()
+        if rest[:1].isalpha():
+            continue
+        for candidate in (line.strip()[len(label):], *lines[i + 1:i + 2]):
+            value = _page_number(candidate)
+            if value is not None:
+                return value
+    return None
+
+
+def parse_positions_table(text: str, ui: "ThndrUiMap") -> Optional[dict[str, Any]]:
+    """The positions table straight from the page text, with no model, or None.
+
+    Thndr X's table arrives as one line per row, cells separated by tabs, under
+    a header naming "Qty" and "Mkt. Val..." (and "AvgCost"). Each row's first
+    cell is the ticker. Any row that does not fit -- a missing or doubled
+    number -- returns None, so the caller falls back to a model read rather
+    than guess.
+    """
+    lines = (text or "").splitlines()
+    for i, line in enumerate(lines):
+        header = [c.strip().lower() for c in line.split("\t")]
+        if len(header) < 3:
+            continue
+        qty = next((k for k, c in enumerate(header) if c.startswith("qty")), None)
+        value = next((k for k, c in enumerate(header) if c.startswith("mkt")), None)
+        cost = next((k for k, c in enumerate(header) if c.replace(" ", "").startswith("avgcost")),
+                    None)
+        if qty is None or value is None:
+            continue
+        rows: list[dict[str, Any]] = []
+        for row in lines[i + 1:]:
+            cells = [c.strip() for c in row.split("\t")]
+            if len(cells) < 2 or not _TICKER.fullmatch(cells[0]):
+                if rows:
+                    break
+                continue
+            if len(cells) <= max(qty, value):
+                return None
+            q, v = _page_number(cells[qty]), _page_number(cells[value])
+            if q is None or v is None:
+                return None
+            c = _page_number(cells[cost]) if cost is not None and cost < len(cells) else None
+            rows.append({"symbol": ui.canonical_symbol(cells[0]), "quantity": str(q),
+                         "market_value": str(v), "avg_cost": None if c is None else str(c)})
+        if rows:
+            cash = _cash_on_page(lines)
+            return {"positions": rows, "cash_egp": None if cash is None else str(cash),
+                    "unsettled_cash_egp": None}
+    return None
+
+
+def ungrounded(payload: Mapping[str, Any], text: str) -> list[str]:
+    """What a model read that is not written on the page: "NIPH market_value 88743.0".
+
+    Quantities, market values and cash must appear on the page as numbers; a
+    model that transposes digits or invents a figure is caught here.
+    """
+    present = page_numbers(text)
+    missing = []
+
+    def check(label: str, raw: Any) -> None:
+        if raw in (None, ""):
+            return
+        try:
+            number = Decimal(str(raw).replace(",", "").strip()).normalize()
+        except InvalidOperation:
+            missing.append(f"{label} {raw!r}")
+            return
+        if number not in present:
+            missing.append(f"{label} {raw}")
+
+    for entry in payload.get("positions") or []:
+        if isinstance(entry, Mapping):
+            name = str(entry.get("symbol", "?")).removesuffix(".CA")
+            check(f"{name} quantity", entry.get("quantity"))
+            check(f"{name} market_value", entry.get("market_value"))
+    check("cash_egp", payload.get("cash_egp"))
+    check("unsettled_cash_egp", payload.get("unsettled_cash_egp"))
+    return missing
+
+
+def drop_ungrounded_costs(payload: Mapping[str, Any], text: str) -> int:
+    """Blank each average cost not written on the page (it is display-only). Returns how many."""
+    present, dropped = page_numbers(text), 0
+    for entry in payload.get("positions") or []:
+        if isinstance(entry, dict) and entry.get("avg_cost") not in (None, ""):
+            try:
+                ok = Decimal(str(entry["avg_cost"]).replace(",", "")).normalize() in present
+            except InvalidOperation:
+                ok = False
+            if not ok:
+                entry["avg_cost"], dropped = None, dropped + 1
+    return dropped
 
 
 def publish_portfolio(
