@@ -95,6 +95,8 @@ class Toolbox:
     last_scan: Optional[Any] = None
     #: The app's Thndr X browser (browse.BrowseClient); None outside the desktop app.
     browser: Optional[Any] = None
+    #: Prices read from Thndr X during the session (marketdata/intraday.py); None: none.
+    intraday: Optional[Any] = None
     #: USD/EGP when the bus has none (yahoo_usd_egp); None: report it missing.
     usd_egp: Optional[Callable[[], Optional[float]]] = None
     #: Environment for EGX_ADTV_PCT; os.environ when None.
@@ -147,6 +149,19 @@ class Toolbox:
         today = _cairo_today()
         return index_proxy.build({s: [r for r in series if r.day < today]
                                   for s, series in rows.items()})
+
+    def _live(self, symbol: str) -> Optional[dict[str, Any]]:
+        """The price read from Thndr X in the last minutes, if any."""
+        if self.intraday is None:
+            return None
+        try:
+            tick = self.intraday.last(symbol)
+        except Exception:  # noqa: BLE001 - no live price is not an error
+            return None
+        if tick is None:
+            return None
+        return {"price": tick.price, "at_cairo": tick.at.strftime("%Y-%m-%d %H:%M"),
+                "source": "read from the Thndr X page during the session"}
 
     def _bars(self, symbol: str, days: int = 420) -> list[Any]:
         rows = self.history([symbol], days).get(symbol) or ()
@@ -224,12 +239,15 @@ class Toolbox:
         four = four_factors(symbol, [b.close for b in bars], [b.volume for b in bars])
         held = next((p for p in (self.get_portfolio().get("positions") or [])
                      if p["symbol"] == symbol), None)
-        price = held["price"] if held and held.get("price") else last
+        live = self._live(symbol)
+        price = (live["price"] if live else
+                 held["price"] if held and held.get("price") else last)
         risk_off = self.macro().risk_off
         lv = levels_mod.compute(symbol, bars, price, self.style,
                                 held.get("avg_cost") if held else None, risk_off)
         result: dict[str, Any] = {
             "symbol": symbol, "data_through": bars[-1].day.isoformat(), "last_close": last,
+            "live": live,
             "returns_pct": {"1d": ret(1), "5d": ret(5), "20d": ret(20), "60d": ret(60),
                             "250d": ret(250)},
             "sma": {"20": sma(20), "50": sma(50), "200": sma(200)},
@@ -265,12 +283,15 @@ class Toolbox:
         if len(bars) < levels_mod.ATR_DAYS + 1:
             return {"symbol": symbol, "error": f"only {len(bars)} daily bars available",
                     "held": held}
-        price = held["price"] if held and held.get("price") else float(bars[-1].close)
+        live = self._live(symbol)
+        price = (live["price"] if live else
+                 held["price"] if held and held.get("price") else float(bars[-1].close))
         macro = self.macro()
         lv = levels_mod.compute(symbol, bars, price, self.style,
                                 held.get("avg_cost") if held else None, macro.risk_off)
         cap = ms.liquidity_cap(bars, self.env if self.env is not None else os.environ)
         out = {"symbol": symbol, "data_through": bars[-1].day.isoformat(), "price": price,
+               "live": live,
                "levels": lv.to_json() if lv else None, "style": self.style, "held": held,
                "regime": ms.detect_market_regime(bars).to_json(),
                "liquidity": dict(cap.to_json(), max_value_egp=round((cap.max_shares or 0)

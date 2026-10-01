@@ -160,6 +160,8 @@ class EgxCuaAgent:
         self.archive: Optional[Any] = None
         #: The paper trading journal (paper.py). None in tests.
         self.paper: Optional[Any] = None
+        #: Prices the desktop app read from Thndr X during the session. None in tests.
+        self.intraday: Optional[Any] = None
         self._closes: dict[str, list[Decimal]] = {}
         self._volumes: dict[str, list[Decimal]] = {}
         self._four_factor: Optional[FourFactorDecision] = None
@@ -780,7 +782,8 @@ class EgxCuaAgent:
         if self.paper is None:
             return
         try:
-            closed, breach = self.paper.settle(self._bars, now.date())
+            ticks = self.intraday.ticks if self.intraday is not None else None
+            closed, breach = self.paper.settle(self._bars, now.date(), ticks)
             for trade in closed:
                 self.bus.publish(EventKind.PLAN, f"paper trade closed: {trade.symbol}",
                                  phase="planning")

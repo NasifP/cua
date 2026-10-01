@@ -43,11 +43,14 @@ def _symbol(text: str) -> str:
 
 class PaperTab(QWidget):
     def __init__(self, book: Callable[[], pp.PaperBook], history: HistoryFn,
-                 style: Callable[[], str], parent: Optional[QWidget] = None) -> None:
+                 style: Callable[[], str], intraday: Any = None,
+                 parent: Optional[QWidget] = None) -> None:
         """`book()` -> PaperBook (settings are read at each call); `history(symbols, days)`
-        -> daily bars; `style()` -> EGX_STYLE. All called off the UI thread."""
+        -> daily bars; `style()` -> EGX_STYLE. All called off the UI thread. `intraday`:
+        prices read from Thndr X (marketdata/intraday.py), for same-day exits."""
         super().__init__(parent)
         self.book, self.history, self.style = book, history, style
+        self.intraday = intraday
         self.snapshot: dict[str, Any] = {}
         self._loading = False
 
@@ -122,10 +125,23 @@ class PaperTab(QWidget):
         book = self.book()
         today = date.today()
         bars = self._bars(sorted({t.symbol for t in book.trades("open")}))
-        _closed, breach = book.settle(lambda s: bars.get(s, []), today)
+        store = self.intraday
+        ticks_for = store.ticks if store is not None else None
+        _closed, breach = book.settle(lambda s: bars.get(s, []), today, ticks_for)
         marks = {s: float(rows[-1].close) for s, rows in bars.items() if rows}
+        live = {}
+        for symbol in {t.symbol for t in book.trades("open")}:
+            tick = store.last(symbol) if store is not None else None
+            if tick is not None:
+                marks[symbol] = live[symbol] = tick.price
+        last_read = None
+        if store is not None:
+            days = store.days()
+            last_read = days[-1].isoformat() if days else None
         return {"trades": book.trades(), "stats": book.stats(marks), "marks": marks,
-                "paused": book.paused(today), "breach": breach, "guard": book.guard()}
+                "paused": book.paused(today), "breach": breach, "guard": book.guard(),
+                "live": live, "live_sessions": len(store.sessions()) if store else 0,
+                "last_read": last_read}
 
     def refresh(self) -> None:
         if self._loading:
@@ -210,7 +226,10 @@ class PaperTab(QWidget):
             # The guard keeps the day's loss; shown as the day's change (no "-0.0").
             today=f"{0.0 - float(guard.get('daily_pct', 0)):+.1f}",
             drawdown=f"{stats.drawdown_pct:.1f}", closed=stats.closed,
-            rate=f"{stats.win_rate:.0%}"))
+            rate=f"{stats.win_rate:.0%}")
+            + "\n" + tr("paper.live", count=len(snap.get("live") or {}),
+                         sessions=snap.get("live_sessions", 0),
+                         last=snap.get("last_read") or tr("paper.live_never")))
         paused = snap.get("paused")
         if paused:
             theme.restyle_pill(self.state, "bad")

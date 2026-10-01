@@ -244,10 +244,14 @@ class MainWindow(QMainWindow):
 
         self.memory = Memory(memory_path_for(bus_path()))
         self.archive = PriceArchive(archive_path_for(bus_path()))
+        from ..marketdata.intraday import IntradayStore, intraday_path_for
+
+        self.intraday = IntradayStore(intraday_path_for(bus_path()))
         saved = self.memory.ui_get(Memory.INDICATORS_KEY)
         # What the Sprint 4 widgets call off the UI thread (desktop/services.py).
         self.services = Services(
             env=env, dashboard_port=dashboard_port, memory=self.memory, archive=self.archive,
+            intraday=self.intraday,
             # Read late: the browse channel starts with the child processes.
             browse_env=lambda: (getattr(self, "browse_server", None).env()
                                 if getattr(self, "browse_server", None) else {}))
@@ -274,7 +278,8 @@ class MainWindow(QMainWindow):
 
         self.paper_tab = PaperTab(
             book=lambda: PaperBook.from_env(self.memory.path, os.environ),
-            history=yahoo_history(self.archive), style=lambda: levels.style_from(os.environ))
+            history=yahoo_history(self.archive), style=lambda: levels.style_from(os.environ),
+            intraday=self.intraday)
 
         pages = (
             (self.today_tab, "today", "page.today"),
@@ -459,6 +464,13 @@ class MainWindow(QMainWindow):
         self._timer = QTimer(self)
         self._timer.timeout.connect(self._tick)
         self._timer.start(1000)
+
+        # Prices during the session, read off the open Thndr X page once a minute.
+        self._sampling = False
+        self._references: tuple[Any, dict[str, float]] = (None, {})
+        self._sampler = QTimer(self)
+        self._sampler.timeout.connect(self._sample_prices)
+        self._sampler.start(60_000)
 
         # Stops, targets and the news brake, as Windows notifications.
         self.notifications = NotificationManager(
@@ -759,6 +771,40 @@ class MainWindow(QMainWindow):
             self._dashboard_loaded = True
             link = make_login_path(self.env["EGX_DASHBOARD_TOKEN"])
             self.dashboard.load(QUrl(f"http://127.0.0.1:{self.dashboard_port}{link}"))
+
+    def _sample_prices(self) -> None:
+        """Keep the prices the open Thndr X page shows (marketdata/intraday.py).
+
+        Only while the exchange is open, one read at a time, off the UI thread.
+        The read is the bridge's own: page text, no click, no navigation.
+        """
+        from datetime import datetime, timezone
+
+        from ..clock import TradingCalendar
+        from ..marketdata import intraday as ir
+        from .workers import run_async
+
+        if self._sampling or not TradingCalendar().can_trade(datetime.now(timezone.utc)):
+            return
+        self._sampling = True
+        page, archive, store = self.page, self.archive, self.intraday
+
+        def job() -> int:
+            now = ir.cairo_now()
+            day, references = self._references
+            if day != now.date() or not references:
+                symbols = [t + ".CA" for t in self._known_tickers()]
+                references = ir.reference_closes(archive, symbols, now.date())
+                self._references = (now.date(), references)
+            prices = ir.parse_prices(page.text(), references)
+            return store.add(prices, now) if prices else 0
+
+        def done(_count: Any, error: Optional[BaseException]) -> None:
+            self._sampling = False
+            if error is not None:
+                print(f"price read skipped: {error}", flush=True)
+
+        run_async(job, done, owner=self)
 
     def _refresh_status(self) -> None:
         try:

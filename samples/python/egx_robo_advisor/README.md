@@ -482,6 +482,45 @@ in the app counts live reservations as spent. With Gemini Flash specialists
 the reservation is about 6 EGP with a Flash lead and about 13 EGP with a Pro
 lead, released down to what was actually spent.
 
+## Learning: checkpoints, paper trading, loss limits and live prices
+
+The **Learn** page lists what the bot must show before it is worth trying to
+speculate with it: 26 checkpoints in six stages, from reading the market to
+real money (`egx_advisor/curriculum.py`). A checkpoint is ticked only by
+evidence the app counts on this computer, never because the model says so,
+and the tick goes away when the evidence does. Passing all of them is not a
+promise of profit.
+
+The **Paper trading** page is the journal those checkpoints are judged on
+(`egx_advisor/paper.py`):
+
+- every buy the bot's plan wants becomes a paper trade, with its stop and
+  target from the levels; you can open one by ticker too;
+- the share count is sized so the stop loses `EGX_RISK_PER_TRADE_PCT` of the
+  paper account (`EGX_PAPER_CAPITAL`);
+- a trade closes at the first price at or past its stop or target, after the
+  backtester's costs. A session that reaches both counts as the stop.
+
+**Loss limits** (`egx_advisor/risk_limits.py`): when the real portfolio falls
+`EGX_DAILY_LOSS_PCT` (default 2%) in a day, or `EGX_MAX_DRAWDOWN_PCT`
+(default 10%) below its highest value, the agent halts itself like the halt
+button. You resume it; resuming after a drawdown accepts the loss. The paper
+account has the same limits and pauses instead.
+
+**Prices during the session** (`egx_advisor/marketdata/intraday.py`): Yahoo
+has no intraday prices for EGX stocks, so while the exchange is open the
+desktop app reads the text of the Thndr X page in its own window once a
+minute -- no click, no navigation -- and keeps the prices it recognises. Open
+a Thndr X watchlist to cover many stocks at once. A number counts as a price
+only after a known ticker and within 20% of the stock's last close. The
+analyst shows the live price, and paper trades can close the same day. Check
+Thndr's terms of use before relying on this.
+
+The EGX 30's history is not on Yahoo either (it serves `^CASE30` for five
+sessions only). The market regime, `MACRO_RISK_OFF` and the paper account's
+comparison use a stand-in: the equal-weight average of the scan list's daily
+moves (`egx_advisor/marketdata/index_proxy.py`), labelled as such.
+
 ## The loop, and why the gates are in this order
 
 Each cycle runs the cheap, safe, offline checks first and only then reaches for

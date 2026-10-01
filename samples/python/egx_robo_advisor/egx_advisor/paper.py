@@ -258,34 +258,68 @@ class PaperBook:
             raise ValueError("a positive price is needed to close")
         self._close(trade, today, price, "manual")
 
-    def settle(self, bars_for: Callable[[str], Sequence[Any]], today: date
+    def settle(self, bars_for: Callable[[str], Sequence[Any]], today: date,
+               ticks_for: Optional[Callable[[str], Sequence[Any]]] = None
                ) -> tuple[list[Trade], Optional[rl.Breach]]:
         """Close what later sessions stopped out or took profit on; mark the rest.
 
         `bars_for(symbol)` gives daily bars (day, open, high, low, close), oldest
-        first. Returns the trades closed now and a new loss-limit breach, if any.
+        first. `ticks_for(symbol)`, when given, gives prices read during sessions
+        (marketdata/intraday.py: .at, .price), so a trade can close the same day
+        rather than at the next daily bar. Returns the trades closed now and a
+        new loss-limit breach, if any.
         """
         closed_now, marks = [], {}
         for trade in self.trades("open"):
             bars = [b for b in bars_for(trade.symbol) if b.day > trade.opened]
-            for bar in bars:
-                o, h, lo = float(bar.open), float(bar.high), float(bar.low)
-                exit_ = None
-                if o <= trade.stop:
-                    exit_ = (o, "stop")
-                elif lo <= trade.stop:
-                    exit_ = (trade.stop, "stop")
-                elif o >= trade.target:
-                    exit_ = (o, "target")
-                elif h >= trade.target:
-                    exit_ = (trade.target, "target")
-                if exit_:
-                    self._close(trade, bar.day, *exit_)
-                    closed_now.append(trade)
-                    break
-            else:
-                if bars:
-                    marks[trade.symbol] = float(bars[-1].close)
+            if self._settle_bars(trade, bars):
+                closed_now.append(trade)
+                continue
+            if bars:
+                marks[trade.symbol] = float(bars[-1].close)
+            after = max([trade.opened] + [b.day for b in bars])
+            ticks = [t for t in (ticks_for(trade.symbol) if ticks_for else ())
+                     if t.at.date() > after]
+            if self._settle_ticks(trade, ticks):
+                closed_now.append(trade)
+            elif ticks:
+                marks[trade.symbol] = float(ticks[-1].price)
+        return closed_now, self._record_equity(marks, today)
+
+    def _settle_ticks(self, trade: Trade, ticks: Sequence[Any]) -> bool:
+        """The first sampled price at or past the stop or target closes the trade.
+
+        A stop exits at the sampled price (it may already be below the stop);
+        a target exits at the target, never better.
+        """
+        for tick in ticks:
+            price = float(tick.price)
+            if price <= trade.stop:
+                self._close(trade, tick.at.date(), price, "stop")
+                return True
+            if price >= trade.target:
+                self._close(trade, tick.at.date(), trade.target, "target")
+                return True
+        return False
+
+    def _settle_bars(self, trade: Trade, bars: Sequence[Any]) -> bool:
+        for bar in bars:
+            o, h, lo = float(bar.open), float(bar.high), float(bar.low)
+            exit_ = None
+            if o <= trade.stop:
+                exit_ = (o, "stop")
+            elif lo <= trade.stop:
+                exit_ = (trade.stop, "stop")
+            elif o >= trade.target:
+                exit_ = (o, "target")
+            elif h >= trade.target:
+                exit_ = (trade.target, "target")
+            if exit_:
+                self._close(trade, bar.day, *exit_)
+                return True
+        return False
+
+    def _record_equity(self, marks: Mapping[str, float], today: date) -> Optional[rl.Breach]:
         equity = self.stats(marks).equity
         with closing(self._connect()) as conn, conn:
             conn.execute("INSERT INTO paper_equity (day, equity) VALUES (?, ?) "
@@ -293,7 +327,7 @@ class PaperBook:
                          (today.isoformat(), equity))
         state, breach = rl.step(self.guard(), equity, today.isoformat(), self.limits)
         self._set_guard(state)
-        return closed_now, breach
+        return breach
 
     def resume(self, today: date, marks: Mapping[str, float] | None = None) -> None:
         """The operator resumes paper trading after a drawdown pause, accepting the loss."""

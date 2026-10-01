@@ -49,7 +49,7 @@ def test_nothing_is_ticked_without_evidence_and_speculation_stays_locked(tmp_pat
     statuses = cur.evaluate(cur.gather(memory, config_dir=tmp_path, universe=["A.CA"]))
     assert all(s.state != "done" for s in statuses)
     locked = {s.checkpoint.key for s in statuses if s.state == "locked"}
-    assert locked == {"intraday", "order_book", "walk_forward", "egx_rules"}
+    assert locked == {"order_book", "walk_forward", "egx_rules"}
     assert all(s.checkpoint.stage >= 5 for s in statuses if s.state == "locked")
 
 

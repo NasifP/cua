@@ -98,6 +98,12 @@ STRINGS: dict[str, tuple[str, str]] = {
                       "المفتوح {open}  ·  النهارده {today}%  ·  التراجع {drawdown}%  ·  "
                       "{closed} مقفولة، كسبان {rate}"),
     "paper.active": ("Active", "شغّال"),
+    "paper.live": ("Live prices from Thndr X: {count} open trades priced now  ·  {sessions} full "
+                   "sessions recorded  ·  last read on {last}",
+                   "الأسعار اللحظية من Thndr X: {count} صفقة مفتوحة متسعّرة دلوقتي  ·  {sessions} "
+                   "جلسة كاملة متسجلة  ·  آخر قراءة يوم {last}"),
+    "paper.live_never": ("never (open a Thndr X watchlist during the session)",
+                         "لسه (افتح قائمة متابعة في Thndr X وقت الجلسة)"),
     "paper.paused.daily": ("Paused for today: daily loss limit", "واقف النهارده: حد الخسارة اليومي"),
     "paper.paused.drawdown": ("Paused: maximum drawdown", "واقف: أقصى تراجع"),
     "paper.breach": ("Loss limit reached: {what}", "وصل لحد الخسارة: {what}"),

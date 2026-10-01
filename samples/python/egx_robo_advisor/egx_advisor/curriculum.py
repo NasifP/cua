@@ -49,6 +49,7 @@ SIZED_TRADES = 10
 DISCIPLINE_TRADES = 10
 RULE_EXIT_SHARE = 0.9
 PAPER_DAYS = 90
+INTRADAY_SESSIONS = 5
 
 
 def round_trip_cost_pct() -> float:
@@ -105,6 +106,8 @@ class Evidence:
     paper_excess: Optional[float] = None
     #: The paper account is paused for its drawdown.
     paper_drawdown: bool = False
+    #: Sessions with an hour or more of prices read from Thndr X.
+    intraday_sessions: int = 0
 
     def record(self, horizon: int) -> Record:
         return self.horizons.get(horizon, Record())
@@ -300,10 +303,13 @@ CHECKPOINTS: tuple[Checkpoint, ...] = (
     Checkpoint(
         "intraday", 5,
         ("Prices during the session", "الأسعار أثناء الجلسة"),
-        ("Minute-by-minute prices. Speculation lives inside the day; today the app sees only "
-         "daily closes. Needs a live or delayed intraday source for the EGX.",
-         "أسعار دقيقة بدقيقة. المضاربة بتحصل جوه اليوم، والبرنامج دلوقتي شايف سعر الإقفال "
-         "بس. محتاج مصدر أسعار لحظية أو متأخرة شوية للبورصة المصرية.")),
+        (f"Minute-by-minute prices for {INTRADAY_SESSIONS} sessions, read from the Thndr X page "
+         "open in the app (a watchlist shows many stocks at once). An hour or more of reads "
+         "makes a session count.",
+         f"أسعار دقيقة بدقيقة لمدة {INTRADAY_SESSIONS} جلسات، بتتقري من صفحة Thndr X المفتوحة "
+         "في البرنامج (قائمة المتابعة بتعرض أسهم كتير مرة واحدة). الجلسة بتتحسب لو اتقرا فيها "
+         "ساعة أو أكتر."),
+        lambda e: Progress(e.intraday_sessions, INTRADAY_SESSIONS)),
     Checkpoint(
         "order_book", 5,
         ("Liquidity and the order book", "السيولة ودفتر الأوامر"),
@@ -480,6 +486,12 @@ def gather(memory: Memory, archive: Any = None, bus: Any = None,
     views = _snapshot(bus, "team_views") or {}
     paper = _paper_evidence(memory, archive, today)
     guarded = paper.pop("guarded")
+    try:
+        from .marketdata.intraday import IntradayStore
+
+        intraday_sessions = len(IntradayStore(memory.path.with_name("intraday.db")).sessions())
+    except Exception:  # noqa: BLE001 - no store: nothing read yet
+        intraday_sessions = 0
     return Evidence(
         universe=len(universe),
         priced=priced,
@@ -499,6 +511,7 @@ def gather(memory: Memory, archive: Any = None, bus: Any = None,
         horizons=horizons,
         cost_pct=round_trip_cost_pct(),
         guard_active=bool(_snapshot(bus, "loss_guard")) or guarded,
+        intraday_sessions=intraday_sessions,
         **paper,
     )
 

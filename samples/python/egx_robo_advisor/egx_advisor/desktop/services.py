@@ -32,6 +32,8 @@ class Services:
     dashboard_port: int
     memory: Any
     archive: Any
+    #: Prices read from Thndr X during the session (marketdata/intraday.py).
+    intraday: Any = None
     #: The BrowseServer's env (URL and secret); {} before it has started.
     browse_env: Callable[[], Mapping[str, str]] = dict
     opener: Callable[..., Any] = urllib.request.urlopen
@@ -58,7 +60,8 @@ class Services:
 
         return Toolbox(bus=bus, memory=self.memory, archive=self.archive,
                        history=yahoo_history(self.archive), style=levels.style_from(self.env),
-                       env=self.env, browser=self.browse(), usd_egp=yahoo_usd_egp)
+                       env=self.env, browser=self.browse(), usd_egp=yahoo_usd_egp,
+                       intraday=self.intraday)
 
     # ------------------------------------------------------------------ the team
 

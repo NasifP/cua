@@ -258,6 +258,9 @@ async def main() -> None:
     from egx_advisor.paper import PaperBook
 
     agent.paper = PaperBook.from_env(memory_path_for(args.bus), os.environ)
+    from egx_advisor.marketdata.intraday import IntradayStore, intraday_path_for
+
+    agent.intraday = IntradayStore(intraday_path_for(args.bus))
     agent.install_signal_handlers()
 
     if args.target == "host":
