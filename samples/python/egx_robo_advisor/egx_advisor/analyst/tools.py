@@ -35,7 +35,7 @@ from .. import market_state as ms
 from ..scanner import analyze as four_factors
 
 HistoryFn = Callable[[Sequence[str], int], Mapping[str, Sequence[Any]]]
-EGX30 = "^CASE30"
+EGX30 = "^CASE30"  # Yahoo has 5 sessions of it only: see _index_bars
 NEWS_TIMEOUT = 10.0
 
 
@@ -66,6 +66,14 @@ def yahoo_history(archive: Any) -> HistoryFn:
     return fetch
 
 
+def yahoo_usd_egp() -> Optional[float]:
+    """The last USD/EGP close on Yahoo (EGP=X), for when the bot has not read Thndr X's rate."""
+    from ..marketdata.yahoo import USD_EGP_SYMBOL, _yfinance_fetch
+
+    rows = _yfinance_fetch([USD_EGP_SYMBOL], 10).get(USD_EGP_SYMBOL) or []
+    return float(rows[-1].close) if rows else None
+
+
 def _http_get(url: str) -> bytes:
     request = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0 EGX-Robo-Advisor"})
     with urllib.request.urlopen(request, timeout=NEWS_TIMEOUT) as response:  # noqa: S310
@@ -87,6 +95,8 @@ class Toolbox:
     last_scan: Optional[Any] = None
     #: The app's Thndr X browser (browse.BrowseClient); None outside the desktop app.
     browser: Optional[Any] = None
+    #: USD/EGP when the bus has none (yahoo_usd_egp); None: report it missing.
+    usd_egp: Optional[Callable[[], Optional[float]]] = None
     #: Environment for EGX_ADTV_PCT; os.environ when None.
     env: Optional[Mapping[str, str]] = None
     #: MACRO_RISK_OFF for the question being answered; reset with reset().
@@ -105,7 +115,7 @@ class Toolbox:
         with self._macro_lock:
             if self._macro is None:
                 try:
-                    bars = self._bars(EGX30, 30)
+                    bars = self._index_bars(30)
                 except Exception:  # noqa: BLE001 - no index: judge from the news layer alone
                     bars = []
                 self._macro = ms.macro_risk_off(bars, self._snapshot("regime") or {})
@@ -125,6 +135,18 @@ class Toolbox:
     def _snapshot(self, key: str) -> Any:
         entry = self.bus.get(key)
         return entry["payload"] if entry else None
+
+    def _index_bars(self, days: int) -> list[Any]:
+        """The EGX 30 stand-in (marketdata/index_proxy.py) over the scan list."""
+        from ..marketdata import index_proxy
+        from ..paths import config_path
+        from ..scanner import load_universe
+
+        symbols = load_universe(config_path("scan_universe.toml"))
+        rows = self.history(symbols, days) if symbols else {}
+        today = _cairo_today()
+        return index_proxy.build({s: [r for r in series if r.day < today]
+                                  for s, series in rows.items()})
 
     def _bars(self, symbol: str, days: int = 420) -> list[Any]:
         rows = self.history([symbol], days).get(symbol) or ()
@@ -358,12 +380,16 @@ class Toolbox:
                           for h in items]}
 
     def market_overview(self) -> dict[str, Any]:
+        from ..marketdata.index_proxy import LABEL
+
         out: dict[str, Any] = {}
+        bars: list[Any] = []
         try:
-            bars = self._bars(EGX30, 120)
+            bars = self._index_bars(200)
             if bars:
                 closes = [float(b.close) for b in bars]
-                out["egx30"] = {"last": closes[-1], "data_through": bars[-1].day.isoformat(),
+                out["egx30"] = {"source": LABEL, "level": round(closes[-1], 2),
+                                "data_through": bars[-1].day.isoformat(),
                                 "5d_pct": _pct(closes[-1], closes[-6]) if len(closes) > 5 else None,
                                 "20d_pct": _pct(closes[-1], closes[-21]) if len(closes) > 20
                                 else None}
@@ -373,8 +399,16 @@ class Toolbox:
         out["news_brake"] = {k: regime.get(k) for k in ("risk_state", "blocked_symbols")}
         out["news_brake"]["reason"] = (regime.get("drivers") or [None])[0]
         out["usd_egp"] = (self._snapshot("fx") or {}).get("usd_egp")
+        if out["usd_egp"] is None and self.usd_egp is not None:
+            try:
+                rate = self.usd_egp()
+                if rate:
+                    out["usd_egp"] = round(rate, 4)
+                    out["usd_egp_source"] = "Yahoo EGP=X (the bot has not read Thndr X's rate)"
+            except Exception as exc:  # noqa: BLE001
+                out["usd_egp_error"] = str(exc)[:200]
         try:
-            out["egx30_regime"] = ms.detect_market_regime(self._bars(EGX30, 120)).to_json()
+            out["egx30_regime"] = ms.detect_market_regime(bars).to_json()
         except Exception as exc:  # noqa: BLE001
             out["egx30_regime"] = {"error": str(exc)[:200]}
         out["macro"] = self.macro().to_json()

@@ -524,7 +524,17 @@ def _paper_evidence(memory: Memory, archive: Any, today: Any) -> dict[str, Any]:
     out["paper_days"] = (today - first).days
     if archive is None:
         return out
-    index = [r for r in archive.series("^CASE30", first) if r.day <= curve[-1][0]]
+    # Yahoo has no EGX30 history: the stand-in over the scan list (index_proxy.py).
+    from .marketdata import index_proxy
+    from .paths import config_path
+    from .scanner import load_universe
+
+    try:
+        symbols = load_universe(config_path("scan_universe.toml"))
+    except Exception:  # noqa: BLE001 - no list: no comparison
+        symbols = []
+    index = [r for r in index_proxy.build({s: archive.series(s, first) for s in symbols})
+             if r.day <= curve[-1][0]]
     if len(index) >= 2 and float(index[0].close) > 0:
         index_return = (float(index[-1].close) / float(index[0].close) - 1) * 100
         paper_return = (curve[-1][1] / book.capital - 1) * 100

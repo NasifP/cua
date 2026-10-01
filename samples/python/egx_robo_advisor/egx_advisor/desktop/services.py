@@ -54,11 +54,11 @@ class Services:
 
     def toolbox(self, bus: Any) -> Any:
         from .. import levels
-        from ..analyst.tools import Toolbox, yahoo_history
+        from ..analyst.tools import Toolbox, yahoo_history, yahoo_usd_egp
 
         return Toolbox(bus=bus, memory=self.memory, archive=self.archive,
                        history=yahoo_history(self.archive), style=levels.style_from(self.env),
-                       env=self.env, browser=self.browse())
+                       env=self.env, browser=self.browse(), usd_egp=yahoo_usd_egp)
 
     # ------------------------------------------------------------------ the team
 

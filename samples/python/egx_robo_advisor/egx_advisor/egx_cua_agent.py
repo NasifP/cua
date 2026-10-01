@@ -707,11 +707,16 @@ class EgxCuaAgent:
 
         regime = (self.bus.get("regime") or {}).get("payload") or {}
         try:
-            index = Instrument("^CASE30", "^CASE30", Sleeve.BLUE_CHIP)
-            rows = await source.history([index], days=30)
+            # Yahoo has no EGX30 history: the stand-in over the scan list instead.
+            from .marketdata import index_proxy
+            from .scanner import load_universe
+
+            universe = [Instrument(s, s, Sleeve.BLUE_CHIP)
+                        for s in load_universe(config_path("scan_universe.toml"))]
+            rows = await source.history(universe, days=30)
             today = datetime.now(timezone.utc).date()
-            series = sorted((r for r in rows.get("^CASE30") or () if r.day < today),
-                            key=lambda r: r.day)
+            series = index_proxy.build({s: [r for r in bars if r.day < today]
+                                        for s, bars in rows.items()})
         except Exception as exc:  # noqa: BLE001 - no index: judge from the news layer alone
             logger.info("EGX30 unavailable for the macro check: %s", exc)
             series = []

@@ -115,7 +115,9 @@ def bus(tmp_path):
 
 def _toolbox(bus, egx30=UP, volume=1000):
     def history(symbols, days):
-        return {s: _rows(egx30 if s == "^CASE30" else UP, volume) for s in symbols}
+        # Many symbols: the scan list, for the EGX 30 stand-in; one: the stock asked about.
+        path = egx30 if len(symbols) > 1 else UP
+        return {s: _rows(path, volume) for s in symbols}
     return Toolbox(bus=bus, history=history, env={"EGX_ADTV_PCT": "3"})
 
 
@@ -175,4 +177,66 @@ def test_the_macro_check_is_fetched_once_across_specialist_threads(bus):
         w.start()
     for w in workers:
         w.join()
-    assert sum(1 for f in fetched if "^CASE30" in f) == 1
+    assert sum(1 for f in fetched if len(f) > 1) == 1, "one scan-list fetch for the stand-in"
+
+
+def test_the_egx30_stand_in_averages_the_scan_lists_daily_moves():
+    from datetime import date, timedelta
+
+    from egx_advisor.marketdata import index_proxy
+
+    class Bar:
+        def __init__(self, day, close):
+            self.day, self.close = day, close
+
+    d = date(2026, 9, 1)
+    days = [d + timedelta(i) for i in range(4)]
+    rows = {
+        "A.CA": [Bar(x, c) for x, c in zip(days, (10, 11, 11, 11))],     # +10%, 0, 0
+        "B.CA": [Bar(x, c) for x, c in zip(days, (20, 20, 18, 18))],     # 0, -10%, 0
+        "C.CA": [Bar(x, c) for x, c in zip(days, (5, 5, 5, 50))],        # 0, 0, +900% bad print
+        "D.CA": [Bar(days[3], 7)],                                       # listed late
+    }
+    bars = index_proxy.build(rows)
+    assert [b.day for b in bars] == days[1:]
+    levels = [b.close for b in bars]
+    assert levels[0] == pytest.approx(1000 * (1 + 0.10 / 3))
+    assert levels[1] == pytest.approx(levels[0] * (1 - 0.10 / 3))
+    # The bad print is held to +20%, not +900%.
+    assert levels[2] == pytest.approx(levels[1] * (1 + 0.20 / 3))
+    # A day when fewer than half of the listed stocks traded does not count.
+    thin = {"A.CA": rows["A.CA"], "B.CA": rows["B.CA"][:1], "C.CA": rows["C.CA"][:1]}
+    assert [b.day for b in index_proxy.build(thin)] == []
+    assert index_proxy.build({"Z.CA": [Bar(d, 0), Bar(days[1], 5)]}) == []
+
+
+def test_the_market_overview_reports_the_stand_in_and_a_fallback_dollar_rate(bus):
+    box = _toolbox(bus)
+    box.usd_egp = lambda: 51.85
+    out = box.market_overview()
+    assert "stand-in" in out["egx30"]["source"] and out["egx30"]["level"] > 0
+    assert out["egx30_regime"]["regime"] == "uptrend"
+    assert out["usd_egp"] == 51.85 and "Yahoo" in out["usd_egp_source"]
+    bus.put("fx", {"usd_egp": "52.10"})
+    assert box.market_overview()["usd_egp"] == "52.10", "Thndr X's own rate comes first"
+
+
+def test_one_stock_from_yahoo_is_read_from_its_nested_columns(monkeypatch):
+    pd = pytest.importorskip("pandas")
+    import sys
+    import types
+
+    from egx_advisor.marketdata.yahoo import _yfinance_fetch
+
+    index = pd.to_datetime(["2026-09-28", "2026-09-29"])
+
+    def download(symbols, **kw):
+        cols = pd.MultiIndex.from_product([symbols, ["Open", "High", "Low", "Close", "Volume"]])
+        return pd.DataFrame([[1, 2, 0.5, 1.5, 100] * len(symbols)] * 2, index=index,
+                            columns=cols)
+
+    monkeypatch.setitem(sys.modules, "yfinance", types.SimpleNamespace(download=download))
+    one = _yfinance_fetch(["COMI.CA"], 30)
+    assert [r.close for r in one["COMI.CA"]] == [D("1.5"), D("1.5")]
+    two = _yfinance_fetch(["COMI.CA", "ETEL.CA"], 30)
+    assert set(two) == {"COMI.CA", "ETEL.CA"}
