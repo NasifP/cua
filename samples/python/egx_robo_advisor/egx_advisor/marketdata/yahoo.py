@@ -276,9 +276,12 @@ def _yfinance_fetch(symbols: Sequence[str], lookback_days: int) -> dict[str, lis
         )
 
     out: dict[str, list[YahooRow]] = {}
+    nested = getattr(frame.columns, "nlevels", 1) > 1
     for symbol in symbols:
+        # group_by="ticker" nests the columns under each ticker, one ticker
+        # included (yfinance 0.2.5x and later); older versions did not nest it.
         try:
-            sub = frame[symbol] if len(symbols) > 1 else frame
+            sub = frame[symbol] if nested or len(symbols) > 1 else frame
         except KeyError:
             continue
         rows: list[YahooRow] = []

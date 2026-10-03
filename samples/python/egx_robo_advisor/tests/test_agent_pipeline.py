@@ -570,3 +570,34 @@ async def test_stops_and_targets_are_published_for_holdings(tmp_path: Path) -> N
     assert snapshot["style"] == "swing"
     comi = snapshot["levels"]["COMI.CA"]
     assert comi["stop"] < comi["price"] < comi["target1"] <= comi["target2"]
+
+
+async def test_the_plans_buys_become_paper_trades(tmp_path):
+    from egx_advisor.marketdata import YahooRow
+    from egx_advisor.marketdata.archive import PriceArchive, _cairo_today
+    from datetime import date, timedelta
+    from decimal import Decimal
+
+    from egx_advisor import paper as pp
+
+    agent, bus, computer, news, market, agents = build(tmp_path, execute=False)
+    _wire_tree(agent, computer)
+    await agent._run_cycle()
+    buys = [o["symbol"] for o in bus.get("plan")["payload"]["orders"] if o["side"] == "buy"]
+    assert buys, "the fixture plan buys something"
+
+    archive = PriceArchive(tmp_path / "prices.db")
+    today = _cairo_today()
+    rows = [YahooRow(today - timedelta(days=90 - i), Decimal("48"), Decimal("51"),
+                     Decimal("47"), Decimal("49") + Decimal(i) / 100, Decimal(1000))
+            for i in range(90)]
+    archive.store({s: rows for s in buys}, today, date(2000, 1, 1))
+    agent.archive = archive
+    agent.paper = pp.PaperBook(tmp_path / "memory.db", capital=1_000_000)
+
+    await agent._run_cycle()
+    trades = agent.paper.trades("open")
+    assert {t.symbol for t in trades} == set(buys)
+    assert all(t.source == "plan" and t.stop < t.entry < t.target for t in trades)
+    await agent._run_cycle()
+    assert len(agent.paper.trades()) == len(trades), "one paper trade per stock"

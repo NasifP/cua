@@ -232,6 +232,11 @@ def _common() -> str:
     return _COMMON % {"pattern": _js(FORBIDDEN_PATTERN)}
 
 
+#: What the page shows, in short: changes while it is still drawing.
+_FINGERPRINT = ("(() => { const t = document.body ? document.body.innerText : ''; "
+                "return t.length + ':' + t.slice(0, 300) + t.slice(-300); })()")
+
+
 def read_script() -> str:
     return f"""(function () {{
 {_common()}
@@ -371,7 +376,8 @@ class Browser:
     recall: Callable[[str], Optional[str]] = lambda key: None
     known_tickers: Callable[[], Sequence[str]] = lambda: ()
     log: Callable[[str], None] = lambda message: None
-    settle: float = 1.5
+    #: Longest wait for a page to finish drawing after a move; usually much less.
+    settle: float = 3.0
     load_timeout: float = 20.0
     sleep: Callable[[float], None] = time.sleep
 
@@ -390,7 +396,29 @@ class Browser:
         self.sleep(0.3)
         while time.monotonic() < deadline and self.page.info().get("loading"):
             self.sleep(0.3)
-        self.sleep(self.settle)
+        self._wait_drawn()
+
+    def _wait_drawn(self) -> None:
+        """Wait until the page text stops changing, up to `settle` seconds.
+
+        Thndr X draws after "loaded": a fixed pause was either too short (a
+        half-drawn page read) or too long (every move slow). The text is
+        compared every 0.25 s; two equal readings in a row end the wait.
+        """
+        if self.settle <= 0:
+            return
+        deadline = time.monotonic() + self.settle
+        previous, steady = None, 0
+        while time.monotonic() < deadline:
+            self.sleep(0.25)
+            try:
+                now = self.page.run(_FINGERPRINT)
+            except Exception:  # noqa: BLE001 - an unreadable page: wait out the time
+                now = None
+            steady = steady + 1 if now is not None and now == previous else 0
+            if steady >= 2:
+                return
+            previous = now
 
     # ------------------------------------------------------------------ reads
 
@@ -447,7 +475,7 @@ class Browser:
         if not result.get("ok"):
             return {"ok": False, "reason": result.get("reason", "page_error"), **self.read()}
         self.log(f"browse: searched '{query}'")
-        self.sleep(self.settle + 0.5)
+        self._wait_drawn()
         page = self.read()
         want = normalise(query)
         page["matches"] = [t for t in page["clickable"] if want in normalise(t)][:10]

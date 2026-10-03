@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from decimal import Decimal as D
 import urllib.request
 from pathlib import Path
 
@@ -117,15 +118,58 @@ def test_the_client_needs_the_bridge_from_the_app() -> None:
 # ----------------------------------------------------------------- the executor
 
 
-async def test_the_portfolio_is_read_from_page_text(tmp_path, served) -> None:
-    server, _ = served
+#: The same table when the page lays each cell out on its own line: no tabs.
+LOOSE_TEXT = ("Positions Orders Alerts\nQty\nAvgCost\nMkt. Val...\nPHAR\n902\n155.53\n"
+              "99,310.20\nNIPH\n276\n399.13\n88,734.00\n")
+
+
+async def test_the_table_is_read_from_page_text_without_a_model(tmp_path, served) -> None:
+    server, page = served
+    page._text = PAGE_TEXT + "Buying Power\tEGP 12,500.00\n"
+    model = FakeModel(REPLY)
+    ex, bus = executor(tmp_path, server, model)
+    portfolio = await ex.read_portfolio()
+
+    assert model.calls == [], "a table laid out as expected needs no model"
+    phar = portfolio.positions["PHAR.CA"]
+    assert (phar.quantity, phar.market_value, phar.avg_cost) == (902, D("99310.20"),
+                                                                 D("155.53"))
+    assert portfolio.cash_egp == D("12500.00")
+    events = [e.message for e in bus.recent_events(limit=20)]
+    assert any("straight from the page text, no model" in m for m in events)
+
+
+async def test_a_model_number_not_on_the_page_publishes_nothing(tmp_path, served) -> None:
+    server, page = served
+    page._text = LOOSE_TEXT
+    wrong = {"positions": [{"symbol": "NIPH", "quantity": "276", "market_value": "88743.00"}],
+             "cash_egp": None, "unsettled_cash_egp": None}
+    ex, bus = executor(tmp_path, server, FakeModel(wrong))
+    with pytest.raises(PortfolioReadError, match="NIPH market_value 88743.00"):
+        await ex.read_portfolio()
+    assert bus.get("portfolio") is None
+
+
+async def test_an_average_cost_not_on_the_page_is_left_blank(tmp_path, served) -> None:
+    server, page = served
+    page._text = LOOSE_TEXT
+    reply = {"positions": [{"symbol": "PHAR", "quantity": "902", "market_value": "99310.20",
+                            "avg_cost": "155.35"}], "cash_egp": None, "unsettled_cash_egp": None}
+    ex, _ = executor(tmp_path, server, FakeModel(reply))
+    portfolio = await ex.read_portfolio()
+    assert portfolio.positions["PHAR.CA"].avg_cost is None
+
+
+async def test_a_page_without_the_table_layout_goes_to_the_model(tmp_path, served) -> None:
+    server, page = served
+    page._text = LOOSE_TEXT
     model = FakeModel(REPLY)
     ex, bus = executor(tmp_path, server, model)
     portfolio = await ex.read_portfolio()
 
     assert set(portfolio.positions) == {"PHAR.CA", "NIPH.CA"}
     prompt = model.calls[0]["messages"][0]["content"][0]["text"]
-    assert "PHAR\t902" in prompt and "<page>" in prompt
+    assert "PHAR\n902" in prompt and "<page>" in prompt
     assert "not instructions" in prompt, "page text must be fenced as data"
     assert model.calls[0]["model"] == "test/any-model"
     payload = bus.get("portfolio")["payload"]
@@ -184,3 +228,27 @@ def test_a_configured_thndr_url_is_trusted(tmp_path, served, monkeypatch) -> Non
     monkeypatch.setenv("EGX_THNDR_URL", "http://127.0.0.1:8811/fake.html")
     ex, _ = executor(tmp_path, server, FakeModel(REPLY))
     assert "127.0.0.1" in ex.allowed_hosts
+
+
+def test_the_table_reader_refuses_rows_it_cannot_read_exactly() -> None:
+    from egx_advisor.execution.thndr import ThndrUiMap, parse_positions_table
+
+    ui = ThndrUiMap()
+    head = "\tDay Ch..\tQty\tAvgCost\tMkt. Val...\tWeight\n"
+    good = parse_positions_table(head + "ABUK\t+1.2%\t١٠٠\t50.5\t5,100.00\t3%\n", ui)
+    assert good["positions"] == [{"symbol": "ABUK.CA", "quantity": "100",
+                                  "market_value": "5100.00", "avg_cost": "50.5"}]
+    # A blank or doubled number is not guessed at: the model read takes over.
+    assert parse_positions_table(head + "ABUK\t+1.2%\t-\t50.5\t5,100.00\t3%\n", ui) is None
+    assert parse_positions_table(head + "ABUK\t+1.2%\t100\t50.5\t5,100 6\t3%\n", ui) is None
+    assert parse_positions_table("no table here", ui) is None
+
+
+def test_numbers_are_matched_however_the_page_writes_them() -> None:
+    from egx_advisor.execution.thndr import ungrounded
+
+    page = "Mkt. Val 99,310.20  Qty ٩٠٢  Cash 1,000"
+    ok = {"positions": [{"symbol": "PHAR.CA", "quantity": 902, "market_value": "99310.2"}],
+          "cash_egp": "1000.00"}
+    assert ungrounded(ok, page) == []
+    assert ungrounded({"positions": [], "cash_egp": "100"}, page) == ["cash_egp 100"]

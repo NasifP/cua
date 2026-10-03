@@ -81,6 +81,9 @@ MODEL_FIELDS: tuple[Field, ...] = (
           "stronger model answers much better. Empty: the chat model.",
           suggestions=("anthropic/claude-sonnet-5", "gemini/gemini-3.1-pro-preview",
                        "gemini/gemini-2.5-flash")),
+    Field("EGX_COMMITTEE_MODEL", "Analyst team specialists", "model",
+          _MODEL_HELP + " The fast, cheap model the three specialists (technical, news, "
+          "risk) use. Empty: the chat model.", suggestions=_SUGGESTED_MODELS),
     Field("EGX_CLASSIFIER_MODEL", "News classifier", "model",
           _MODEL_HELP + " Runs every cycle: a cheaper model is fine here, and it can "
           "only ever add caution.",
@@ -112,6 +115,30 @@ BEHAVIOUR_FIELDS: tuple[Field, ...] = (
     Field("EGX_BROWSER_SOFTWARE", "Software drawing for Thndr X", "bool",
           "Draws the built-in browser without the graphics card. Fixes a frozen Thndr X "
           "on some PCs. Restart the app after changing it.", default="true"),
+    Field("EGX_ADTV_PCT", "Liquidity limit per buy (%)", "float",
+          "The most one buy may be, as a percent of the stock's average daily traded volume "
+          "over 20 sessions (0.5 to 10). Caps prepared buys, scan share counts and the "
+          "average calculator whatever the cash, so a position can be left quickly.",
+          default="3"),
+    Field("EGX_DAILY_LOSS_PCT", "Daily loss limit (%)", "float",
+          "If the portfolio falls this much in one day (0.5 to 20), the bot halts by itself "
+          "until you resume it. The paper account pauses at the same limit.", default="2",
+          minimum=0.5, maximum=20),
+    Field("EGX_MAX_DRAWDOWN_PCT", "Maximum drawdown (%)", "float",
+          "If the portfolio falls this much below its highest value (2 to 50), the bot halts. "
+          "Resuming accepts the loss and starts counting again from there.", default="10",
+          minimum=2, maximum=50),
+    Field("EGX_RISK_PER_TRADE_PCT", "Risk per paper trade (%)", "float",
+          "What one paper trade may lose at its stop, as a percent of the paper account "
+          "(0.1 to 5). The share count follows from it.", default="1", minimum=0.1, maximum=5),
+    Field("EGX_PAPER_CAPITAL", "Paper account (EGP)", "float",
+          "The pretend money the paper trading journal starts with.", default="100000",
+          minimum=1000, maximum=100000000),
+    Field("EGX_COMMITTEE", "Analyst team (4 models)", "bool",
+          "Each analysis question goes to three specialists at once (technical, news, risk), "
+          "then the analyst model decides from their reports. A buy can only be prepared when "
+          "the risk and news specialists allow it. About 4 model calls per question.",
+          default="true"),
     Field("EGX_BROWSE", "Let the analyst use Thndr X", "bool",
           "The chat analyst can open stock pages, tabs and search in the Thndr X window, and "
           "get a buy ready. It can never press Buy, Sell or anything that moves money. HALT "

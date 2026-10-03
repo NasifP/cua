@@ -68,6 +68,96 @@ STRINGS: dict[str, tuple[str, str]] = {
                           "studies what your indicators did on the EGX",
                           "علّم البرنامج مؤشراتك وخانات أمر Thndr X، وهو يذاكر المؤشرات "
                           "دي عملت إيه في البورصة المصرية"),
+    "page.learn": ("Learn", "التعلّم"),
+    "page.learn.sub": ("What the bot must learn before it may speculate; each tick is earned "
+                       "by evidence on this computer",
+                       "البوت لازم يتعلم إيه قبل ما يضارب؛ كل علامة صح بتيجي من دليل "
+                       "حقيقي على الجهاز ده"),
+    "page.paper": ("Paper trading", "التداول التجريبي"),
+    "page.paper.sub": ("Virtual trades with a stop, a target and real costs; no money moves",
+                       "صفقات وهمية بـ Stop وهدف ومصاريف حقيقية؛ مافيش فلوس بتتحرك"),
+    # --- Paper trading tab ---
+    "paper.refresh": ("Update prices", "حدّث الأسعار"),
+    "paper.resume": ("Resume paper trading", "كمّل التداول التجريبي"),
+    "paper.open": ("Open paper trade", "افتح صفقة تجريبية"),
+    "paper.close": ("Close selected by hand", "اقفل المختارة باليد"),
+    "paper.ticker": ("Ticker, e.g. COMI", "رمز السهم، مثلاً COMI"),
+    "paper.checking": ("Updating ...", "بيحدّث ..."),
+    "paper.failed": ("Could not update: {error}", "التحديث ما نجحش: {error}"),
+    "paper.need_symbol": ("Type a ticker first.", "اكتب رمز السهم الأول."),
+    "paper.opening": ("Placing the stop and target ...", "بيحسب الـ Stop والهدف ..."),
+    "paper.opened": ("Paper trade: {qty} {symbol} at {entry}, stop {stop}, target {target}",
+                     "صفقة تجريبية: {qty} {symbol} بسعر {entry}، Stop {stop}، هدف {target}"),
+    "paper.pick_open": ("Select an open trade first.", "اختار صفقة مفتوحة الأول."),
+    "paper.no_price": ("No price yet for that trade: update prices first.",
+                       "مافيش سعر للصفقة دي لسه: حدّث الأسعار الأول."),
+    "paper.summary": ("Paper account {equity} EGP (started {capital})  ·  closed {realised}  ·  "
+                      "open {open}  ·  today {today}%  ·  drawdown {drawdown}%  ·  "
+                      "{closed} closed, {rate} won",
+                      "الحساب التجريبي {equity} جنيه (بدأ بـ {capital})  ·  المقفول {realised}  ·  "
+                      "المفتوح {open}  ·  النهارده {today}%  ·  التراجع {drawdown}%  ·  "
+                      "{closed} مقفولة، كسبان {rate}"),
+    "paper.active": ("Active", "شغّال"),
+    "paper.live": ("Live prices from Thndr X: {count} open trades priced now  ·  {sessions} full "
+                   "sessions recorded  ·  last read on {last}",
+                   "الأسعار اللحظية من Thndr X: {count} صفقة مفتوحة متسعّرة دلوقتي  ·  {sessions} "
+                   "جلسة كاملة متسجلة  ·  آخر قراءة يوم {last}"),
+    "paper.live_never": ("never (open a Thndr X watchlist during the session)",
+                         "لسه (افتح قائمة متابعة في Thndr X وقت الجلسة)"),
+    "paper.paused.daily": ("Paused for today: daily loss limit", "واقف النهارده: حد الخسارة اليومي"),
+    "paper.paused.drawdown": ("Paused: maximum drawdown", "واقف: أقصى تراجع"),
+    "paper.breach": ("Loss limit reached: {what}", "وصل لحد الخسارة: {what}"),
+    "paper.open_title": ("Open trades ({count})", "الصفقات المفتوحة ({count})"),
+    "paper.closed_title": ("Closed trades ({count})", "الصفقات المقفولة ({count})"),
+    "paper.col.symbol": ("Stock", "السهم"),
+    "paper.col.opened": ("Opened", "اتفتحت"),
+    "paper.col.closed": ("Closed", "اتقفلت"),
+    "paper.col.qty": ("Shares", "الكمية"),
+    "paper.col.entry": ("Entry", "الدخول"),
+    "paper.col.stop": ("Stop", "الـ Stop"),
+    "paper.col.target": ("Target", "الهدف"),
+    "paper.col.last": ("Last close", "آخر إقفال"),
+    "paper.col.exit": ("Exit", "الخروج"),
+    "paper.col.why": ("Why", "السبب"),
+    "paper.col.pnl": ("Result (EGP)", "النتيجة (جنيه)"),
+    "paper.why.stop": ("stop", "Stop"),
+    "paper.why.target": ("target", "الهدف"),
+    "paper.why.manual": ("by hand", "باليد"),
+    "paper.note": ("Every buy the bot's plan wants becomes a paper trade. Shares are sized so the "
+                   "stop loses the risk set in Settings; trades close at the first session that "
+                   "reaches the stop or target (both in one session counts as the stop), after "
+                   "costs. Closing by hand counts against exit discipline on the Learn page.",
+                   "كل شرا بتطلبه خطة البوت بيبقى صفقة تجريبية. الكمية بتتحسب علشان الخسارة عند "
+                   "الـ Stop تبقى المخاطرة اللي في الإعدادات؛ والصفقة بتتقفل في أول جلسة توصل "
+                   "للـ Stop أو الهدف (لو الاتنين في نفس الجلسة بتتحسب Stop)، بعد المصاريف. "
+                   "القفل باليد بيتحسب ضد الالتزام بالخروج في صفحة التعلّم."),
+    # --- Learn tab ---
+    "learn.refresh": ("Check again", "افحص تاني"),
+    "learn.checking": ("Checking what the bot has learned ...", "بنشوف البوت اتعلم إيه ..."),
+    "learn.failed": ("Could not check: {error}", "الفحص ما نجحش: {error}"),
+    "learn.summary": ("{done} of {all} checkpoints learned  ·  {locked} more need development",
+                      "اتعلم {done} من {all}  ·  و{locked} محتاجين تطوير"),
+    "learn.col.checkpoint": ("Checkpoint", "المرحلة"),
+    "learn.col.progress": ("Progress", "التقدم"),
+    "learn.col.since": ("Learned on", "اتعلمها يوم"),
+    "learn.needs_dev": ("needs development", "محتاجة تطوير"),
+    "learn.yes": ("done", "تم"),
+    "learn.not_yet": ("not yet", "لسه"),
+    "learn.count": ("{have} of {need}", "{have} من {need}"),
+    "learn.edge": ("average {move}% vs costs {cost}%", "متوسط {move}% مقابل مصاريف {cost}%"),
+    "learn.right": ("{rate} right", "{rate} صح"),
+    "learn.share": ("{have} of exits by rule (need {need})",
+                    "{have} من الخروج بالقاعدة (المطلوب {need})"),
+    "learn.days": ("day {have} of {need}", "يوم {have} من {need}"),
+    "learn.excess": ("{have} points vs EGX 30", "{have} نقطة مقابل EGX 30"),
+    "learn.pick": ("Pick a checkpoint to see what earns it.",
+                   "اختار مرحلة علشان تشوف إيه اللي يخليها تتعلّم."),
+    "learn.note": ("A tick comes only from evidence the app counts: prices kept, rules tested, "
+                   "picks measured weeks later. Passing every checkpoint is not a promise of "
+                   "profit, and the bot never presses Buy by itself.",
+                   "علامة الصح بتيجي بس من دليل البرنامج بيعدّه: أسعار محفوظة، قواعد "
+                   "اتجربت، اختيارات اتقاست بعد أسابيع. إن البوت يعدّي كل المراحل مش ضمان "
+                   "مكسب، والبوت عمره ما بيدوس Buy لوحده."),
     "page.memory": ("Memory", "الذاكرة"),
     "page.memory.sub": ("What the app remembers: your notes, conversations, lab runs and how "
                         "its picks did. All of it stays on this computer.",
@@ -157,6 +247,102 @@ STRINGS: dict[str, tuple[str, str]] = {
     "page.settings.sub": ("API keys, models and limits.", "مفاتيح API والموديلات والحدود."),
 
     # --- chart ---
+    # ---- Sprint 4: Today cards, Omnibar, chart marks, alerts ----
+    "page.today": ("Today", "مهام اليوم"),
+    "page.today.sub": ("The day's actions: the team's decisions, the bot's plan, and stops or "
+                       "targets reached. Prepare fills the ticket; you press Buy.",
+                       "إجراءات اليوم: قرارات الفريق وخطة البوت والأسهم اللي وصلت للوقف أو "
+                       "الهدف. «تجهيز الأمر» بيملا التذكرة، وانت اللي بتضغط شراء."),
+    "page.quick": ("Quick view", "نظرة سريعة"),
+    "page.quick.sub": ("One stock at a glance: the team's opinion, news, chart, and its page "
+                       "in Thndr X. Type a ticker in the search bar (Ctrl+K).",
+                       "سهم واحد في صفحة واحدة: رأي الفريق والأخبار والشارت وصفحته في Thndr X. "
+                       "اكتب الرمز في شريط البحث (Ctrl+K)."),
+    "today.decision.buy": ("Buy", "شراء"),
+    "today.decision.add": ("Add", "زيادة"),
+    "today.decision.hold": ("Hold", "احتفاظ"),
+    "today.decision.trim": ("Trim", "تخفيف"),
+    "today.decision.sell": ("Sell", "بيع"),
+    "today.source.team": ("Analyst team", "فريق التحليل"),
+    "today.source.plan": ("Bot's plan", "خطة البوت"),
+    "today.source.levels": ("Stop / target", "الوقف / الهدف"),
+    "today.shares": ("shares", "سهم"),
+    "today.egp": ("EGP", "ج.م"),
+    "today.prepare": ("Prepare order", "تجهيز الأمر"),
+    "today.open": ("Open in Thndr X", "افتح في Thndr X"),
+    "today.blocked.sell_side": ("Sell tickets are not prepared: sell in Thndr X yourself.",
+                                "البرنامج مش بيجهز أوامر بيع: بيع من Thndr X بنفسك."),
+    "today.blocked.halted": ("The bot is halted: nothing is prepared while HALT is on.",
+                             "البوت متوقف: مفيش تجهيز أوامر والإيقاف شغال."),
+    "today.blocked.news_brake": ("The news brake is on for this stock or the market.",
+                                 "فرامل الأخبار شغالة على السهم ده أو السوق."),
+    "today.blocked.macro": ("MACRO_RISK_OFF: the market is under stress; no new buys.",
+                            "السوق تحت ضغط (MACRO_RISK_OFF): مافيش شرا جديد."),
+    "today.blocked.team_gate": ("The analyst team closed buying for this stock.",
+                                "فريق التحليل قفل الشراء للسهم ده."),
+    "today.capped": ("The risk manager capped this trade at {cap} EGP; this order is {value} "
+                     "EGP.", "مدير المخاطر حدد الصفقة بـ {cap} ج.م؛ الأمر ده {value} ج.م."),
+    "today.no_browser": ("Thndr X is not ready yet: wait for the app to finish starting.",
+                         "Thndr X لسه مش جاهز: استنى البرنامج يخلص تشغيل."),
+    "today.need_numbers": ("Enter a quantity and a limit price above zero.",
+                           "اكتب كمية وسعر حد أكبر من صفر."),
+    "today.preparing": ("Checking and preparing...", "بيراجع ويجهز..."),
+    "today.prepared": ("Ready in the ticket panel. Check it and press Buy in Thndr X.",
+                       "جاهز في لوحة التذكرة. راجعه واضغط شراء في Thndr X."),
+    "today.opening": ("Opening in Thndr X...", "بيفتح في Thndr X..."),
+    "today.opened": ("Opened in Thndr X.", "اتفتح في Thndr X."),
+    "today.refresh": ("Refresh", "تحديث"),
+    "today.loading": ("Loading today's actions...", "بيحمّل مهام اليوم..."),
+    "today.failed": ("Could not load the cards: {error}", "مقدرتش أحمّل البطاقات: {error}"),
+    "today.summary": ("{count} actions today (updated {time})",
+                      "{count} مهام النهارده (آخر تحديث {time})"),
+    "today.empty": ("Nothing to do today: no decisions, no plan orders, no stop or target "
+                    "reached. Ask about a stock in the search bar.",
+                    "مفيش مهام النهارده: لا قرارات ولا أوامر في الخطة ولا وقف أو هدف اتلمس. "
+                    "اسأل عن سهم من شريط البحث."),
+    "omni.placeholder": ("Search a stock: COMI, TMGH...  (Ctrl+K)",
+                         "ابحث عن سهم: COMI، TMGH...  (Ctrl+K)"),
+    "omni.bad_ticker": ("'{text}' is not an EGX ticker", "«{text}» مش رمز سهم في البورصة"),
+    "omni.title": ("{ticker}: quick view", "{ticker}: نظرة سريعة"),
+    "omni.empty": ("Type a ticker in the search bar and press Enter.",
+                   "اكتب رمز السهم في شريط البحث واضغط Enter."),
+    "omni.opinion": ("The analyst team's opinion", "رأي فريق التحليل"),
+    "omni.news": ("Latest news", "آخر الأخبار"),
+    "omni.go_thndr": ("Go to Thndr X", "روح لـ Thndr X"),
+    "omni.asking": ("Asking the analyst team... (it counts against today's model budget)",
+                    "بيسأل فريق التحليل... (بيتحسب من ميزانية الموديلات النهارده)"),
+    "omni.loading": ("Loading...", "بيحمّل..."),
+    "omni.failed": ("Failed: {error}", "فشل: {error}"),
+    "omni.no_answer": ("The team gave no answer.", "الفريق مردّش."),
+    "omni.no_news": ("No recent news found.", "مفيش أخبار حديثة."),
+    "omni.open_link": ("Double-click to open in your web browser",
+                       "دبل كليك يفتح في المتصفح"),
+    "omni.thndr_opening": ("Thndr X: opening...", "Thndr X: بيفتح..."),
+    "omni.thndr_opened": ("Thndr X: opened", "Thndr X: اتفتح"),
+    "omni.thndr_failed": ("Thndr X: {reason}", "Thndr X: {reason}"),
+    "chart.mode.tv": ("TradingView", "TradingView"),
+    "chart.mode.signals": ("Signals", "الإشارات"),
+    "chart.mode.signals_tip": ("Daily bars with buy/sell marks: the four-factor rules, your "
+                               "indicators, past picks, the team's decision, stop and targets",
+                               "شموع يومية عليها علامات شراء/بيع: قواعد العوامل الأربعة "
+                               "ومؤشراتك والترشيحات السابقة وقرار الفريق والوقف والأهداف"),
+    "chart.signals_loading": ("Loading prices and signals...", "بيحمّل الأسعار والإشارات..."),
+    "chart.no_bars": ("No daily prices for this stock.", "مفيش أسعار يومية للسهم ده."),
+    "chart.legend": ("▲▼ arrows: four-factor rules · ● your indicators · ■ past picks · "
+                     "lines: stop and targets",
+                     "▲▼ أسهم: قواعد العوامل الأربعة · ● مؤشراتك · ■ ترشيحات سابقة · "
+                     "الخطوط: الوقف والأهداف"),
+    "chart.legend_team": ("team: {decision} ({day})", "الفريق: {decision} ({day})"),
+    "alert.stop.title": ("Stop loss hit: {ticker}", "وقف الخسارة اتلمس: {ticker}"),
+    "alert.stop.body": ("Price {price} is at or under the stop {level}. Decide in Thndr X.",
+                        "السعر {price} وصل للوقف {level} أو تحته. قرر من Thndr X."),
+    "alert.target1.title": ("Target 1 reached: {ticker}", "الهدف الأول اتحقق: {ticker}"),
+    "alert.target1.body": ("Price {price} passed target 1 at {level}. Consider raising the "
+                           "stop or taking some profit.",
+                           "السعر {price} عدّى الهدف الأول {level}. فكر ترفع الوقف أو تاخد جزء "
+                           "من الربح."),
+    "alert.brake.title": ("News brake on: market risk-off", "فرامل الأخبار شغالة: السوق Risk-Off"),
+    "alert.brake.body": ("New buys are paused. {reason}", "الشراء الجديد متوقف. {reason}"),
     "chart.symbol": ("Symbol", "السهم"),
     "chart.placeholder": ("COMI.CA or TVC:GOLD", "COMI.CA أو TVC:GOLD"),
     "chart.symbol_tip": ("Pick a holding, or type any TradingView symbol and press Enter",
@@ -561,6 +747,30 @@ STRINGS: dict[str, tuple[str, str]] = {
                    "gemini/gemini-2.5-flash.",
                    "الموديل {model} مش متاح للحساب ده (الشركة وقفته أو مش بتقدمه للمستخدمين "
                    "الجداد). اختار موديل تاني، زي gemini/gemini-2.5-flash."),
+    "model.budget": ("Not answered, to stay within today's model budget: {reason}.",
+                     "مجاوبتش عشان مانعدّيش ميزانية الموديلات النهارده: {reason}."),
+    "field.EGX_ADTV_PCT": ("Liquidity limit per buy (%)", "حد السيولة للصفقة (%)"),
+    "field.EGX_ADTV_PCT.help": (
+        "The most one buy may be, as a percent of the stock's average daily traded volume over "
+        "20 sessions (0.5 to 10). Caps prepared buys, scan share counts and the average "
+        "calculator whatever the cash, so a position can be left quickly.",
+        "أقصى كمية للصفقة الواحدة كنسبة من متوسط حجم التداول اليومي للسهم في آخر 20 جلسة (من "
+        "0.5 لـ 10). بيحدد أوامر الشراء المجهزة وعدد الأسهم في المسح وحاسبة المتوسط مهما كان "
+        "الكاش، عشان تقدر تخرج من المركز بسرعة."),
+    "field.EGX_COMMITTEE": ("Analyst team (4 models)", "فريق المحللين (4 موديلات)"),
+    "field.EGX_COMMITTEE.help": (
+        "Each analysis question goes to three specialists at once (technical, news, risk) on "
+        "a fast model, then the analyst model decides from their reports. A buy can only be "
+        "prepared when the risk and news specialists allow it. About 4 model calls per "
+        "question; the worst case is reserved from the daily budget first.",
+        "كل سؤال تحليل بيروح لتلات متخصصين في نفس الوقت (فني، أخبار، مخاطر) على موديل سريع، "
+        "وبعدين موديل المحلل بيقرر من تقاريرهم. تجهيز أمر شراء مسموح بس لو وكيل المخاطر "
+        "والأخبار سمحوا. حوالي 4 استدعاءات للموديل في السؤال؛ وأقصى تكلفة ممكنة بتتحجز من "
+        "ميزانية اليوم الأول."),
+    "field.EGX_COMMITTEE_MODEL": ("Analyst team specialists", "متخصصين فريق المحللين"),
+    "field.EGX_COMMITTEE_MODEL.help": (
+        "The fast, cheap model the three specialists use. Empty: the chat model.",
+        "الموديل السريع الرخيص اللي المتخصصين التلاتة بيستخدموه. فاضي: نفس موديل الشات."),
     "model.quota": ("{model} refused the request: the quota is used up, or it has no free "
                     "tier. Choose gemini/gemini-2.5-flash or enable billing.",
                     "الموديل {model} رفض الطلب: الحصة خلصت أو مالوش خطة مجانية. اختار "
@@ -573,6 +783,27 @@ STRINGS: dict[str, tuple[str, str]] = {
                       "{model} ماردش في الوقت. جرّب تاني."),
     "model.other": ("{model} could not be reached: {error}",
                     "الموديل {model} مش متاح دلوقتي: {error}"),
+    "field.EGX_DAILY_LOSS_PCT": ("Daily loss limit (%)", "حد الخسارة اليومي (%)"),
+    "field.EGX_DAILY_LOSS_PCT.help": (
+        "If the portfolio falls this much in one day (0.5 to 20), the bot halts by itself until "
+        "you resume it. The paper account pauses at the same limit.",
+        "لو المحفظة نزلت النسبة دي في يوم واحد (من 0.5 لـ 20)، البوت يقف لوحده لحد ما إنت "
+        "تشغّله تاني. الحساب التجريبي بيقف عند نفس الحد."),
+    "field.EGX_MAX_DRAWDOWN_PCT": ("Maximum drawdown (%)", "أقصى تراجع (%)"),
+    "field.EGX_MAX_DRAWDOWN_PCT.help": (
+        "If the portfolio falls this much below its highest value (2 to 50), the bot halts. "
+        "Resuming accepts the loss and starts counting again from there.",
+        "لو المحفظة نزلت النسبة دي تحت أعلى قيمة وصلتلها (من 2 لـ 50)، البوت يقف. لما "
+        "تشغّله تاني بتقبل الخسارة والعد بيبدأ من جديد من النقطة دي."),
+    "field.EGX_RISK_PER_TRADE_PCT": ("Risk per paper trade (%)", "المخاطرة في الصفقة التجريبية (%)"),
+    "field.EGX_RISK_PER_TRADE_PCT.help": (
+        "What one paper trade may lose at its stop, as a percent of the paper account (0.1 to "
+        "5). The share count follows from it.",
+        "أقصى خسارة للصفقة التجريبية الواحدة عند الـ Stop، كنسبة من الحساب التجريبي (من 0.1 "
+        "لـ 5). عدد الأسهم بيتحسب منها."),
+    "field.EGX_PAPER_CAPITAL": ("Paper account (EGP)", "الحساب التجريبي (جنيه)"),
+    "field.EGX_PAPER_CAPITAL.help": ("The pretend money the paper trading journal starts with.",
+                                     "الفلوس الوهمية اللي دفتر التداول التجريبي بيبدأ بيها."),
     "field.EGX_STYLE": ("Investing style", "أسلوبك في الاستثمار"),
     "field.EGX_STYLE.help": ("Sets how far each holding's stop and targets sit: a trader gives "
                              "a stock little room, a long-term investor a lot.",

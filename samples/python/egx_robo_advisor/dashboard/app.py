@@ -151,8 +151,9 @@ def create_app(
         from egx_advisor.memory import Memory, memory_path_for
 
         from egx_advisor import levels
-        from egx_advisor.analyst.tools import Toolbox
+        from egx_advisor.analyst.tools import Toolbox, yahoo_usd_egp
         from egx_advisor.browse import BrowseClient
+        from egx_advisor.marketdata.intraday import IntradayStore, intraday_path_for
 
         memory = Memory(memory_path_for(config.bus_path))
         archive = PriceArchive(archive_path_for(config.bus_path))
@@ -161,8 +162,12 @@ def create_app(
         assistant = Assistant(
             bus=bus, model=os.environ.get("EGX_ANALYST_MODEL") or config.chat_model,
             use_model=config.chat_enabled, memory=memory, archive=archive,
+            # Specialists on the cheap model, the lead on the analyst model.
+            committee=(os.environ.get("EGX_COMMITTEE") or "true").strip().lower() != "false",
+            worker_model=os.environ.get("EGX_COMMITTEE_MODEL") or config.chat_model,
             toolbox=Toolbox(bus=bus, memory=memory, archive=archive,
-                            style=levels.style_from(os.environ),
+                            style=levels.style_from(os.environ), usd_egp=yahoo_usd_egp,
+                            intraday=IntradayStore(intraday_path_for(config.bus_path)),
                             # Set only when the desktop app started us: its
                             # Thndr X window, under browse.py's checks.
                             browser=BrowseClient.from_env(os.environ)))

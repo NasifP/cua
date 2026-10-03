@@ -158,6 +158,10 @@ class EgxCuaAgent:
         self.memory: Optional[Any] = None
         #: Local prices (marketdata/archive.py) for stops and targets. None in tests.
         self.archive: Optional[Any] = None
+        #: The paper trading journal (paper.py). None in tests.
+        self.paper: Optional[Any] = None
+        #: Prices the desktop app read from Thndr X during the session. None in tests.
+        self.intraday: Optional[Any] = None
         self._closes: dict[str, list[Decimal]] = {}
         self._volumes: dict[str, list[Decimal]] = {}
         self._four_factor: Optional[FourFactorDecision] = None
@@ -423,7 +427,10 @@ class EgxCuaAgent:
         # --- Read state ---------------------------------------------------------
         self.bus.put("status", {"phase": AgentPhase.READING_PORTFOLIO.value})
         portfolio = await executor.read_portfolio()
+        if self._check_loss_limits(portfolio, now):
+            return AgentPhase.HALTED
         await self._publish_levels(portfolio)
+        self._settle_paper(now)
         market = await self._market_data.snapshot(self.config.policy.universe)
         if market.usd_egp > 0:
             # The day's rate, so the model budget can be shown and capped in EGP.
@@ -686,11 +693,36 @@ class EgxCuaAgent:
                           "avg_cost": None if p.avg_cost is None else str(p.avg_cost)}
                          for p in portfolio.positions.values()]
             style = levels.style_from(os.environ)
+            macro = await self._macro_state(source)
             self.bus.put("levels", {"style": style,
                                     "stale": bool(source.stale),
-                                    "levels": levels.for_portfolio(positions, history, style)})
+                                    "macro": macro.to_json(),
+                                    "levels": levels.for_portfolio(positions, history, style,
+                                                                   macro.risk_off)})
         except Exception as exc:  # noqa: BLE001 - levels are extra, never block a cycle
             logger.warning("stops and targets unavailable: %s", exc)
+
+    async def _macro_state(self, source: Any) -> Any:
+        """MACRO_RISK_OFF from EGX30 and the news layer (market_state.py). Never raises."""
+        from .market_state import macro_risk_off
+        from .types import Instrument, Sleeve
+
+        regime = (self.bus.get("regime") or {}).get("payload") or {}
+        try:
+            # Yahoo has no EGX30 history: the stand-in over the scan list instead.
+            from .marketdata import index_proxy
+            from .scanner import load_universe
+
+            universe = [Instrument(s, s, Sleeve.BLUE_CHIP)
+                        for s in load_universe(config_path("scan_universe.toml"))]
+            rows = await source.history(universe, days=30)
+            today = datetime.now(timezone.utc).date()
+            series = index_proxy.build({s: [r for r in bars if r.day < today]
+                                        for s, bars in rows.items()})
+        except Exception as exc:  # noqa: BLE001 - no index: judge from the news layer alone
+            logger.info("EGX30 unavailable for the macro check: %s", exc)
+            series = []
+        return macro_risk_off(series, regime)
 
     def _remember_plan(self, plan: Any, allowed: Sequence[Any]) -> None:
         """Keep the plan's orders so the Memory tab can later say how they did."""
@@ -706,8 +738,94 @@ class EgxCuaAgent:
         except Exception as exc:  # noqa: BLE001 - memory must never stop a cycle
             logger.warning("could not keep the plan in memory: %s", exc)
 
+    def _check_loss_limits(self, portfolio: Any, now: datetime) -> bool:
+        """The daily loss limit and drawdown on the real account (risk_limits.py).
+
+        A breach halts the bot like the halt button. Returns True when it did.
+        """
+        from . import risk_limits as rl
+
+        snapshot = (self.bus.get("portfolio") or {}).get("payload") or {}
+        if snapshot.get("cash_visible") is False:
+            # Without cash the total swings with every sale and every deposit;
+            # judging it would halt on money that only moved out of sight.
+            return False
+        try:
+            value = float(portfolio.total_value)
+            previous = (self.bus.get("loss_guard") or {}).get("payload") or {}
+            fired_at = previous.get("fired_at")
+            control = self.bus.control_state()
+            resumed = bool(fired_at) and not control.halted and \
+                control.updated_at > datetime.fromisoformat(fired_at)
+            state, breach = rl.step(previous, value, now.date().isoformat(),
+                                    rl.limits_from(os.environ), resumed=resumed)
+            if resumed:
+                state.pop("fired_at", None)
+            self.bus.put("loss_guard", state)
+        except Exception as exc:  # noqa: BLE001 - the guard must never stop a cycle
+            logger.warning("loss limits unavailable: %s", exc)
+            return False
+        if breach is None:
+            return False
+        reason = f"loss limit: {breach.describe()}"
+        halted = self.bus.halt(actor="loss limit", reason=reason)
+        # The operator's next resume is after this moment: that is how the guard knows.
+        state["fired_at"] = halted.updated_at.isoformat()
+        self.bus.put("loss_guard", state)
+        self.bus.publish(EventKind.CONTROL, f"HALTED by the {reason}; resume from the "
+                         "dashboard when you have looked", phase="halted")
+        self.bus.put("status", {"phase": AgentPhase.HALTED.value, "reason": reason})
+        return True
+
+    def _bars(self, symbol: str) -> list[Any]:
+        if self.archive is None:
+            return []
+        return list(self.archive.series(symbol))
+
+    def _settle_paper(self, now: datetime) -> None:
+        """Close paper trades that later sessions stopped out or took profit on."""
+        if self.paper is None:
+            return
+        try:
+            ticks = self.intraday.ticks if self.intraday is not None else None
+            closed, breach = self.paper.settle(self._bars, now.date(), ticks)
+            for trade in closed:
+                self.bus.publish(EventKind.PLAN, f"paper trade closed: {trade.symbol}",
+                                 phase="planning")
+            if breach is not None:
+                self.bus.publish(EventKind.CONTROL, f"paper trading paused: {breach.describe()}",
+                                 phase="planning")
+        except Exception as exc:  # noqa: BLE001 - paper trading must never stop a cycle
+            logger.warning("paper journal unavailable: %s", exc)
+
+    def _paper_trade_plan(self, allowed: Sequence[Any], now: datetime) -> None:
+        """Each buy the plan wants becomes a paper trade, with a stop and a target."""
+        if self.paper is None:
+            return
+        from . import levels
+        from .paper import open_from_levels
+
+        style = levels.style_from(os.environ)
+        for order in allowed:
+            if order.side is not Side.BUY:
+                continue
+            try:
+                trade = open_from_levels(
+                    self.paper, order.symbol, [b for b in self._bars(order.symbol)
+                                               if b.day < now.date()],
+                    float(order.limit_price), style=style, source="plan",
+                    reason=str(order.rationale), today=now.date())
+                self.bus.publish(EventKind.PLAN, f"paper trade opened: {trade.quantity} "
+                                 f"{trade.symbol} at {trade.entry:g}, stop {trade.stop:.2f}, "
+                                 f"target {trade.target:.2f}", phase="planning")
+            except ValueError as exc:
+                logger.info("no paper trade for %s: %s", order.symbol, exc)
+            except Exception as exc:  # noqa: BLE001 - paper trading must never stop a cycle
+                logger.warning("paper trade for %s failed: %s", order.symbol, exc)
+
     def _publish_plan(self, plan: Any, allowed: Sequence[Any], suppressed: Sequence[Any]) -> None:
         self._remember_plan(plan, allowed)
+        self._paper_trade_plan(allowed, datetime.now(timezone.utc))
         self.bus.put(
             "plan",
             {
