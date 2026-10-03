@@ -128,6 +128,10 @@ class CardWidget(QFrame):
 
         self.quantity: Optional[QSpinBox] = None
         self.price: Optional[QDoubleSpinBox] = None
+        #: The operator changed a number, or a Prepare/Open is running: the
+        #: minute's auto-refresh must not replace this card under them.
+        self.edited = False
+        self.working = False
         if card.is_buy:
             self.quantity = QSpinBox()
             self.quantity.setRange(0, 1_000_000)
@@ -138,6 +142,8 @@ class CardWidget(QFrame):
             self.price.setRange(0, 1_000_000)
             self.price.setValue(card.limit_price or 0)
             self.price.setSuffix(" " + tr("today.egp"))
+            self.quantity.valueChanged.connect(self._mark_edited)
+            self.price.valueChanged.connect(self._mark_edited)
             order = QHBoxLayout()
             order.addWidget(self.quantity, 1)
             order.addWidget(self.price, 1)
@@ -153,7 +159,16 @@ class CardWidget(QFrame):
         layout.addWidget(self.button)
         layout.addWidget(self.status)
 
+    def _mark_edited(self, *_args: Any) -> None:
+        self.edited = True
+
+    @property
+    def holding(self) -> bool:
+        """True while a refresh would throw away the operator's input or a result."""
+        return self.edited or self.working
+
     def _busy(self, text: str) -> None:
+        self.working = True
         self.button.setEnabled(False)
         theme.say(self.status, text, "info")
 
@@ -169,6 +184,7 @@ class CardWidget(QFrame):
 
     def _prepared(self, result: Optional[dict[str, Any]], error: Optional[BaseException]
                   ) -> None:
+        self.working = False
         self.button.setEnabled(self.card.can_prepare)
         if error is not None:
             theme.say(self.status, f"{type(error).__name__}: {error}", "bad")
@@ -186,6 +202,7 @@ class CardWidget(QFrame):
 
     def _opened(self, result: Optional[dict[str, Any]], error: Optional[BaseException]
                 ) -> None:
+        self.working = False
         self.button.setEnabled(True)
         if error is not None or not (result or {}).get("ok"):
             why = error or (result or {}).get("refused") or (result or {}).get("error") \
@@ -207,7 +224,7 @@ class TodayTab(QWidget):
         self.summary = QLabel()
         self.summary.setObjectName("PageSubtitle")
         self.refresh_button = QPushButton()
-        self.refresh_button.clicked.connect(self.refresh)
+        self.refresh_button.clicked.connect(lambda: self.refresh(force=True))
         bar = QHBoxLayout()
         bar.addWidget(self.summary, 1)
         bar.addWidget(self.refresh_button)
@@ -250,8 +267,12 @@ class TodayTab(QWidget):
         if self.isVisible():
             self.refresh()
 
-    def refresh(self) -> None:
+    def refresh(self, force: bool = False) -> None:
+        """Reload the cards. Not by itself while a card holds input or a running Prepare:
+        the Refresh button (force) still does."""
         if self._loading:
+            return
+        if not force and any(card.holding for card in self.cards):
             return
         self._loading = True
         services = self.services

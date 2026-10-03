@@ -113,8 +113,13 @@ def pick_marks(picks: Iterable[Any], ticker: str, days: set[str]) -> list[Mark]:
     return out[-MAX_MARKS:]
 
 
-def team_mark(view: Optional[Mapping[str, Any]], last_day: str) -> list[Mark]:
-    """Today's team decision, on the last bar."""
+def team_mark(view: Optional[Mapping[str, Any]], last_day: str,
+              today: Optional[str] = None) -> list[Mark]:
+    """Today's team decision, on the last bar. An older view is not drawn as today's."""
+    from datetime import date
+
+    if str((view or {}).get("day") or "") != (today or date.today().isoformat()):
+        return []
     decision = str((view or {}).get("decision") or "")
     if decision in ("buy", "add"):
         return [Mark(last_day, "buy", "team", f"Team: {decision}")]

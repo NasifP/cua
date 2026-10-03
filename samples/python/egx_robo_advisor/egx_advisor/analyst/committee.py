@@ -106,6 +106,7 @@ RISK_PROMPT = (
     "وقف الخسارة بناءً على Chandelier والأهداف (ATR). الكمية ماتعديش حد السيولة (liquidity."
     "max_shares في stock_levels) مهما كان الكاش كتير. 4. إعطاء توصية بالمخاطرة: (مسموح "
     "بالدخول، مسموح بكمية قليلة، مرفوض).\n" + _COMMON + """
+لكل سهم في السؤال استخدم stock_levels برمزه؛ السهم اللي ماتفحصهوش بيها مايتجهزلوش أمر.
 اختم تقريرك بسطرين بالظبط (بالإنجليزي كما هم):
 RISK: allow   (مسموح بالدخول)   أو   RISK: reduce   (بكمية قليلة)   أو   RISK: reject   (مرفوض)
 MAX_EGP: <أقصى قيمة للصفقة بالجنيه، رقم بس>   أو   MAX_EGP: none
@@ -166,7 +167,11 @@ def _line(name: str, value: str) -> re.Pattern:
 _VERDICT = _line("VERDICT", "positive|negative|neutral")
 _BRAKE = _line("BRAKE", "yes|no")
 _RISK = _line("RISK", "allow|reduce|reject")
-_MAX = _line("MAX_EGP", "[0-9٠-٩][0-9٠-٩,.٬٫]*|none")
+_MAX = re.compile(r"^[\s*_`]*MAX_EGP[\s*_`]*[:：][\s*_`]*([0-9٠-٩][0-9٠-٩,.٬٫]*|none)"
+                  r"\s*(?:egp|le|l\.e\.?|جنيه|جنيه مصري|ج\.?م\.?)?[\s*_`]*[.。]?[\s*_`]*$",
+                  re.I)
+#: Any MAX_EGP line at all: one that _MAX cannot read closes the gate.
+_MAX_ANY = re.compile(r"^[\s*_`]*MAX_EGP\b", re.I)
 _DIGITS = str.maketrans("٠١٢٣٤٥٦٧٨٩٫", "0123456789.")
 #: The fixed lines are read only from the end of a report: its last few
 #: non-empty lines. Text quoted earlier (a headline, a page) cannot set them.
@@ -197,6 +202,8 @@ class Report:
     brake: Optional[str] = None
     risk: Optional[str] = None
     max_egp: Optional[float] = None
+    #: A MAX_EGP line was written but could not be read as an amount.
+    max_unreadable: bool = False
 
     @property
     def ok(self) -> bool:
@@ -227,6 +234,8 @@ def parse_report(member: Member, text: str, error: str = "") -> Report:
         if value > 0 and value != float("inf"):
             amounts.append(value)
     report.max_egp = min(amounts) if amounts else None
+    written = sum(1 for ln in _tail(report.text) if _MAX_ANY.match(ln))
+    report.max_unreadable = written > len(_values(_MAX, report.text))
     return report
 
 
@@ -250,8 +259,8 @@ def decide(reports: Mapping[str, Report], macro: Optional[Any] = None,
            symbols: Optional[frozenset[str]] = None) -> Gate:
     """The buy gate. `macro` is market_state.MacroState; risk-off closes the gate.
 
-    `symbols` are the tickers the specialists analysed; an empty set closes
-    the gate, since no stock was checked.
+    `symbols` are the tickers the risk manager looked up with data (its
+    allow and MAX_EGP are about those); an empty set closes the gate.
     """
     reasons = []
     for member in MEMBERS:
@@ -265,6 +274,8 @@ def decide(reports: Mapping[str, Report], macro: Optional[Any] = None,
         reasons.append("وكيل المخاطر رفض الدخول")
     if risk is not None and risk.risk == "reduce" and risk.max_egp is None:
         reasons.append("وكيل المخاطر طلب كمية قليلة من غير ما يحدد مبلغ")
+    if risk is not None and risk.max_unreadable:
+        reasons.append("سقف المبلغ (MAX_EGP) من وكيل المخاطر مش مقروء")
     if macro is not None and getattr(macro, "risk_off", False):
         reasons.append("السوق في وضع MACRO_RISK_OFF: " + "; ".join(macro.reasons))
     if symbols is not None and not symbols:
@@ -560,7 +571,8 @@ class MultiAgentAnalyzer:
     async def _member(self, member: Member, question: str, context: Sequence[str],
                       history: Sequence[Mapping[str, str]], reservation: spend.Reservation,
                       tally: CostReport, stop: threading.Event,
-                      seen: Optional[set[str]] = None) -> Report:
+                      seen: Optional[Mapping[str, set[str]]] = None) -> Report:
+        mine = seen.setdefault(member.key, set()) if isinstance(seen, dict) else set()
         try:
             text = await asyncio.to_thread(
                 agent.run, question, completion=self._meter(member.key, reservation, tally),
@@ -568,8 +580,7 @@ class MultiAgentAnalyzer:
                 history=history, timeout=self.timeout, max_tokens=self.worker_tokens,
                 max_steps=self.worker_steps, system_prompt=member.prompt, tools=member.tools,
                 max_calls_per_step=self.calls_per_step, should_stop=stop.is_set,
-                execute=self._bounded(self._recording(self.toolbox.call,
-                                                      seen if seen is not None else set())))
+                execute=self._bounded(self._recording(self.toolbox.call, mine)))
         except Exception as exc:  # noqa: BLE001 - one member failing is a report too
             logger.warning("committee member %s failed: %s", member.key, exc)
             return parse_report(member, "", error=f"{type(exc).__name__}: {str(exc)[:200]}")
@@ -629,7 +640,8 @@ class MultiAgentAnalyzer:
         stop = threading.Event()
         macro = await asyncio.to_thread(self._macro)
         try:
-            seen: set[str] = set()
+            # Per member: a buy is bound to stocks the risk manager itself checked.
+            seen: dict[str, set[str]] = {m.key: set() for m in MEMBERS}
             args = (question, worker_context, history, reservation, tally, stop, seen)
             if usd is None:
                 # A model without a price reserves no dollars, so the ledger's
@@ -647,7 +659,7 @@ class MultiAgentAnalyzer:
                     stop.set()
                     await asyncio.wait(pending)
             reports = {r.key: r for r in (t.result() for t in tasks)}
-            gate = decide(reports, macro, frozenset(seen))
+            gate = decide(reports, macro, frozenset(seen["risk"]))
             tools = [t for t in LEAD_TOOLS if gate.buy_allowed or t != "prepare_buy"]
             scan = getattr(self.toolbox, "last_scan", None)
             momentum = scan.sector_momentum() if hasattr(scan, "sector_momentum") else None

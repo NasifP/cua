@@ -80,7 +80,10 @@ def build(snapshots: Mapping[str, Any], today: date, halted: bool = False) -> li
     regime = _payload(snapshots, "regime") or {}
     brake = str(regime.get("risk_state") or "") in ("buys_halted", "all_halted")
     blocked_symbols = {_ticker(s) for s in regime.get("blocked_symbols") or ()}
-    levels = (_payload(snapshots, "levels") or {}).get("levels") or {}
+    levels_snapshot = _payload(snapshots, "levels") or {}
+    levels = levels_snapshot.get("levels") or {}
+    # MACRO_RISK_OFF closes buying here as it does in the committee's gate.
+    risk_off = bool((levels_snapshot.get("macro") or {}).get("MACRO_RISK_OFF"))
     positions = {_ticker(p.get("symbol")): p
                  for p in (_payload(snapshots, "portfolio") or {}).get("positions") or ()}
 
@@ -132,6 +135,9 @@ def build(snapshots: Mapping[str, Any], today: date, halted: bool = False) -> li
         if decision not in _ORDER:
             continue
         earlier = cards.get(ticker)
+        if earlier is not None and earlier.source == "levels" and earlier.decision == "sell":
+            # A broken stop outranks any view: the team's card would hide it.
+            continue
         cards[ticker] = Card(
             ticker, decision, str(view.get("reason") or "")[:140] or "the analyst team's view",
             "team", quantity=earlier.quantity if earlier and earlier.is_buy else None,
@@ -144,11 +150,12 @@ def build(snapshots: Mapping[str, Any], today: date, halted: bool = False) -> li
     for card in cards.values():
         if card.limit_price is None:
             card = _with(card, limit_price=price_of(card.ticker))
-        out.append(_with(card, **_preparable(card, halted, brake, blocked_symbols)))
+        out.append(_with(card, **_preparable(card, halted, brake, blocked_symbols, risk_off)))
     return sorted(out, key=lambda c: (_ORDER.get(c.decision, 9), c.ticker))
 
 
-def _preparable(card: Card, halted: bool, brake: bool, blocked: set[str]) -> dict[str, Any]:
+def _preparable(card: Card, halted: bool, brake: bool, blocked: set[str],
+                risk_off: bool = False) -> dict[str, Any]:
     """can_prepare and blocked: a first answer for the button; prepare_buy decides."""
     if not card.is_buy:
         return {"can_prepare": False, "blocked": "sell_side"}
@@ -156,6 +163,8 @@ def _preparable(card: Card, halted: bool, brake: bool, blocked: set[str]) -> dic
         return {"can_prepare": False, "blocked": "halted"}
     if brake or card.ticker in blocked:
         return {"can_prepare": False, "blocked": "news_brake"}
+    if risk_off:
+        return {"can_prepare": False, "blocked": "macro"}
     if card.source == "team" and not card.details.get("team_buy_allowed"):
         return {"can_prepare": False, "blocked": "team_gate"}
     return {"can_prepare": True, "blocked": ""}

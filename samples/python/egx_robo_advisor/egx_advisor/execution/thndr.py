@@ -349,7 +349,7 @@ class ThndrExecutor:
             )
         screenshot = await self.interface.screenshot()
         payload = await self._extract_portfolio(screenshot)
-        self._check_against_ocr(screenshot, payload)
+        await asyncio.to_thread(self._check_against_ocr, screenshot, payload)
         cash_visible = payload.get("cash_egp") not in (None, "")
         verdict = await self.interface.assert_demo_now()
         portfolio = _parse_portfolio(payload, demo_confirmed=verdict.state.may_click)

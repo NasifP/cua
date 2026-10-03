@@ -276,6 +276,8 @@ STRINGS: dict[str, tuple[str, str]] = {
                              "البوت متوقف: مفيش تجهيز أوامر والإيقاف شغال."),
     "today.blocked.news_brake": ("The news brake is on for this stock or the market.",
                                  "فرامل الأخبار شغالة على السهم ده أو السوق."),
+    "today.blocked.macro": ("MACRO_RISK_OFF: the market is under stress; no new buys.",
+                            "السوق تحت ضغط (MACRO_RISK_OFF): مافيش شرا جديد."),
     "today.blocked.team_gate": ("The analyst team closed buying for this stock.",
                                 "فريق التحليل قفل الشراء للسهم ده."),
     "today.capped": ("The risk manager capped this trade at {cap} EGP; this order is {value} "

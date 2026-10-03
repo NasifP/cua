@@ -11,7 +11,11 @@ Recognising a price on a page laid out for people is guesswork, so a number
 is kept only when:
 
 - it follows a known ticker within a few lines;
+- it is written with decimals ("129.45"), as prices are -- not a quantity;
 - it is not a percentage or a signed change ("+1.20", "-0.5%");
+- on the positions page, it is not inside a table row: there a row's numbers
+  are quantity, average cost and value, so that table is read by its columns
+  instead (price = market value / quantity, `prices_from_positions`);
 - it lies within 20% of the stock's last daily close, the EGX's widest daily
   limit band. Anything else is a volume, a change, a quantity -- not a price.
 
@@ -55,13 +59,18 @@ def intraday_path_for(bus_file: str | Path) -> Path:
 
 
 def cairo_now() -> datetime:
-    return datetime.now(timezone.utc) + timedelta(hours=2)
+    """Cairo wall-clock time, summer time included, without a time zone attached."""
+    from ..clock import CAIRO
+
+    return datetime.now(timezone.utc).astimezone(CAIRO).replace(tzinfo=None)
 
 
 def _numbers(line: str) -> list[float]:
-    """Plain numbers on a line: not signed, not followed by %, not part of a word."""
+    """Prices on a line: with decimals, not signed, not followed by %, not in a word."""
     out = []
     for m in _NUMBER.finditer(line.translate(_ARABIC_DIGITS)):
+        if not m.group(2):
+            continue
         start = m.start()
         if start and line[start - 1] in "+-−":
             continue
@@ -70,12 +79,15 @@ def _numbers(line: str) -> list[float]:
     return out
 
 
-def parse_prices(text: str, reference: Mapping[str, float]) -> dict[str, float]:
+def parse_prices(text: str, reference: Mapping[str, float],
+                 skip_table_rows: bool = False) -> dict[str, float]:
     """{symbol.CA: price} recognised on a page's text, given each stock's last close."""
-    lines = [ln.strip() for ln in (text or "").splitlines() if ln.strip()]
+    lines = [ln for ln in (text or "").splitlines() if ln.strip()]
     found: dict[str, float] = {}
     tickers = {s.removesuffix(".CA").upper(): s for s in reference}
     for i, line in enumerate(lines):
+        if skip_table_rows and line.count("\t") >= 2:
+            continue  # a positions row: read by its columns, not guessed at
         words = set(re.findall(r"[A-Z][A-Z0-9]{2,6}", line.upper()))
         for ticker in words & set(tickers):
             symbol = tickers[ticker]
@@ -91,6 +103,32 @@ def parse_prices(text: str, reference: Mapping[str, float]) -> dict[str, float]:
                     break
     return found
 
+
+
+def prices_from_positions(text: str, reference: Mapping[str, float]) -> dict[str, float]:
+    """Prices from the Thndr X positions table: market value / quantity, per row."""
+    from ..execution.thndr import ThndrUiMap, parse_positions_table
+
+    table = parse_positions_table(text or "", ThndrUiMap())
+    out = {}
+    for row in (table or {}).get("positions") or ():
+        try:
+            qty, value = float(row["quantity"]), float(row["market_value"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        close = reference.get(row["symbol"])
+        if qty > 0 and close and abs(value / qty / close - 1) <= BAND:
+            out[row["symbol"]] = round(value / qty, 3)
+    return out
+
+
+def read_page(text: str, reference: Mapping[str, float]) -> dict[str, float]:
+    """Every price a Thndr X page shows: its positions table, then any other listing."""
+    from ..execution.thndr import ThndrUiMap, parse_positions_table
+
+    positions_page = parse_positions_table(text or "", ThndrUiMap()) is not None
+    return {**parse_prices(text, reference, skip_table_rows=positions_page),
+            **prices_from_positions(text, reference)}
 
 @dataclass(frozen=True)
 class Tick:

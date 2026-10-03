@@ -745,6 +745,11 @@ class EgxCuaAgent:
         """
         from . import risk_limits as rl
 
+        snapshot = (self.bus.get("portfolio") or {}).get("payload") or {}
+        if snapshot.get("cash_visible") is False:
+            # Without cash the total swings with every sale and every deposit;
+            # judging it would halt on money that only moved out of sight.
+            return False
         try:
             value = float(portfolio.total_value)
             previous = (self.bus.get("loss_guard") or {}).get("payload") or {}

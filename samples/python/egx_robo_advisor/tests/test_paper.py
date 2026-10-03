@@ -185,3 +185,23 @@ def test_the_real_account_loss_limit_halts_the_bot_once(tmp_path, monkeypatch):
     bus.resume(actor="operator", reason="accepted")
     assert agent._check_loss_limits(_Portfolio(89_000), now) is False
     assert bus.get("loss_guard")["payload"]["peak"] == 89_000
+
+
+def test_the_real_account_guard_skips_a_read_without_cash(tmp_path, monkeypatch):
+    from datetime import datetime, timezone
+
+    from egx_advisor.bus import StateBus
+    from egx_advisor.egx_cua_agent import EgxCuaAgent
+
+    bus = StateBus(tmp_path / "state.db")
+    bus.resume(actor="test", reason="armed")
+    agent = EgxCuaAgent.__new__(EgxCuaAgent)
+    agent.bus = bus
+    now = datetime(2026, 9, 1, 9, 0, tzinfo=timezone.utc)
+    bus.put("portfolio", {"cash_visible": True})
+    assert agent._check_loss_limits(_Portfolio(150_000), now) is False
+    # The next page shows no cash: the total drops by the cash, which is no loss.
+    bus.put("portfolio", {"cash_visible": False})
+    assert agent._check_loss_limits(_Portfolio(100_000), now) is False
+    assert not bus.control_state().halted
+    assert bus.get("loss_guard")["payload"]["value"] == 150_000

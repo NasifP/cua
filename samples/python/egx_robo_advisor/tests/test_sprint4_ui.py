@@ -269,3 +269,25 @@ def test_a_callback_for_a_deleted_widget_is_skipped(app):
     other = QLabel()
     run_async(lambda: "on time", lambda r, e: got.append(r), owner=other)
     assert wait_for(app, lambda: got == ["on time"])
+
+
+def test_the_auto_refresh_leaves_a_card_being_edited_alone(app):
+    from egx_advisor.desktop.today_tab import TodayTab
+
+    calls = []
+    tab = TodayTab(services=None)
+    tab.show_cards([daily.Card("COMI", "buy", "plan", "plan", quantity=10, limit_price=80.0,
+                               can_prepare=True)], {"COMI": 10})
+    import egx_advisor.desktop.today_tab as tt
+    original = tt.run_async
+    tt.run_async = lambda fn, done, owner=None: calls.append(fn)
+    try:
+        card = tab.cards[0]
+        card.quantity.setValue(300)
+        assert card.holding
+        tab.refresh()
+        assert calls == [], "an edited card is not replaced by the minute's refresh"
+        tab.refresh(force=True)
+        assert len(calls) == 1, "the Refresh button still reloads"
+    finally:
+        tt.run_async = original

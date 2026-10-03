@@ -649,7 +649,7 @@ class MainWindow(QMainWindow):
                      self.learn_tab, self.paper_tab, self.today_tab, self.quick_view,
                      self.omnibar):
             page.retranslate()
-        self.today_tab.refresh()  # the cards' words
+        self.today_tab.refresh(force=True)  # the cards' words
         self._sync_dashboard_theme(run_now=True)
         self._remember({"EGX_LANG": lang})
 
@@ -796,7 +796,7 @@ class MainWindow(QMainWindow):
                 symbols = [t + ".CA" for t in self._known_tickers()]
                 references = ir.reference_closes(archive, symbols, now.date())
                 self._references = (now.date(), references)
-            prices = ir.parse_prices(page.text(), references)
+            prices = ir.read_page(page.text(), references)
             return store.add(prices, now) if prices else 0
 
         def done(_count: Any, error: Optional[BaseException]) -> None:

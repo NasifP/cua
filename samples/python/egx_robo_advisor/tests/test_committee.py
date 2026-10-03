@@ -83,7 +83,7 @@ class Script:
                     self.barrier.wait(timeout=5)  # all three must be in flight together
                 tool = {"technical": ("analyze_stock", {"symbol": "COMI"}),
                         "news": ("search_news", {"query": "CIB"}),
-                        "risk": ("get_portfolio", {})}[who]
+                        "risk": ("stock_levels", {"symbol": "COMI"})}[who]
                 # Each also tries a tool that is not theirs.
                 return reply(calls=[tool, ("prepare_buy", {"symbol": "COMI", "quantity": 1,
                                                            "limit_price": 90})])
@@ -368,3 +368,31 @@ def test_an_unpriced_committee_runs_its_specialists_one_at_a_time(toolbox, bus):
                               price=lambda m: None, cost=lambda r, m: None)
     result = a.run("COMI")
     assert peak[0] == 1 and all(r.ok for r in result.reports.values())
+
+
+def test_a_buy_is_bound_to_stocks_the_risk_manager_checked(toolbox, bus):
+    """The technical analyst alone looking a stock up does not open the gate for it."""
+    class TechOnly(Script):
+        def __call__(self, **kwargs):
+            who = self.who(kwargs["messages"])
+            if who == "risk" and sum(1 for w, _ in self.seen if w == "risk") == 0:
+                with self.lock:
+                    self.seen.append((who, kwargs))
+                return reply(calls=[("get_portfolio", {})])
+            return super().__call__(**kwargs)
+
+    result = analyzer(toolbox, bus, TechOnly(GOOD)).run("اشتري COMI")
+    assert result.gate.symbols == frozenset() and not result.gate.buy_allowed
+
+
+def test_an_unreadable_max_egp_closes_the_gate_and_a_unit_is_read():
+    risk = cm.parse_report(cm.MEMBERS[2], "ok\nRISK: allow\nMAX_EGP: 15000 جنيه")
+    assert risk.max_egp == 15000 and not risk.max_unreadable
+    risk = cm.parse_report(cm.MEMBERS[2], "ok\nRISK: allow\nMAX_EGP: 20,000 EGP.")
+    assert risk.max_egp == 20000
+    vague = cm.parse_report(cm.MEMBERS[2], "ok\nRISK: allow\nMAX_EGP: about fifteen thousand")
+    assert vague.max_unreadable
+    reports = {m.key: cm.parse_report(m, t) for m, t in zip(cm.MEMBERS, (
+        GOOD["technical"], GOOD["news"], "ok\nRISK: allow\nMAX_EGP: about fifteen thousand"),
+        strict=True)}
+    assert not cm.decide(reports).buy_allowed

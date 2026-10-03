@@ -108,7 +108,8 @@ def test_marks_are_sorted_and_carry_every_source():
     picks = [Pick(rows[-10].day, "scan", "COMI.CA", "buy", 80.0, "4/4")]
     marks, lines = chart_marks.build("COMI", rows, choices=indicators.default_set(),
                                      picks=picks, levels={"stop": 80, "target1": 95},
-                                     view={"decision": "trim"})
+                                     view={"decision": "trim",
+                                           "day": date.today().isoformat()})
     assert [m["time"] for m in marks] == sorted(m["time"] for m in marks)
     shapes = {m["shape"] for m in marks}
     assert {"circle", "square", "arrowDown"} <= shapes
@@ -145,3 +146,21 @@ def test_the_leads_decision_lines_are_read_stripped_and_kept(tmp_path):
     cm.save_views(bus, found, gate, now=datetime(2026, 9, 28, 12, tzinfo=CAIRO))
     view = bus.get("team_views")["payload"]["COMI"]
     assert view["decision"] == "buy" and view["buy_allowed"] and view["day"] == "2026-09-28"
+
+
+def test_an_old_team_view_is_not_drawn_as_todays():
+    view = {"decision": "buy", "day": "2026-09-01"}
+    assert chart_marks.team_mark(view, "2026-09-29", today="2026-09-29") == []
+    assert chart_marks.team_mark(dict(view, day="2026-09-29"), "2026-09-29",
+                                 today="2026-09-29")[0].text == "Team: buy"
+
+
+def test_a_broken_stop_is_not_hidden_by_the_teams_view_and_risk_off_blocks_buys():
+    snaps = {"levels": {"payload": {"macro": {"MACRO_RISK_OFF": True}, "levels": {
+                 "COMI.CA": {"status": "below_stop", "stop": 80, "price": 78}}}},
+             "team_views": {"payload": {
+                 "COMI": {"decision": "buy", "day": TODAY.isoformat(), "buy_allowed": True},
+                 "ETEL": {"decision": "buy", "day": TODAY.isoformat(), "buy_allowed": True}}}}
+    cards = {c.ticker: c for c in daily.build(snaps, TODAY)}
+    assert cards["COMI"].decision == "sell" and cards["COMI"].source == "levels"
+    assert not cards["ETEL"].can_prepare and cards["ETEL"].blocked == "macro"

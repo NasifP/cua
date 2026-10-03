@@ -140,3 +140,21 @@ def test_five_full_sessions_tick_the_intraday_checkpoint(tmp_path):
                       datetime(2026, 10, 4 + day, 10, 0) + timedelta(minutes=i))
     s = {x.checkpoint.key: x for x in cur.evaluate(cur.gather(memory, config_dir=tmp_path))}
     assert s["intraday"].state == "done"
+
+
+def test_the_positions_page_gives_value_over_quantity_not_the_average_cost():
+    page = ("Positions Orders Alerts\n\tDay Ch..\tQty\tAvgCost\tMkt. Val...\n"
+            "COMI\t+1.2%\t100\t120.00\t12,945.00\n")
+    assert ir.read_page(page, REF) == {"COMI.CA": 129.45}
+    # The same numbers on a watchlist-like table row are a price list.
+    assert ir.read_page("COMI\t129.45\t+1.44 (1.12%)\n", REF) == {"COMI.CA": 129.45}
+    assert ir.parse_prices("COMI\n100\n", REF) == {}, "a whole number is a quantity"
+
+
+def test_cairo_time_follows_summer_time():
+    from datetime import timezone
+
+    from egx_advisor.clock import CAIRO
+
+    expected = datetime.now(timezone.utc).astimezone(CAIRO).replace(tzinfo=None)
+    assert abs((ir.cairo_now() - expected).total_seconds()) < 5

@@ -15,7 +15,9 @@ value becomes the value at that moment, so the guard does not fire again at
 once. The operator can always resume; the guard never resumes by itself.
 
 What it cannot see: a withdrawal looks like a loss (and halts, which is the
-safe side), and a drop before the day's first read is not counted.
+safe side), and a drop before the day's first read is not counted. A read in
+which the page showed no cash balance is not judged at all: the total would
+swing with every sale.
 """
 
 from __future__ import annotations
